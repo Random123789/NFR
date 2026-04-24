@@ -1,0 +1,447 @@
+"""Authentication helpers and endpoints."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import secrets
+from datetime import datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+from config import settings
+from database import execute_mutation, execute_query
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+DEFAULT_USER_EMAIL = "admin@nfr.local"
+DEFAULT_USER_PASSWORD = "Admin123!"
+DEFAULT_USER_NAME = "Admin User"
+DEFAULT_USER_ROLE = "admin"
+TOKEN_TTL_DAYS = 7
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthUser(BaseModel):
+    id: int
+    email: str
+    displayName: str
+    role: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user: AuthUser
+
+
+class MeResponse(BaseModel):
+    user: AuthUser
+
+
+class UpdateMeRequest(BaseModel):
+    displayName: Optional[str] = None
+    email: Optional[str] = None
+    currentPassword: Optional[str] = None
+    newPassword: Optional[str] = None
+
+
+class CreateUserRequest(BaseModel):
+    email: str
+    displayName: str
+    role: str = "user"
+    password: str
+
+
+class ManagedUser(BaseModel):
+    id: int
+    email: str
+    displayName: str
+    role: str
+    isActive: int
+    createdAt: str
+    lastLoginAt: Optional[str] = None
+
+
+class CreateUserResponse(BaseModel):
+    user: ManagedUser
+
+
+def _hash_password(password: str, salt: Optional[str] = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
+    return f"{salt}:{digest}"
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt, expected = stored_hash.split(":", 1)
+    except ValueError:
+        return False
+
+    actual = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
+    return hmac.compare_digest(actual, expected)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+async def ensure_auth_tables() -> None:
+    await execute_mutation(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          email VARCHAR(255) NOT NULL UNIQUE,
+          displayName VARCHAR(120) NOT NULL,
+          role VARCHAR(64) NOT NULL DEFAULT 'user',
+          passwordHash VARCHAR(255) NOT NULL,
+          isActive TINYINT(1) NOT NULL DEFAULT 1,
+          createdAt DATETIME NOT NULL,
+                    updatedAt DATETIME NOT NULL,
+          lastLoginAt DATETIME NULL
+        )
+        """
+    )
+    await execute_mutation(
+        """
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          userId INT NOT NULL,
+          tokenHash VARCHAR(128) NOT NULL UNIQUE,
+          expiresAt DATETIME NOT NULL,
+          createdAt DATETIME NOT NULL,
+          INDEX idx_user_sessions_userId (userId),
+          INDEX idx_user_sessions_expiresAt (expiresAt),
+          FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    await execute_mutation(
+        """
+        CREATE TABLE IF NOT EXISTS user_bookmarks (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          userId INT NOT NULL,
+          entityType VARCHAR(32) NOT NULL,
+          entityId VARCHAR(64) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          subtitle VARCHAR(255) NULL,
+          createdAt DATETIME NOT NULL,
+          UNIQUE KEY uniq_user_bookmark (userId, entityType, entityId),
+          INDEX idx_user_bookmarks_userId (userId),
+          FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    await execute_mutation(
+        """
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          userId INT NULL,
+          userEmail VARCHAR(255) NOT NULL,
+          action VARCHAR(64) NOT NULL,
+          entityType VARCHAR(64) NOT NULL,
+          entityId VARCHAR(120) NOT NULL,
+          details JSON NULL,
+          createdAt DATETIME NOT NULL,
+          INDEX idx_audit_logs_createdAt (createdAt),
+          INDEX idx_audit_logs_entity (entityType, entityId),
+          INDEX idx_audit_logs_userId (userId)
+        )
+        """
+    )
+
+    updated_at_column = await execute_query(
+        """
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = %s
+          AND TABLE_NAME = 'users'
+          AND COLUMN_NAME = 'updatedAt'
+        LIMIT 1
+        """,
+        [settings.db_name],
+        fetch_one=True,
+    )
+    if not updated_at_column:
+        await execute_mutation("ALTER TABLE users ADD COLUMN updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+
+async def ensure_default_user() -> None:
+    await ensure_auth_tables()
+    existing = await execute_query("SELECT id FROM users WHERE email = %s LIMIT 1", [DEFAULT_USER_EMAIL], fetch_one=True)
+    if existing:
+        return
+
+    await execute_mutation(
+        """
+        INSERT INTO users (email, displayName, role, passwordHash, isActive, createdAt, updatedAt)
+        VALUES (%s, %s, %s, %s, 1, %s, %s)
+        """,
+        [DEFAULT_USER_EMAIL, DEFAULT_USER_NAME, DEFAULT_USER_ROLE, _hash_password(DEFAULT_USER_PASSWORD), _now(), _now()],
+    )
+
+
+def _get_token_from_request(request: Request) -> Optional[str]:
+    header = request.headers.get("authorization")
+    if not header or not header.startswith("Bearer "):
+        return None
+    return header.split(" ", 1)[1].strip() or None
+
+
+async def _get_user_from_token(token: str) -> Optional[dict]:
+    token_hash = _hash_token(token)
+    row = await execute_query(
+        """
+        SELECT u.id, u.email, u.displayName, u.role
+        FROM user_sessions s
+        INNER JOIN users u ON u.id = s.userId
+        WHERE s.tokenHash = %s
+          AND s.expiresAt > NOW()
+          AND u.isActive = 1
+        LIMIT 1
+        """,
+        [token_hash],
+        fetch_one=True,
+    )
+    return row
+
+
+async def require_auth_user(request: Request) -> dict:
+    await ensure_default_user()
+    token = _get_token_from_request(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    user = await _get_user_from_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    return user
+
+
+async def require_admin_user(request: Request) -> dict:
+    user = await require_auth_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(data: LoginRequest) -> LoginResponse:
+    await ensure_default_user()
+    user = await execute_query(
+        """
+        SELECT id, email, displayName, role, passwordHash, isActive
+        FROM users
+        WHERE email = %s
+        LIMIT 1
+        """,
+        [data.email.lower()],
+        fetch_one=True,
+    )
+
+    if not user or not user.get("isActive"):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not _verify_password(data.password, user["passwordHash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = secrets.token_urlsafe(32)
+    await execute_mutation(
+        """
+        INSERT INTO user_sessions (userId, tokenHash, expiresAt, createdAt)
+        VALUES (%s, %s, DATE_ADD(NOW(), INTERVAL %s DAY), %s)
+        """,
+        [user["id"], _hash_token(token), TOKEN_TTL_DAYS, _now()],
+    )
+    await execute_mutation("UPDATE users SET lastLoginAt = %s WHERE id = %s", [_now(), user["id"]])
+
+    return LoginResponse(
+        token=token,
+        user=AuthUser(
+            id=user["id"],
+            email=user["email"],
+            displayName=user["displayName"],
+            role=user["role"],
+        ),
+    )
+
+
+@router.get("/me", response_model=MeResponse)
+async def me(request: Request) -> MeResponse:
+    user = await require_auth_user(request)
+    return MeResponse(user=AuthUser(**user))
+
+
+@router.put("/me", response_model=MeResponse)
+async def update_me(request: Request, data: UpdateMeRequest) -> MeResponse:
+    user = await require_auth_user(request)
+
+    updates = []
+    params = []
+
+    if data.displayName is not None:
+        display_name = data.displayName.strip()
+        if not display_name:
+            raise HTTPException(status_code=400, detail="Display name cannot be empty")
+        updates.append("displayName = %s")
+        params.append(display_name)
+
+    if data.email is not None:
+        email = data.email.strip().lower()
+        if not email:
+            raise HTTPException(status_code=400, detail="Email cannot be empty")
+
+        existing = await execute_query(
+            "SELECT id FROM users WHERE email = %s AND id <> %s LIMIT 1",
+            [email, user["id"]],
+            fetch_one=True,
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already in use")
+
+        updates.append("email = %s")
+        params.append(email)
+
+    password_change_requested = data.newPassword is not None
+    if password_change_requested:
+        if not data.currentPassword:
+            raise HTTPException(status_code=400, detail="Current password is required")
+        stored = await execute_query(
+            "SELECT passwordHash FROM users WHERE id = %s LIMIT 1",
+            [user["id"]],
+            fetch_one=True,
+        )
+        if not stored or not _verify_password(data.currentPassword, stored["passwordHash"]):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        new_password = data.newPassword.strip()
+        if len(new_password) < 8:
+            raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+        updates.append("passwordHash = %s")
+        params.append(_hash_password(new_password))
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No profile changes provided")
+
+    updates.append("updatedAt = %s")
+    params.append(_now())
+
+    await execute_mutation(
+        f"UPDATE users SET {', '.join(updates)} WHERE id = %s",
+        [*params, user["id"]],
+    )
+
+    refreshed = await execute_query(
+        "SELECT id, email, displayName, role FROM users WHERE id = %s LIMIT 1",
+        [user["id"]],
+        fetch_one=True,
+    )
+    return MeResponse(user=AuthUser(**refreshed))
+
+
+@router.delete("/me")
+async def delete_me(request: Request):
+    user = await require_auth_user(request)
+
+    await execute_mutation("DELETE FROM user_sessions WHERE userId = %s", [user["id"]])
+    await execute_mutation("DELETE FROM user_bookmarks WHERE userId = %s", [user["id"]])
+    await execute_mutation("DELETE FROM users WHERE id = %s", [user["id"]])
+
+    return {"success": True}
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    token = _get_token_from_request(request)
+    if token:
+        await execute_mutation("DELETE FROM user_sessions WHERE tokenHash = %s", [_hash_token(token)])
+    return {"success": True}
+
+
+@router.get("/users", response_model=list[ManagedUser])
+async def list_users(request: Request):
+    await require_admin_user(request)
+
+    rows = await execute_query(
+        """
+        SELECT id, email, displayName, role, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%s') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%s') AS lastLoginAt
+        FROM users
+        ORDER BY createdAt DESC
+        """,
+    )
+    return [ManagedUser(**row) for row in rows]
+
+
+@router.post("/users", response_model=CreateUserResponse)
+async def create_user(request: Request, data: CreateUserRequest) -> CreateUserResponse:
+    admin = await require_admin_user(request)
+
+    email = data.email.strip().lower()
+    display_name = data.displayName.strip()
+    role = data.role.strip().lower() or "user"
+    password = data.password.strip()
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    if not display_name:
+        raise HTTPException(status_code=400, detail="Display name is required")
+    if role not in {"admin", "user"}:
+        raise HTTPException(status_code=400, detail="Role must be admin or user")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    existing = await execute_query("SELECT id FROM users WHERE email = %s LIMIT 1", [email], fetch_one=True)
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already in use")
+
+    now = _now()
+    await execute_mutation(
+        """
+        INSERT INTO users (email, displayName, role, passwordHash, isActive, createdAt, updatedAt)
+        VALUES (%s, %s, %s, %s, 1, %s, %s)
+        """,
+        [email, display_name, role, _hash_password(password), now, now],
+    )
+
+    created = await execute_query(
+        """
+        SELECT id, email, displayName, role, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%s') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%s') AS lastLoginAt
+        FROM users
+        WHERE email = %s
+        LIMIT 1
+        """,
+        [email],
+        fetch_one=True,
+    )
+
+    await execute_mutation(
+        """
+        INSERT INTO audit_logs (userId, userEmail, action, entityType, entityId, details, createdAt)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        [
+            admin["id"],
+            admin["email"],
+            "CREATE_USER",
+            "users",
+            email,
+            '{"createdByAdmin": true}',
+            now,
+        ],
+    )
+
+    return CreateUserResponse(user=ManagedUser(**created))
