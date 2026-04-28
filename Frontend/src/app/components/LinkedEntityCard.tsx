@@ -56,9 +56,10 @@ export function LinkedEntityCard({ title, data, fields, onRecordClick }: LinkedE
 interface LinkedCasesListProps {
   cases: any[];
   onCaseClick: (recordId: string) => void;
+  onRemoveCase?: (recordId: string) => void;
 }
 
-export function LinkedCasesList({ cases, onCaseClick }: LinkedCasesListProps) {
+export function LinkedCasesList({ cases, onCaseClick, onRemoveCase }: LinkedCasesListProps) {
   if (cases.length === 0) {
     return (
       <div className="bg-gray-50 rounded-lg p-4">
@@ -95,7 +96,85 @@ export function LinkedCasesList({ cases, onCaseClick }: LinkedCasesListProps) {
                   </span>
                 </div>
               </div>
+              {onRemoveCase && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRemoveCase(caseItem.recordId);
+                  }}
+                  className="ml-2 px-2.5 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100"
+                >
+                  Remove
+                </button>
+              )}
             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface LinkedEntityListProps {
+  title: string;
+  entities: any[];
+  fields: { label: string; key: string }[];
+  onEntityClick?: (recordId: string) => void;
+  onRemoveEntity?: (recordId: string) => void;
+  removeLabel?: string;
+}
+
+export function LinkedEntityList({ title, entities, fields, onEntityClick, onRemoveEntity, removeLabel = "Remove" }: LinkedEntityListProps) {
+  if (entities.length === 0) {
+    return (
+      <div className="bg-gray-50 rounded-lg p-4">
+        <h3 className="font-medium text-gray-900 mb-2">{title}</h3>
+        <p className="text-sm text-gray-500">No linked {title.toLowerCase()}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-gray-50 rounded-lg p-4">
+      <h3 className="font-medium text-gray-900 mb-3">{title} ({entities.length})</h3>
+      <div className="space-y-2">
+        {entities.map((entity, index) => (
+          <div
+            key={entity.recordId ?? `${title}-${index}`}
+            className={`bg-white rounded p-3 hover:shadow-sm transition-shadow ${onEntityClick ? "cursor-pointer" : ""}`}
+            onClick={() => {
+              if (onEntityClick && entity.recordId) {
+                onEntityClick(entity.recordId);
+              }
+            }}
+          >
+            <div className="space-y-1">
+              {fields.map((field) => (
+                <div key={field.key} className="text-sm">
+                  <span className="font-medium text-gray-600">{field.label}: </span>
+                  {field.key === "recordId" && onEntityClick && entity[field.key] ? (
+                    <span className="font-medium text-[#E31937]">{entity[field.key]}</span>
+                  ) : (
+                    <span className="text-gray-900">{entity[field.key] || "-"}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {onRemoveEntity && entity.recordId && (
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRemoveEntity(entity.recordId);
+                  }}
+                  className="px-2.5 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100"
+                >
+                  {removeLabel}
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>

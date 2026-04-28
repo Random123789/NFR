@@ -1,11 +1,12 @@
 """Knocks (Feature Requests) endpoint router."""
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import List, Optional
 from datetime import datetime
 from database import execute_query, execute_mutation, generate_record_id
+from auth import require_auth_user
 from schemas import KnockRecord, HistoryEntryCreate
-from utils import build_history_entry, normalize_record
+from utils import build_history_entry, build_update_history_entries, normalize_record
 import json
 
 router = APIRouter(prefix="/knocks", tags=["knocks"])
@@ -90,8 +91,9 @@ async def create_knock(data: dict) -> KnockRecord:
 
 
 @router.put("/{recordId}", response_model=KnockRecord)
-async def update_knock(recordId: str, data: dict) -> KnockRecord:
+async def update_knock(recordId: str, data: dict, request: Request) -> KnockRecord:
     """Update a knock."""
+    actor = await require_auth_user(request)
     
     existing = await execute_query(
         "SELECT * FROM knocks WHERE recordId = %s",
@@ -104,7 +106,33 @@ async def update_knock(recordId: str, data: dict) -> KnockRecord:
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     history = json.loads(existing.get("history", "[]")) if isinstance(existing.get("history"), str) else existing.get("history", [])
-    history.append(build_history_entry("Updated", "Knock updated"))
+    history.extend(
+        build_update_history_entries(
+            existing,
+            {
+                "description": data.get("description"),
+                "knockId": data.get("knockId"),
+                "knockUrl": data.get("knockUrl"),
+                "status": data.get("status"),
+                "requestDate": data.get("requestDate"),
+                "targetDate": data.get("targetDate"),
+                "metaData": data.get("metaData"),
+            },
+            actor["displayName"],
+            field_labels={
+                "description": "Description",
+                "knockId": "Knock ID",
+                "knockUrl": "Knock URL",
+                "status": "Status",
+                "requestDate": "Request Date",
+                "targetDate": "Target Date",
+                "metaData": "Metadata",
+            },
+        )
+    )
+
+    if not history:
+        history.append(build_history_entry("Updated", "Knock updated", user=actor["displayName"]))
     
     sql = """
         UPDATE knocks SET
@@ -117,7 +145,7 @@ async def update_knock(recordId: str, data: dict) -> KnockRecord:
     params = [
         data.get("description"), data.get("knockId"), data.get("knockUrl"),
         data.get("status"), data.get("requestDate"), data.get("targetDate"),
-        data.get("metaData"), now, "System", json.dumps(history), recordId,
+        data.get("metaData"), now, actor["displayName"], json.dumps(history), recordId,
     ]
     
     await execute_mutation(sql, params)

@@ -1,11 +1,12 @@
 """Projects endpoint router."""
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from typing import List, Optional
 from datetime import datetime
 from database import execute_query, execute_mutation, generate_record_id
+from auth import require_auth_user
 from schemas import ProjectRecord, HistoryEntryCreate
-from utils import build_history_entry, normalize_record
+from utils import build_history_entry, build_update_history_entries, normalize_record
 import json
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -91,8 +92,9 @@ async def create_project(data: dict) -> ProjectRecord:
 
 
 @router.put("/{recordId}", response_model=ProjectRecord)
-async def update_project(recordId: str, data: dict) -> ProjectRecord:
+async def update_project(recordId: str, data: dict, request: Request) -> ProjectRecord:
     """Update a project."""
+    actor = await require_auth_user(request)
     
     existing = await execute_query(
         "SELECT * FROM projects WHERE recordId = %s",
@@ -105,7 +107,37 @@ async def update_project(recordId: str, data: dict) -> ProjectRecord:
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     history = json.loads(existing.get("history", "[]")) if isinstance(existing.get("history"), str) else existing.get("history", [])
-    history.append(build_history_entry("Updated", "Project updated"))
+    history.extend(
+        build_update_history_entries(
+            existing,
+            {
+                "projectName": data.get("projectName"),
+                "accountId": data.get("accountId"),
+                "startDate": data.get("startDate"),
+                "closeDate": data.get("closeDate"),
+                "stage": data.get("stage"),
+                "sfdc": data.get("sfdc"),
+                "sfdcValue": data.get("sfdcValue"),
+                "se": data.get("se"),
+                "metaData": data.get("metaData"),
+            },
+            actor["displayName"],
+            field_labels={
+                "projectName": "Project Name",
+                "accountId": "Account",
+                "startDate": "Start Date",
+                "closeDate": "Close Date",
+                "stage": "Stage",
+                "sfdc": "SFDC",
+                "sfdcValue": "SFDC Value",
+                "se": "SE",
+                "metaData": "Metadata",
+            },
+        )
+    )
+
+    if not history:
+        history.append(build_history_entry("Updated", "Project updated", user=actor["displayName"]))
     
     sql = """
         UPDATE projects SET
@@ -119,7 +151,7 @@ async def update_project(recordId: str, data: dict) -> ProjectRecord:
         data.get("projectName"), data.get("accountId"),
         data.get("startDate"), data.get("closeDate"), data.get("stage"),
         data.get("sfdc"), data.get("sfdcValue"), data.get("se"),
-        data.get("metaData"), now, "System", json.dumps(history), recordId,
+        data.get("metaData"), now, actor["displayName"], json.dumps(history), recordId,
     ]
     
     await execute_mutation(sql, params)

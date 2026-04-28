@@ -127,6 +127,18 @@ CREATE INDEX idx_cases_project ON cases (project);
 CREATE INDEX idx_cases_mantisId ON cases (mantisId);
 CREATE INDEX idx_cases_knockId ON cases (knockId);
 
+CREATE TABLE IF NOT EXISTS case_entity_links (
+  caseRecordId VARCHAR(32) NOT NULL,
+  entityType VARCHAR(16) NOT NULL,
+  entityRecordId VARCHAR(32) NOT NULL,
+  createdAt DATETIME NOT NULL,
+  createdBy VARCHAR(120),
+  PRIMARY KEY (caseRecordId, entityType, entityRecordId)
+);
+
+CREATE INDEX idx_case_entity_links_case ON case_entity_links (caseRecordId);
+CREATE INDEX idx_case_entity_links_entity ON case_entity_links (entityType, entityRecordId);
+
 CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,

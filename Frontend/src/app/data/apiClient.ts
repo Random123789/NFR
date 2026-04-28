@@ -37,6 +37,10 @@ export interface CreateUserRequest {
   password: string;
 }
 
+export interface UpdateManagedUserRoleRequest {
+  role: 'admin' | 'user';
+}
+
 export interface BookmarkedItem {
   id: string;
   type: 'case' | 'project' | 'account' | 'nfr' | 'knock' | 'product';
@@ -51,6 +55,9 @@ export interface HistoryEntry {
   user: string;
   action: string;
   changes: string;
+  field?: string;
+  previousValue?: string | null;
+  newValue?: string | null;
 }
 
 export interface BaseRecord {
@@ -126,6 +133,16 @@ export interface CaseRecord extends BaseRecord {
   seOwner: string | null;
 }
 
+export type CaseLinkEntityType = 'account' | 'product' | 'project' | 'nfr' | 'knock';
+
+export interface CaseLinksResponse {
+  accounts: AccountRecord[];
+  products: ProductRecord[];
+  projects: ProjectRecord[];
+  nfrs: NfrRecord[];
+  knocks: KnockRecord[];
+}
+
 export interface ReportSummary {
   totalCases: number;
   openCases: number;
@@ -142,6 +159,31 @@ export interface ReportTimelineValue {
   monthLabel: string;
   created: number;
   closed: number;
+}
+
+export interface ReportFilters {
+  dateRange: string;
+  owner: string;
+  status: string;
+  priority: string;
+  category: string;
+  product: string;
+}
+
+export interface CustomReportInput {
+  title: string;
+  chartType: 'bar' | 'line' | 'pie' | 'table';
+  metric: 'status' | 'priority' | 'product' | 'owner' | 'category' | 'monthCreated';
+  layoutSpan: 1 | 2;
+  sortOrder: number;
+  filters: ReportFilters;
+}
+
+export interface CustomReportRecord extends CustomReportInput {
+  id: number;
+  userId: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export function getStoredToken() {
@@ -287,6 +329,13 @@ export async function createManagedUser(data: CreateUserRequest) {
   });
 }
 
+export async function updateManagedUserRole(userId: number, data: UpdateManagedUserRoleRequest) {
+  return fetchJson<{ user: ManagedUser }>(`${API_BASE}/auth/users/${userId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function getUserBookmarks() {
   return fetchJson<BookmarkedItem[]>(`${API_BASE}/bookmarks`);
 }
@@ -424,6 +473,32 @@ export async function addCaseHistory(id: string, entry: Partial<HistoryEntry>) {
   });
 }
 
+export async function getCase(id: string) {
+  return fetchJson<CaseRecord>(`${API_BASE}/cases/${id}`);
+}
+
+export async function getCaseLinks(id: string) {
+  return fetchJson<CaseLinksResponse>(`${API_BASE}/cases/${id}/links`);
+}
+
+export async function getLinkedCasesByEntity(entityType: CaseLinkEntityType, entityRecordId: string) {
+  const query = new URLSearchParams({ entityType, entityRecordId });
+  return fetchJson<CaseRecord[]>(`${API_BASE}/cases/linked?${query.toString()}`);
+}
+
+export async function addCaseLink(id: string, entityType: CaseLinkEntityType, entityRecordId: string) {
+  return fetchJson<CaseLinksResponse>(`${API_BASE}/cases/${id}/links`, {
+    method: 'POST',
+    body: JSON.stringify({ entityType, entityRecordId }),
+  });
+}
+
+export async function removeCaseLink(id: string, entityType: CaseLinkEntityType, entityRecordId: string) {
+  return fetchJson<CaseLinksResponse>(`${API_BASE}/cases/${id}/links/${encodeURIComponent(entityType)}/${encodeURIComponent(entityRecordId)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function createProject(data: Omit<ProjectRecord, keyof BaseRecord> & Partial<BaseRecord>) {
   return fetchJson<ProjectRecord>(`${API_BASE}/projects`, {
     method: 'POST',
@@ -531,4 +606,28 @@ export async function getCasesByProductReport(range?: string) {
 
 export async function getCasesOverTimeReport(range?: string) {
   return fetchJson<ReportTimelineValue[]>(withRange(`${API_BASE}/reports/cases-over-time`, range));
+}
+
+export async function getCustomReports() {
+  return fetchJson<CustomReportRecord[]>(`${API_BASE}/reports/custom`);
+}
+
+export async function createCustomReport(data: CustomReportInput) {
+  return fetchJson<CustomReportRecord>(`${API_BASE}/reports/custom`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateCustomReport(id: number, data: CustomReportInput) {
+  return fetchJson<CustomReportRecord>(`${API_BASE}/reports/custom/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteCustomReport(id: number) {
+  return fetchJson<{ status: string; id: number }>(`${API_BASE}/reports/custom/${id}`, {
+    method: 'DELETE',
+  });
 }

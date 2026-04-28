@@ -1,20 +1,38 @@
 import { useState, useEffect } from "react";
-import { X, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { projects, getAccountById, getCasesByProjectId, getProjectById, updateProject } from "../data/apiClient";
-import { LinkedEntityCard, LinkedCasesList } from "../components/LinkedEntityCard";
-import { useNavigate } from "react-router";
+import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
+import { projects, cases, getAccountById, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getProjectById, updateProject, type HistoryEntry } from "../data/apiClient";
+import { LinkedEntityList, LinkedCasesList } from "../components/LinkedEntityCard";
+import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useToast } from "../context/ToastContext";
 import { projectStageColors } from "../data/recordStyles";
 
 export function Projects() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { showToast } = useToast();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { searchTerm } = useSearch();
   const [selectedProject, setSelectedProject] = useState<typeof projects[0] | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedProject, setEditedProject] = useState<typeof projects[0] | null>(null);
   const [newComment, setNewComment] = useState("");
+  const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
+  const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
+  const [linkingCaseId, setLinkingCaseId] = useState("");
+  const [isLinkingCase, setIsLinkingCase] = useState(false);
+
+  type LinkedReturnState = {
+    returnTo?: {
+      path: string;
+      eventName: string;
+      recordId: string;
+    };
+    previousState?: LinkedReturnState | null;
+  };
 
   const [searchFilters, setSearchFilters] = useState({
     recordId: "",
@@ -34,6 +52,7 @@ export function Projects() {
       const project = getProjectById(projectId);
       if (project) {
         setSelectedProject(project);
+        setActiveDetailTab("details");
       }
     };
 
@@ -41,20 +60,117 @@ export function Projects() {
     return () => window.removeEventListener('openProjectDetail', handleOpenDetail as EventListener);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLinkedCases = async () => {
+      if (!selectedProject) {
+        setLinkedCases([]);
+        setLinkingCaseId("");
+        return;
+      }
+
+      try {
+        const linked = await getLinkedCasesByEntity("project", selectedProject.recordId);
+        if (!cancelled) {
+          setLinkedCases(linked);
+        }
+      } catch (error) {
+        console.error("Failed to load linked cases for project:", error);
+        if (!cancelled) {
+          setLinkedCases([]);
+        }
+      }
+    };
+
+    loadLinkedCases();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProject?.recordId]);
+
   const handleAccountClick = (accountId: string) => {
-    setSelectedProject(null);
-    navigate('/accounts');
+    if (!selectedProject?.recordId) return;
+
+    const state: LinkedReturnState = {
+      returnTo: {
+        path: '/projects',
+        eventName: 'openProjectDetail',
+        recordId: selectedProject.recordId,
+      },
+      previousState: (location.state as LinkedReturnState | null) ?? null,
+    };
+
+    navigate('/accounts', { state });
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('openAccountDetail', { detail: accountId }));
     }, 100);
   };
 
   const handleCaseClick = (caseId: string) => {
-    setSelectedProject(null);
-    navigate('/cases');
+    if (!selectedProject?.recordId) return;
+
+    const state: LinkedReturnState = {
+      returnTo: {
+        path: '/projects',
+        eventName: 'openProjectDetail',
+        recordId: selectedProject.recordId,
+      },
+      previousState: (location.state as LinkedReturnState | null) ?? null,
+    };
+
+    navigate('/cases', { state });
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('openCaseDetail', { detail: caseId }));
     }, 100);
+  };
+
+  const handleLinkCase = async () => {
+    if (!selectedProject || !linkingCaseId) return;
+
+    setIsLinkingCase(true);
+    try {
+      await addCaseLink(linkingCaseId, "project", selectedProject.recordId);
+      const linked = await getLinkedCasesByEntity("project", selectedProject.recordId);
+      setLinkedCases(linked);
+      setLinkingCaseId("");
+      showToast("Case linked successfully.", "success");
+    } catch (error) {
+      console.error("Failed to link case to project:", error);
+      showToast("Failed to link case.", "error");
+    } finally {
+      setIsLinkingCase(false);
+    }
+  };
+
+  const handleUnlinkCase = async (caseRecordId: string) => {
+    if (!selectedProject) return;
+
+    setIsLinkingCase(true);
+    try {
+      await removeCaseLink(caseRecordId, "project", selectedProject.recordId);
+      const linked = await getLinkedCasesByEntity("project", selectedProject.recordId);
+      setLinkedCases(linked);
+      showToast("Case unlinked successfully.", "success");
+    } catch (error) {
+      console.error("Failed to unlink case from project:", error);
+      showToast("Failed to unlink case.", "error");
+    } finally {
+      setIsLinkingCase(false);
+    }
+  };
+
+  const handleBackFromDetail = () => {
+    const navState = (location.state as LinkedReturnState | null) ?? null;
+    if (navState?.returnTo) {
+      navigate(navState.returnTo.path, { state: navState.previousState ?? null });
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(navState.returnTo!.eventName, { detail: navState.returnTo!.recordId }));
+      }, 100);
+      return;
+    }
+
+    setSelectedProject(null);
   };
 
   const handleEdit = () => {
@@ -88,10 +204,10 @@ export function Projects() {
       setSelectedProject(saved);
       setEditedProject(saved);
       setIsEditing(false);
-      alert("Changes saved successfully!");
+      showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save project:", error);
-      alert("Failed to save changes. Please try again.");
+      showToast("Failed to save changes. Please try again.", "error");
     }
   };
 
@@ -102,14 +218,16 @@ export function Projects() {
 
   const handleAddComment = () => {
     if (selectedProject && newComment.trim()) {
-      const now = new Date();
-      const timestamp = now.toISOString().slice(0, 19).replace('T', ' ');
+      const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
+      const quoteText = selectedQuote
+        ? `[Quoted reply to ${selectedQuote.user} (${selectedQuote.timestamp})]\n${formatHistoryEntryText(selectedQuote)}`
+        : null;
 
       const newHistoryEntry = {
         timestamp,
         user: "Current User",
         action: "Comment",
-        changes: newComment.trim(),
+        changes: quoteText ? `${quoteText}\n\n${newComment.trim()}` : newComment.trim(),
       };
 
       const updatedProject = {
@@ -119,6 +237,7 @@ export function Projects() {
 
       setSelectedProject(updatedProject);
       setNewComment("");
+      setSelectedQuote(null);
     }
   };
 
@@ -184,7 +303,7 @@ export function Projects() {
   });
 
   const account = selectedProject ? getAccountById(selectedProject.accountId) : null;
-  const relatedCases = selectedProject ? getCasesByProjectId(selectedProject.recordId) : [];
+  const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
 
   return (
     <div className="space-y-6">
@@ -193,7 +312,7 @@ export function Projects() {
         <p className="text-gray-600 mt-1">Track Fortinet customer projects and implementations</p>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+      <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedProject ? "hidden" : ""}`}>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -321,7 +440,10 @@ export function Projects() {
               {sortedProjects.map((project) => (
                 <tr
                   key={project.recordId}
-                  onClick={() => setSelectedProject(project)}
+                  onClick={() => {
+                    setSelectedProject(project);
+                    setActiveDetailTab("details");
+                  }}
                   className="hover:bg-gray-50 cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -365,9 +487,9 @@ export function Projects() {
       </div>
 
       {selectedProject && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-xl">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          <div className="w-full">
+            <div className="sticky top-[-1.5rem] z-10 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-xl">
               <h2 className="text-xl font-semibold text-gray-900">Project Details</h2>
               <div className="flex items-center gap-2">
                 <button
@@ -409,14 +531,41 @@ export function Projects() {
                     Edit
                   </button>
                 )}
-                <button onClick={() => setSelectedProject(null)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                  <X className="w-5 h-5 text-gray-500" />
+                <button onClick={handleBackFromDetail} className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
                 </button>
               </div>
             </div>
 
-            <div className="p-6 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2 space-y-6">
+              <div className="border-b border-gray-200 pb-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setActiveDetailTab("details")}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      activeDetailTab === "details"
+                        ? "bg-[#E31937] text-white"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Details
+                  </button>
+                  <button
+                    onClick={() => setActiveDetailTab("linked")}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      activeDetailTab === "linked"
+                        ? "bg-[#E31937] text-white"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Linked Entities
+                  </button>
+                </div>
+              </div>
+
+              <div className={activeDetailTab === "details" ? "grid grid-cols-2 gap-4" : "hidden"}>
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Record ID</label>
                   <p className="text-gray-900">{selectedProject.recordId}</p>
@@ -525,56 +674,79 @@ export function Projects() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
+              <div className={activeDetailTab === "linked" ? "pt-1" : "hidden"}>
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">Linked Entities</h3>
                 <div className="space-y-4">
-                  <LinkedEntityCard
+                  <LinkedEntityList
                     title="Account"
-                    data={account}
+                    entities={account ? [account] : []}
                     fields={[
                       { label: "ID", key: "recordId" },
                       { label: "Name", key: "accountName" },
                       { label: "Type", key: "type" },
                       { label: "Vertical", key: "vertical" },
                     ]}
-                    onRecordClick={handleAccountClick}
+                    onEntityClick={handleAccountClick}
                   />
 
-                  <LinkedCasesList cases={relatedCases} onCaseClick={handleCaseClick} />
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Link case</label>
+                        <select
+                          value={linkingCaseId}
+                          onChange={(e) => setLinkingCaseId(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                        >
+                          <option value="">Select a case</option>
+                          {availableCases.map((caseItem) => (
+                            <option key={caseItem.recordId} value={caseItem.recordId}>
+                              {caseItem.recordId} - {caseItem.description}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleLinkCase}
+                        disabled={!linkingCaseId || isLinkingCase}
+                        className="px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Link Case
+                      </button>
+                    </div>
+                  </div>
+
+                  <LinkedCasesList cases={linkedCases} onCaseClick={handleCaseClick} onRemoveCase={handleUnlinkCase} />
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
+              </div>
+
+              <div className="xl:col-span-1">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+              <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
-                <div className="space-y-3 mb-6">
-                  {selectedProject.history && selectedProject.history.length > 0 ? (
-                    selectedProject.history.map((entry, index) => (
-                      <div key={index} className="flex gap-4 p-4 bg-gray-50 rounded-lg">
-                        <div className="flex-shrink-0 w-40">
-                          <div className="text-sm text-gray-500">{entry.timestamp}</div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-medium text-gray-900">{entry.user}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                              entry.action === "Comment"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-blue-100 text-blue-800"
-                            }`}>
-                              {entry.action}
-                            </span>
-                          </div>
-                          <div className="text-sm text-gray-700">{entry.changes}</div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-gray-500 italic">No history available</p>
-                  )}
-                </div>
+                <RecordHistoryTimeline history={selectedProject.history} onQuote={setSelectedQuote} />
 
                 <div className="border-t border-gray-200 pt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Comment</label>
+                  {selectedQuote && (
+                    <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 border-l-4 border-l-[#6264A7]">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-gray-500 font-medium">
+                          Replying to {selectedQuote.user} - {selectedQuote.timestamp}
+                        </p>
+                        <button
+                          onClick={() => setSelectedQuote(null)}
+                          className="text-xs text-[#6264A7] hover:underline"
+                        >
+                          Clear quote
+                        </button>
+                      </div>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <textarea
                       value={newComment}
@@ -596,6 +768,8 @@ export function Projects() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
           </div>
         </div>
       )}

@@ -1,11 +1,12 @@
 """NFRs (Non-Functional Requirements) endpoint router."""
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import List, Optional
 from datetime import datetime
 from database import execute_query, execute_mutation, generate_record_id
+from auth import require_auth_user
 from schemas import NfrRecord, HistoryEntryCreate
-from utils import build_history_entry, normalize_record
+from utils import build_history_entry, build_update_history_entries, normalize_record
 import json
 
 router = APIRouter(prefix="/nfrs", tags=["nfrs"])
@@ -90,8 +91,9 @@ async def create_nfr(data: dict) -> NfrRecord:
 
 
 @router.put("/{recordId}", response_model=NfrRecord)
-async def update_nfr(recordId: str, data: dict) -> NfrRecord:
+async def update_nfr(recordId: str, data: dict, request: Request) -> NfrRecord:
     """Update an NFR."""
+    actor = await require_auth_user(request)
     
     existing = await execute_query(
         "SELECT * FROM nfrs WHERE recordId = %s",
@@ -104,7 +106,33 @@ async def update_nfr(recordId: str, data: dict) -> NfrRecord:
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     history = json.loads(existing.get("history", "[]")) if isinstance(existing.get("history"), str) else existing.get("history", [])
-    history.append(build_history_entry("Updated", "NFR updated"))
+    history.extend(
+        build_update_history_entries(
+            existing,
+            {
+                "description": data.get("description"),
+                "mantisId": data.get("mantisId"),
+                "mantisUrl": data.get("mantisUrl"),
+                "nfrStatus": data.get("nfrStatus"),
+                "nfrRequestDate": data.get("nfrRequestDate"),
+                "nfrTargetDate": data.get("nfrTargetDate"),
+                "metaData": data.get("metaData"),
+            },
+            actor["displayName"],
+            field_labels={
+                "description": "Description",
+                "mantisId": "Mantis ID",
+                "mantisUrl": "Mantis URL",
+                "nfrStatus": "Status",
+                "nfrRequestDate": "Request Date",
+                "nfrTargetDate": "Target Date",
+                "metaData": "Metadata",
+            },
+        )
+    )
+
+    if not history:
+        history.append(build_history_entry("Updated", "NFR updated", user=actor["displayName"]))
     
     sql = """
         UPDATE nfrs SET
@@ -117,7 +145,7 @@ async def update_nfr(recordId: str, data: dict) -> NfrRecord:
     params = [
         data.get("description"), data.get("mantisId"), data.get("mantisUrl"),
         data.get("nfrStatus"), data.get("nfrRequestDate"), data.get("nfrTargetDate"),
-        data.get("metaData"), now, "System", json.dumps(history), recordId,
+        data.get("metaData"), now, actor["displayName"], json.dumps(history), recordId,
     ]
     
     await execute_mutation(sql, params)

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { AlertTriangle, ArrowLeft, Check, Trash2 } from "lucide-react";
-import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, type ManagedUser } from "../data/apiClient";
+import { AlertTriangle, ArrowLeft, Check, Save, Trash2 } from "lucide-react";
+import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUserRole, type ManagedUser } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
+import { formatRoleLabel, managedRoleOptions } from "../data/roleLabels";
 
 export function Profile() {
   const { user, logout, setSessionUser } = useAuth();
@@ -24,6 +25,8 @@ export function Profile() {
   const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [roleDrafts, setRoleDrafts] = useState<Record<number, "admin" | "user">>({});
+  const [savingRoleUserId, setSavingRoleUserId] = useState<number | null>(null);
 
   useEffect(() => {
     setDisplayName(user?.displayName || "");
@@ -136,6 +139,34 @@ export function Profile() {
       setAdminError(err instanceof Error ? err.message : "Failed to create user account");
     } finally {
       setIsCreatingUser(false);
+    }
+  };
+
+  const handleUpdateUserRole = async (managedUser: ManagedUser) => {
+    setAdminError("");
+    setAdminMessage("");
+    setSavingRoleUserId(managedUser.id);
+
+    try {
+      const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as "admin" | "user");
+      if (selectedRole === managedUser.role) {
+        setAdminMessage(`Role for ${managedUser.email} is already ${formatRoleLabel(managedUser.role)}.`);
+        return;
+      }
+
+      const result = await updateManagedUserRole(managedUser.id, { role: selectedRole });
+      setManagedUsers((prev) => prev.map((userItem) => (userItem.id === managedUser.id ? result.user : userItem)));
+      setRoleDrafts((prev) => ({ ...prev, [managedUser.id]: result.user.role as "admin" | "user" }));
+
+      if (user.id === managedUser.id) {
+        setSessionUser(result.user);
+      }
+
+      setAdminMessage(`Updated ${result.user.displayName} to ${formatRoleLabel(result.user.role)}.`);
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : "Failed to update user role");
+    } finally {
+      setSavingRoleUserId(null);
     }
   };
 
@@ -260,7 +291,7 @@ export function Profile() {
             </div>
             <div>
               <div className="text-gray-500">Role</div>
-              <div className="font-medium text-gray-900 capitalize">{user.role}</div>
+              <div className="font-medium text-gray-900">{formatRoleLabel(user.role)}</div>
             </div>
           </div>
 
@@ -311,8 +342,11 @@ export function Profile() {
                 onChange={(e) => setNewUserRole(e.target.value as "admin" | "user")}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
               >
-                <option value="user">user</option>
-                <option value="admin">admin</option>
+                {managedRoleOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -357,6 +391,7 @@ export function Profile() {
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Email</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Role</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Last Login</th>
+                  <th className="text-left px-4 py-2 font-semibold text-gray-700">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -364,8 +399,35 @@ export function Profile() {
                   <tr key={managedUser.id} className="border-b border-gray-100 last:border-0">
                     <td className="px-4 py-2 text-gray-900 whitespace-nowrap">{managedUser.displayName}</td>
                     <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.email}</td>
-                    <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.role}</td>
+                    <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                      <select
+                        value={roleDrafts[managedUser.id] ?? (managedUser.role as "admin" | "user")}
+                        onChange={(e) =>
+                          setRoleDrafts((prev) => ({
+                            ...prev,
+                            [managedUser.id]: e.target.value as "admin" | "user",
+                          }))
+                        }
+                        className="w-full min-w-40 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+                      >
+                        {managedRoleOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.lastLoginAt || "Never"}</td>
+                    <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                      <button
+                        onClick={() => handleUpdateUserRole(managedUser)}
+                        disabled={savingRoleUserId === managedUser.id || (roleDrafts[managedUser.id] ?? managedUser.role) === managedUser.role}
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Save className="w-4 h-4" />
+                        {savingRoleUserId === managedUser.id ? "Saving..." : "Save Role"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

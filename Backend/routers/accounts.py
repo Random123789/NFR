@@ -1,11 +1,12 @@
 """Accounts endpoint router."""
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import List, Optional
 from datetime import datetime
 from database import execute_query, execute_mutation, generate_record_id
+from auth import require_auth_user
 from schemas import AccountRecord, AccountCreate, HistoryEntryCreate
-from utils import build_history_entry, normalize_record, serialize_record_for_db
+from utils import build_history_entry, build_update_history_entries, normalize_record, serialize_record_for_db
 import json
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -108,8 +109,9 @@ async def create_account(data: AccountCreate) -> AccountRecord:
 
 
 @router.put("/{recordId}", response_model=AccountRecord)
-async def update_account(recordId: str, data: AccountCreate) -> AccountRecord:
+async def update_account(recordId: str, data: AccountCreate, request: Request) -> AccountRecord:
     """Update an account."""
+    actor = await require_auth_user(request)
     
     # Check if account exists
     existing = await execute_query(
@@ -122,17 +124,37 @@ async def update_account(recordId: str, data: AccountCreate) -> AccountRecord:
         raise HTTPException(status_code=404, detail="Account not found")
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Add history entry
+
     history = existing.get("history", [])
     if isinstance(history, str):
         history = json.loads(history) if history else []
+
+    update_payload = {
+        "accountName": data.accountName,
+        "website": data.website,
+        "type": data.type,
+        "vertical": data.vertical,
+        "metaData": data.metaData,
+    }
+
+    history.extend(
+        build_update_history_entries(
+            existing,
+            update_payload,
+            actor["displayName"],
+            field_labels={
+                "accountName": "Account Name",
+                "website": "Website",
+                "type": "Type",
+                "vertical": "Vertical",
+                "metaData": "Metadata",
+            },
+        )
+    )
+
+    if not history:
+        history.append(build_history_entry("Updated", "Account updated", user=actor["displayName"]))
     
-    history.append(build_history_entry(
-        action="Updated",
-        changes="Account updated",
-        user="System"
-    ))
     
     sql = """
         UPDATE accounts SET
@@ -148,7 +170,7 @@ async def update_account(recordId: str, data: AccountCreate) -> AccountRecord:
         data.vertical,
         data.metaData,
         now,
-        "System",
+        actor["displayName"],
         json.dumps(history),
         recordId,
     ]

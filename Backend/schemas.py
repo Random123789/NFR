@@ -11,6 +11,9 @@ class HistoryEntry(BaseModel):
     user: str
     action: str
     changes: str
+    field: Optional[str] = None
+    previousValue: Optional[str] = None
+    newValue: Optional[str] = None
 
 
 class BaseRecord(BaseModel):
@@ -96,7 +99,7 @@ class CaseRecord(BaseRecord):
 class ReportValue(BaseModel):
     """Report data point."""
     id: str
-    name: str
+    label: str
     value: int
 
 
@@ -110,6 +113,34 @@ class ReportSummary(BaseModel):
     highPriorityCases: int = 0
     totalAccounts: int = 0
     totalProjects: int = 0
+
+
+class ReportFilters(BaseModel):
+    """Saved report filter configuration."""
+    dateRange: str = "last-30-days"
+    owner: str = ""
+    status: str = ""
+    priority: str = ""
+    category: str = ""
+    product: str = ""
+
+
+class CustomReportCreate(BaseModel):
+    """Create or update a custom report configuration."""
+    title: str
+    chartType: str
+    metric: str
+    layoutSpan: int = 1
+    sortOrder: int = 0
+    filters: ReportFilters = Field(default_factory=ReportFilters)
+
+
+class CustomReportRecord(CustomReportCreate):
+    """Persisted custom report configuration."""
+    id: int
+    userId: int
+    createdAt: datetime
+    updatedAt: datetime
 
 
 # Create request models (without timestamp/user fields)
@@ -140,3 +171,6 @@ class HistoryEntryCreate(BaseModel):
     action: str
     changes: str
     user: Optional[str] = "System"
+    field: Optional[str] = None
+    previousValue: Optional[str] = None
+    newValue: Optional[str] = None

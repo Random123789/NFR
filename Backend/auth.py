@@ -58,6 +58,10 @@ class CreateUserRequest(BaseModel):
     password: str
 
 
+class UpdateUserRoleRequest(BaseModel):
+    role: str
+
+
 class ManagedUser(BaseModel):
     id: int
     email: str
@@ -69,6 +73,10 @@ class ManagedUser(BaseModel):
 
 
 class CreateUserResponse(BaseModel):
+    user: ManagedUser
+
+
+class UpdateUserRoleResponse(BaseModel):
     user: ManagedUser
 
 
@@ -90,6 +98,18 @@ def _verify_password(password: str, stored_hash: str) -> bool:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _normalize_role(role: str) -> str:
+    normalized = role.strip().lower()
+    aliases = {
+        "administrator": "admin",
+        "admin": "admin",
+        "se user": "user",
+        "se_user": "user",
+        "user": "user",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def _now() -> str:
@@ -375,8 +395,8 @@ async def list_users(request: Request):
     rows = await execute_query(
         """
         SELECT id, email, displayName, role, isActive,
-               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%s') AS createdAt,
-               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%s') AS lastLoginAt
+             DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
+             DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
         FROM users
         ORDER BY createdAt DESC
         """,
@@ -390,7 +410,7 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
 
     email = data.email.strip().lower()
     display_name = data.displayName.strip()
-    role = data.role.strip().lower() or "user"
+    role = _normalize_role(data.role or "user")
     password = data.password.strip()
 
     if not email:
@@ -398,7 +418,7 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
     if not display_name:
         raise HTTPException(status_code=400, detail="Display name is required")
     if role not in {"admin", "user"}:
-        raise HTTPException(status_code=400, detail="Role must be admin or user")
+        raise HTTPException(status_code=400, detail="Role must be SE user or Administrator")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
@@ -418,8 +438,8 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
     created = await execute_query(
         """
         SELECT id, email, displayName, role, isActive,
-               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%s') AS createdAt,
-               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%s') AS lastLoginAt
+             DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
+             DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
         FROM users
         WHERE email = %s
         LIMIT 1
@@ -445,3 +465,64 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
     )
 
     return CreateUserResponse(user=ManagedUser(**created))
+
+
+@router.put("/users/{user_id}/role", response_model=UpdateUserRoleResponse)
+async def update_user_role(request: Request, user_id: int, data: UpdateUserRoleRequest) -> UpdateUserRoleResponse:
+    admin = await require_admin_user(request)
+
+    role = _normalize_role(data.role)
+    if role not in {"admin", "user"}:
+        raise HTTPException(status_code=400, detail="Role must be SE user or Administrator")
+
+    existing = await execute_query(
+        """
+        SELECT id, email, displayName, role, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
+        FROM users
+        WHERE id = %s
+        LIMIT 1
+        """,
+        [user_id],
+        fetch_one=True,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if existing["role"] == role:
+        return UpdateUserRoleResponse(user=ManagedUser(**existing))
+
+    now = _now()
+    await execute_mutation("UPDATE users SET role = %s, updatedAt = %s WHERE id = %s", [role, now, user_id])
+
+    refreshed = await execute_query(
+        """
+        SELECT id, email, displayName, role, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
+        FROM users
+        WHERE id = %s
+        LIMIT 1
+        """,
+        [user_id],
+        fetch_one=True,
+    )
+
+    await execute_mutation(
+        """
+        INSERT INTO audit_logs (userId, userEmail, action, entityType, entityId, details, createdAt)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        [
+            admin["id"],
+            admin["email"],
+            "UPDATE_USER_ROLE",
+            "users",
+            str(user_id),
+            f'{{"role":"{role}"}}',
+            now,
+        ],
+    )
+
+    return UpdateUserRoleResponse(user=ManagedUser(**refreshed))

@@ -1,11 +1,12 @@
 """Products endpoint router."""
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import List, Optional
 from datetime import datetime
 from database import execute_query, execute_mutation, generate_record_id
+from auth import require_auth_user
 from schemas import ProductRecord, HistoryEntryCreate
-from utils import build_history_entry, normalize_record
+from utils import build_history_entry, build_update_history_entries, normalize_record
 import json
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -88,8 +89,9 @@ async def create_product(data: dict) -> ProductRecord:
 
 
 @router.put("/{recordId}", response_model=ProductRecord)
-async def update_product(recordId: str, data: dict) -> ProductRecord:
+async def update_product(recordId: str, data: dict, request: Request) -> ProductRecord:
     """Update a product."""
+    actor = await require_auth_user(request)
     
     existing = await execute_query(
         "SELECT * FROM products WHERE recordId = %s",
@@ -102,7 +104,27 @@ async def update_product(recordId: str, data: dict) -> ProductRecord:
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     history = json.loads(existing.get("history", "[]")) if isinstance(existing.get("history"), str) else existing.get("history", [])
-    history.append(build_history_entry("Updated", "Product updated"))
+    history.extend(
+        build_update_history_entries(
+            existing,
+            {
+                "productFamily": data.get("productFamily"),
+                "productName": data.get("productName"),
+                "productUrl": data.get("productUrl"),
+                "metaData": data.get("metaData"),
+            },
+            actor["displayName"],
+            field_labels={
+                "productFamily": "Product Family",
+                "productName": "Product Name",
+                "productUrl": "Product URL",
+                "metaData": "Metadata",
+            },
+        )
+    )
+
+    if not history:
+        history.append(build_history_entry("Updated", "Product updated", user=actor["displayName"]))
     
     sql = """
         UPDATE products SET
@@ -114,7 +136,7 @@ async def update_product(recordId: str, data: dict) -> ProductRecord:
     params = [
         data.get("productFamily"), data.get("productName"),
         data.get("productUrl"), data.get("metaData"),
-        now, "System", json.dumps(history), recordId,
+        now, actor["displayName"], json.dumps(history), recordId,
     ]
     
     await execute_mutation(sql, params)

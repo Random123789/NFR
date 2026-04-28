@@ -1,7 +1,7 @@
 """Utility functions for record management."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 import json
 from database import deserialize_history
 
@@ -9,15 +9,80 @@ from database import deserialize_history
 def build_history_entry(
     action: str,
     changes: str,
-    user: str = "System"
-) -> Dict[str, str]:
+    user: str = "System",
+    field: Optional[str] = None,
+    previous_value: Any = None,
+    new_value: Any = None,
+) -> Dict[str, Any]:
     """Build a single history entry."""
-    return {
+    entry: Dict[str, Any] = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user": user,
         "action": action,
         "changes": changes,
     }
+
+    if field is not None:
+        entry["field"] = field
+
+    if previous_value is not None:
+        entry["previousValue"] = previous_value
+
+    if new_value is not None:
+        entry["newValue"] = new_value
+
+    return entry
+
+
+def _format_history_value(value: Any) -> str:
+    if value is None:
+        return "—"
+
+    if isinstance(value, str):
+        return value if value.strip() else "—"
+
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+
+    return str(value)
+
+
+def build_update_history_entries(
+    before: Dict[str, Any],
+    after: Dict[str, Any],
+    user: str,
+    field_labels: Optional[Dict[str, str]] = None,
+    ignored_fields: Optional[Iterable[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Build one history entry per field that changed."""
+    labels = field_labels or {}
+    ignored = set(ignored_fields or [])
+    entries: List[Dict[str, Any]] = []
+
+    for field, new_value in after.items():
+        if field in ignored:
+            continue
+
+        previous_value = before.get(field)
+        if previous_value == new_value:
+            continue
+
+        label = labels.get(field, field)
+        previous_text = _format_history_value(previous_value)
+        new_text = _format_history_value(new_value)
+
+        entries.append(
+            build_history_entry(
+                action="Updated",
+                changes=f"{label} changed from {previous_text} to {new_text}",
+                user=user,
+                field=label,
+                previous_value=previous_text,
+                new_value=new_text,
+            )
+        )
+
+    return entries
 
 
 def normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:

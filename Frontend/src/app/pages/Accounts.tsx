@@ -1,19 +1,37 @@
 import { useState, useEffect } from "react";
-import { X, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { accounts, getCasesByAccountId, getProjectsByAccountId, getCaseById, updateAccount } from "../data/apiClient";
+import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
+import { accounts, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getProjectsByAccountId, getCaseById, updateAccount, type HistoryEntry } from "../data/apiClient";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
-import { useNavigate } from "react-router";
+import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useToast } from "../context/ToastContext";
 
 export function Accounts() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { showToast } = useToast();
   const { searchTerm } = useSearch();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const [selectedAccount, setSelectedAccount] = useState<typeof accounts[0] | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedAccount, setEditedAccount] = useState<typeof accounts[0] | null>(null);
   const [newComment, setNewComment] = useState("");
+  const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
+  const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
+  const [linkingCaseId, setLinkingCaseId] = useState("");
+  const [isLinkingCase, setIsLinkingCase] = useState(false);
+
+  type LinkedReturnState = {
+    returnTo?: {
+      path: string;
+      eventName: string;
+      recordId: string;
+    };
+    previousState?: LinkedReturnState | null;
+  };
 
   const [searchFilters, setSearchFilters] = useState({
     recordId: "",
@@ -34,6 +52,7 @@ export function Accounts() {
       const account = accounts.find(a => a.recordId === accountId);
       if (account) {
         setSelectedAccount(account);
+        setActiveDetailTab("details");
       }
     };
 
@@ -41,20 +60,119 @@ export function Accounts() {
     return () => window.removeEventListener('openAccountDetail', handleOpenDetail as EventListener);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLinkedCases = async () => {
+      if (!selectedAccount) {
+        setLinkedCases([]);
+        setLinkingCaseId("");
+        return;
+      }
+
+      try {
+        const linked = await getLinkedCasesByEntity("account", selectedAccount.recordId);
+        if (!cancelled) {
+          setLinkedCases(linked);
+        }
+      } catch (error) {
+        console.error("Failed to load linked cases for account:", error);
+        if (!cancelled) {
+          setLinkedCases([]);
+        }
+      }
+    };
+
+    loadLinkedCases();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAccount?.recordId]);
+
   const handleCaseClick = (caseId: string) => {
-    setSelectedAccount(null);
-    navigate('/cases');
+    if (!selectedAccount?.recordId) return;
+
+    const state: LinkedReturnState = {
+      returnTo: {
+        path: '/accounts',
+        eventName: 'openAccountDetail',
+        recordId: selectedAccount.recordId,
+      },
+      previousState: (location.state as LinkedReturnState | null) ?? null,
+    };
+
+    navigate('/cases', { state });
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('openCaseDetail', { detail: caseId }));
     }, 100);
   };
 
   const handleProjectClick = (projectId: string) => {
-    setSelectedAccount(null);
-    navigate('/projects');
+    if (!selectedAccount?.recordId) return;
+
+    const state: LinkedReturnState = {
+      returnTo: {
+        path: '/accounts',
+        eventName: 'openAccountDetail',
+        recordId: selectedAccount.recordId,
+      },
+      previousState: (location.state as LinkedReturnState | null) ?? null,
+    };
+
+    navigate('/projects', { state });
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('openProjectDetail', { detail: projectId }));
     }, 100);
+  };
+
+  const handleLinkCase = async () => {
+    if (!selectedAccount || !linkingCaseId) return;
+
+    setIsLinkingCase(true);
+    try {
+      await addCaseLink(linkingCaseId, "account", selectedAccount.recordId);
+      const linked = await getLinkedCasesByEntity("account", selectedAccount.recordId);
+      setLinkedCases(linked);
+      setLinkingCaseId("");
+      showToast("Case linked successfully.", "success");
+    } catch (error) {
+      console.error("Failed to link case to account:", error);
+      showToast("Failed to link case.", "error");
+    } finally {
+      setIsLinkingCase(false);
+    }
+  };
+
+  const handleUnlinkCase = async (caseRecordId: string) => {
+    if (!selectedAccount) return;
+
+    setIsLinkingCase(true);
+    try {
+      await removeCaseLink(caseRecordId, "account", selectedAccount.recordId);
+      const linked = await getLinkedCasesByEntity("account", selectedAccount.recordId);
+      setLinkedCases(linked);
+      showToast("Case unlinked successfully.", "success");
+    } catch (error) {
+      console.error("Failed to unlink case from account:", error);
+      showToast("Failed to unlink case.", "error");
+    } finally {
+      setIsLinkingCase(false);
+    }
+  };
+
+  const handleBackFromDetail = () => {
+    const navState = (location.state as LinkedReturnState | null) ?? null;
+    if (navState?.returnTo) {
+      navigate(navState.returnTo.path, { state: navState.previousState ?? null });
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(navState.returnTo!.eventName, { detail: navState.returnTo!.recordId }));
+      }, 100);
+      return;
+    }
+
+    setSelectedAccount(null);
+    setIsEditing(false);
+    setEditedAccount(null);
   };
 
   const handleEdit = () => {
@@ -84,10 +202,10 @@ export function Accounts() {
       setSelectedAccount(saved);
       setEditedAccount(saved);
       setIsEditing(false);
-      alert("Changes saved successfully!");
+      showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save account:", error);
-      alert("Failed to save changes. Please try again.");
+      showToast("Failed to save changes. Please try again.", "error");
     }
   };
 
@@ -98,14 +216,16 @@ export function Accounts() {
 
   const handleAddComment = () => {
     if (selectedAccount && newComment.trim()) {
-      const now = new Date();
-      const timestamp = now.toISOString().slice(0, 19).replace('T', ' ');
+      const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
+      const quoteText = selectedQuote
+        ? `[Quoted reply to ${selectedQuote.user} (${selectedQuote.timestamp})]\n${formatHistoryEntryText(selectedQuote)}`
+        : null;
 
       const newHistoryEntry = {
         timestamp,
         user: "Current User",
         action: "Comment",
-        changes: newComment.trim(),
+        changes: quoteText ? `${quoteText}\n\n${newComment.trim()}` : newComment.trim(),
       };
 
       const updatedAccount = {
@@ -115,6 +235,7 @@ export function Accounts() {
 
       setSelectedAccount(updatedAccount);
       setNewComment("");
+      setSelectedQuote(null);
     }
   };
 
@@ -165,8 +286,9 @@ export function Accounts() {
     return 0;
   });
 
-  const relatedCases = selectedAccount ? getCasesByAccountId(selectedAccount.recordId) : [];
+  const relatedCases = linkedCases;
   const relatedProjects = selectedAccount ? getProjectsByAccountId(selectedAccount.recordId) : [];
+  const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
 
   return (
     <div className="space-y-6">
@@ -175,7 +297,7 @@ export function Accounts() {
         <p className="text-gray-600 mt-1">Manage Fortinet customer accounts and organizations</p>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+      <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedAccount ? "hidden" : ""}`}>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -291,7 +413,10 @@ export function Accounts() {
               {sortedAccounts.map((account) => (
                 <tr
                   key={account.recordId}
-                  onClick={() => setSelectedAccount(account)}
+                  onClick={() => {
+                    setSelectedAccount(account);
+                    setActiveDetailTab("details");
+                  }}
                   className="hover:bg-gray-50 cursor-pointer transition-colors"
                 >                  <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button
@@ -333,9 +458,9 @@ export function Accounts() {
       </div>
 
       {selectedAccount && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-xl">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          <div className="w-full">
+            <div className="sticky top-[-1.5rem] z-10 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-xl">
               <h2 className="text-xl font-semibold text-gray-900">Account Details</h2>
               <div className="flex items-center gap-2">
                 <button
@@ -387,20 +512,43 @@ export function Accounts() {
                   </>
                 )}
                 <button
-                  onClick={() => {
-                    setSelectedAccount(null);
-                    setIsEditing(false);
-                    setEditedAccount(null);
-                  }}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  onClick={handleBackFromDetail}
+                  className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  <X className="w-5 h-5 text-gray-500" />
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
                 </button>
               </div>
             </div>
 
-            <div className="p-6 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2 space-y-6">
+              <div className="border-b border-gray-200 pb-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setActiveDetailTab("details")}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      activeDetailTab === "details"
+                        ? "bg-[#E31937] text-white"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Details
+                  </button>
+                  <button
+                    onClick={() => setActiveDetailTab("linked")}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      activeDetailTab === "linked"
+                        ? "bg-[#E31937] text-white"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Linked Entities
+                  </button>
+                </div>
+              </div>
+
+              <div className={activeDetailTab === "details" ? "grid grid-cols-2 gap-4" : "hidden"}>
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Record ID</label>
                   {isEditing && editedAccount ? (
@@ -552,10 +700,38 @@ export function Accounts() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
+              <div className={activeDetailTab === "linked" ? "pt-1" : "hidden"}>
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">Related Data</h3>
                 <div className="space-y-4">
-                  <LinkedCasesList cases={relatedCases} onCaseClick={handleCaseClick} />
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Link case</label>
+                        <select
+                          value={linkingCaseId}
+                          onChange={(e) => setLinkingCaseId(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                        >
+                          <option value="">Select a case</option>
+                          {availableCases.map((caseItem) => (
+                            <option key={caseItem.recordId} value={caseItem.recordId}>
+                              {caseItem.recordId} - {caseItem.description}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleLinkCase}
+                        disabled={!linkingCaseId || isLinkingCase}
+                        className="px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Link Case
+                      </button>
+                    </div>
+                  </div>
+
+                  <LinkedCasesList cases={linkedCases} onCaseClick={handleCaseClick} onRemoveCase={handleUnlinkCase} />
 
                   {relatedProjects.length > 0 ? (
                     <div className="bg-gray-50 rounded-lg p-4">
@@ -585,37 +761,32 @@ export function Accounts() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
+              </div>
+
+              <div className="xl:col-span-1">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+              <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
-                <div className="space-y-3 mb-6">
-                  {selectedAccount.history && selectedAccount.history.length > 0 ? (
-                    selectedAccount.history.map((entry, index) => (
-                      <div key={index} className="flex gap-4 p-4 bg-gray-50 rounded-lg">
-                        <div className="flex-shrink-0 w-40">
-                          <div className="text-sm text-gray-500">{entry.timestamp}</div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-medium text-gray-900">{entry.user}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                              entry.action === "Comment"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-blue-100 text-blue-800"
-                            }`}>
-                              {entry.action}
-                            </span>
-                          </div>
-                          <div className="text-sm text-gray-700">{entry.changes}</div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-gray-500 italic">No history available</p>
-                  )}
-                </div>
+                <RecordHistoryTimeline history={selectedAccount.history} onQuote={setSelectedQuote} />
 
                 <div className="border-t border-gray-200 pt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Comment</label>
+                  {selectedQuote && (
+                    <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 border-l-4 border-l-[#6264A7]">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-gray-500 font-medium">
+                          Replying to {selectedQuote.user} - {selectedQuote.timestamp}
+                        </p>
+                        <button
+                          onClick={() => setSelectedQuote(null)}
+                          className="text-xs text-[#6264A7] hover:underline"
+                        >
+                          Clear quote
+                        </button>
+                      </div>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <textarea
                       value={newComment}
@@ -637,6 +808,8 @@ export function Accounts() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
           </div>
         </div>
       )}

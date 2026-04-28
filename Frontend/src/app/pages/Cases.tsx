@@ -1,14 +1,28 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, X, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { cases, getAccountById, getProductById, getProjectById, getNfrById, getNfrByMantisId, getKnockById, getKnockByKnockId, getCaseById, updateCase } from "../data/apiClient";
-import { LinkedEntityCard } from "../components/LinkedEntityCard";
-import { useNavigate } from "react-router";
+import { ChevronDown, ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
+import { cases, accounts, products, projects, nfrs, knocks, getAccountById, getProductById, getProjectById, getNfrByMantisId, getKnockByKnockId, getCaseById, updateCase, getCase, getCaseLinks, addCaseLink, removeCaseLink, type CaseLinkEntityType, type CaseLinksResponse, type HistoryEntry } from "../data/apiClient";
+import { LinkedEntityList } from "../components/LinkedEntityCard";
+import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useToast } from "../context/ToastContext";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
+
+type LinkDrafts = {
+  account: string;
+  product: string;
+  project: string;
+  nfr: string;
+  knock: string;
+};
+
+type LinkKey = keyof LinkDrafts;
 
 export function Cases() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { showToast } = useToast();
   const { searchTerm } = useSearch();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const [selectedCase, setSelectedCase] = useState<typeof cases[0] | null>(null);
@@ -17,6 +31,26 @@ export function Cases() {
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [priorityFilter, setPriorityFilter] = useState<string>("All");
   const [newComment, setNewComment] = useState("");
+  const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
+  const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
+  const [caseLinks, setCaseLinks] = useState<CaseLinksResponse | null>(null);
+  const [linkDrafts, setLinkDrafts] = useState<LinkDrafts>({
+    account: "",
+    product: "",
+    project: "",
+    nfr: "",
+    knock: "",
+  });
+
+  type LinkedReturnState = {
+    returnTo?: {
+      path: string;
+      eventName: string;
+      recordId: string;
+    };
+    previousState?: LinkedReturnState | null;
+  };
 
   const [searchFilters, setSearchFilters] = useState({
     recordId: "",
@@ -39,12 +73,45 @@ export function Cases() {
       const caseData = getCaseById(caseId);
       if (caseData) {
         setSelectedCase(caseData);
+        setActiveDetailTab("details");
       }
     };
 
     window.addEventListener('openCaseDetail', handleOpenDetail as EventListener);
     return () => window.removeEventListener('openCaseDetail', handleOpenDetail as EventListener);
   }, []);
+
+  useEffect(() => {
+    if (!selectedCase) {
+      setCaseLinks(null);
+      setLinkDrafts({
+        account: "",
+        product: "",
+        project: "",
+        nfr: "",
+        knock: "",
+      });
+      return;
+    }
+
+    setLinkDrafts({
+      account: "",
+      product: "",
+      project: "",
+      nfr: "",
+      knock: "",
+    });
+
+    void (async () => {
+      try {
+        const links = await getCaseLinks(selectedCase.recordId);
+        setCaseLinks(links);
+      } catch (error) {
+        console.error("Failed to load case links:", error);
+        setCaseLinks(null);
+      }
+    })();
+  }, [selectedCase]);
 
   const handleSort = (key: string) => {
     let direction: 'asc' | 'desc' | null = 'asc';
@@ -142,6 +209,7 @@ export function Cases() {
     const caseData = getCaseById(recordId);
     if (caseData) {
       setSelectedCase(caseData);
+      setActiveDetailTab("details");
       setIsEditing(false);
       setEditedCase(null);
     }
@@ -180,10 +248,10 @@ export function Cases() {
       setSelectedCase(saved);
       setEditedCase(saved);
       setIsEditing(false);
-      alert("Changes saved successfully!");
+      showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save case:", error);
-      alert("Failed to save changes. Please try again.");
+      showToast("Failed to save changes. Please try again.", "error");
     }
   };
 
@@ -194,14 +262,16 @@ export function Cases() {
 
   const handleAddComment = () => {
     if (selectedCase && newComment.trim()) {
-      const now = new Date();
-      const timestamp = now.toISOString().slice(0, 19).replace('T', ' ');
+      const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
+      const quoteText = selectedQuote
+        ? `[Quoted reply to ${selectedQuote.user} (${selectedQuote.timestamp})]\n${formatHistoryEntryText(selectedQuote)}`
+        : null;
 
       const newHistoryEntry = {
         timestamp,
         user: "Current User",
         action: "Comment",
-        changes: newComment.trim(),
+        changes: quoteText ? `${quoteText}\n\n${newComment.trim()}` : newComment.trim(),
       };
 
       const updatedCase = {
@@ -211,47 +281,129 @@ export function Cases() {
 
       setSelectedCase(updatedCase);
       setNewComment("");
+      setSelectedQuote(null);
     }
   };
 
-  const handleAccountClick = (accountId: string) => {
-    setSelectedCase(null);
-    navigate('/accounts');
+  const refreshSelectedCase = async (recordId: string) => {
+    const refreshed = await getCase(recordId);
+    const index = cases.findIndex((c) => c.recordId === refreshed.recordId);
+    if (index >= 0) {
+      cases[index] = refreshed;
+    }
+    setSelectedCase(refreshed);
+    if (editedCase && editedCase.recordId === refreshed.recordId) {
+      setEditedCase(refreshed);
+    }
+  };
+
+  const refreshCaseLinks = async (recordId: string) => {
+    const links = await getCaseLinks(recordId);
+    setCaseLinks(links);
+  };
+
+  const handleLinkEntity = async (key: LinkKey) => {
+    if (!selectedCase) return;
+
+    setIsUpdatingLinks(true);
+
+    try {
+      const entityTypeMap: Record<LinkKey, CaseLinkEntityType> = {
+        account: "account",
+        product: "product",
+        project: "project",
+        nfr: "nfr",
+        knock: "knock",
+      };
+      const entityRecordId = linkDrafts[key];
+      if (!entityRecordId) {
+        return;
+      }
+
+      await addCaseLink(selectedCase.recordId, entityTypeMap[key], entityRecordId);
+      await refreshSelectedCase(selectedCase.recordId);
+      await refreshCaseLinks(selectedCase.recordId);
+      showToast("Linked entities updated.", "success");
+    } catch (error) {
+      console.error("Failed to update linked entities:", error);
+      showToast("Failed to update linked entities.", "error");
+    } finally {
+      setIsUpdatingLinks(false);
+    }
+  };
+
+  const handleUnlinkEntity = async (key: CaseLinkEntityType, entityRecordId: string) => {
+    if (!selectedCase) return;
+
+    setIsUpdatingLinks(true);
+    try {
+      await removeCaseLink(selectedCase.recordId, key, entityRecordId);
+      await refreshSelectedCase(selectedCase.recordId);
+      await refreshCaseLinks(selectedCase.recordId);
+      showToast("Linked entities updated.", "success");
+    } catch (error) {
+      console.error("Failed to update linked entities:", error);
+      showToast("Failed to update linked entities.", "error");
+    } finally {
+      setIsUpdatingLinks(false);
+    }
+  };
+
+  const navigateToLinkedEntity = (
+    targetPath: string,
+    targetEventName: string,
+    targetRecordId: string,
+  ) => {
+    if (!selectedCase?.recordId) return;
+
+    const state: LinkedReturnState = {
+      returnTo: {
+        path: '/cases',
+        eventName: 'openCaseDetail',
+        recordId: selectedCase.recordId,
+      },
+      previousState: (location.state as LinkedReturnState | null) ?? null,
+    };
+
+    navigate(targetPath, { state });
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openAccountDetail', { detail: accountId }));
+      window.dispatchEvent(new CustomEvent(targetEventName, { detail: targetRecordId }));
     }, 100);
+  };
+
+  const handleAccountClick = (accountId: string) => {
+    navigateToLinkedEntity('/accounts', 'openAccountDetail', accountId);
   };
 
   const handleProductClick = (productId: string) => {
-    setSelectedCase(null);
-    navigate('/product');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openProductDetail', { detail: productId }));
-    }, 100);
+    navigateToLinkedEntity('/product', 'openProductDetail', productId);
   };
 
   const handleProjectClick = (projectId: string) => {
-    setSelectedCase(null);
-    navigate('/projects');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openProjectDetail', { detail: projectId }));
-    }, 100);
+    navigateToLinkedEntity('/projects', 'openProjectDetail', projectId);
   };
 
   const handleNfrClick = (nfrId: string) => {
-    setSelectedCase(null);
-    navigate('/nfr');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openNfrDetail', { detail: nfrId }));
-    }, 100);
+    navigateToLinkedEntity('/nfr', 'openNfrDetail', nfrId);
   };
 
   const handleKnockClick = (knockId: string) => {
+    navigateToLinkedEntity('/knock', 'openKnockDetail', knockId);
+  };
+
+  const handleBackFromDetail = () => {
+    const navState = (location.state as LinkedReturnState | null) ?? null;
+    if (navState?.returnTo) {
+      navigate(navState.returnTo.path, { state: navState.previousState ?? null });
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(navState.returnTo!.eventName, { detail: navState.returnTo!.recordId }));
+      }, 100);
+      return;
+    }
+
     setSelectedCase(null);
-    navigate('/knock');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openKnockDetail', { detail: knockId }));
-    }, 100);
+    setIsEditing(false);
+    setEditedCase(null);
   };
 
   const account = selectedCase ? getAccountById(selectedCase.account) : null;
@@ -259,6 +411,12 @@ export function Cases() {
   const project = selectedCase ? getProjectById(selectedCase.project) : null;
   const nfr = selectedCase ? (selectedCase.mantisId ? getNfrByMantisId(selectedCase.mantisId) : null) : null;
   const knock = selectedCase ? (selectedCase.knockId ? getKnockByKnockId(selectedCase.knockId) : null) : null;
+
+  const linkedAccounts = caseLinks?.accounts ?? (account ? [account] : []);
+  const linkedProducts = caseLinks?.products ?? (product ? [product] : []);
+  const linkedProjects = caseLinks?.projects ?? (project ? [project] : []);
+  const linkedNfrs = caseLinks?.nfrs ?? (nfr ? [nfr] : []);
+  const linkedKnocks = caseLinks?.knocks ?? (knock ? [knock] : []);
 
   return (
     <div className="space-y-6">
@@ -269,7 +427,7 @@ export function Cases() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+      <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedCase ? "hidden" : ""}`}>
         <div className="p-4 border-b border-gray-200 flex gap-3">
           <div className="relative">
             <select
@@ -451,7 +609,10 @@ export function Cases() {
               {sortedCases.map((caseItem) => (
                 <tr
                   key={caseItem.recordId}
-                  onClick={() => setSelectedCase(caseItem)}
+                  onClick={() => {
+                    setSelectedCase(caseItem);
+                    setActiveDetailTab("details");
+                  }}
                   className="hover:bg-gray-50 cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -502,9 +663,9 @@ export function Cases() {
       </div>
 
       {selectedCase && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          <div className="w-full">
+            <div className="sticky top-[-1.5rem] z-10 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-gray-900">Case Details</h2>
               <div className="flex items-center gap-2">
                 <button
@@ -556,20 +717,43 @@ export function Cases() {
                   </>
                 )}
                 <button
-                  onClick={() => {
-                    setSelectedCase(null);
-                    setIsEditing(false);
-                    setEditedCase(null);
-                  }}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  onClick={handleBackFromDetail}
+                  className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  <X className="w-5 h-5 text-gray-500" />
+                  <ArrowLeft className="w-4 h-4" />
+                  Back
                 </button>
               </div>
             </div>
 
-            <div className="p-6 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2 space-y-6">
+              <div className="border-b border-gray-200 pb-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setActiveDetailTab("details")}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      activeDetailTab === "details"
+                        ? "bg-[#E31937] text-white"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Details
+                  </button>
+                  <button
+                    onClick={() => setActiveDetailTab("linked")}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      activeDetailTab === "linked"
+                        ? "bg-[#E31937] text-white"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Linked Entities
+                  </button>
+                </div>
+              </div>
+
+              <div className={activeDetailTab === "details" ? "grid grid-cols-2 gap-4" : "hidden"}>
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Record ID</label>
                   {isEditing && editedCase ? (
@@ -896,101 +1080,216 @@ export function Cases() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
+              <div className={activeDetailTab === "linked" ? "pt-1" : "hidden"}>
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">Linked Entities</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <LinkedEntityCard
+                <div className="space-y-4">
+                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                    <select
+                      value={linkDrafts.account}
+                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, account: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Select account</option>
+                      {accounts.map((item) => (
+                        <option key={item.recordId} value={item.recordId}>
+                          {item.recordId} - {item.accountName}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void handleLinkEntity("account")}
+                        disabled={isUpdatingLinks || !linkDrafts.account}
+                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
+                      >
+                        Link Account
+                      </button>
+                    </div>
+                  </div>
+                  <LinkedEntityList
                     title="Account"
-                    data={account}
+                    entities={linkedAccounts}
                     fields={[
                       { label: "ID", key: "recordId" },
                       { label: "Name", key: "accountName" },
                       { label: "Type", key: "type" },
                       { label: "Vertical", key: "vertical" },
                     ]}
-                    onRecordClick={handleAccountClick}
+                    onEntityClick={handleAccountClick}
+                    onRemoveEntity={(recordId) => void handleUnlinkEntity("account", recordId)}
                   />
 
-                  <LinkedEntityCard
+                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                    <select
+                      value={linkDrafts.product}
+                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, product: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Select product</option>
+                      {products.map((item) => (
+                        <option key={item.recordId} value={item.recordId}>
+                          {item.recordId} - {item.productName}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void handleLinkEntity("product")}
+                        disabled={isUpdatingLinks || !linkDrafts.product}
+                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
+                      >
+                        Link Product
+                      </button>
+                    </div>
+                  </div>
+                  <LinkedEntityList
                     title="Product"
-                    data={product}
+                    entities={linkedProducts}
                     fields={[
                       { label: "ID", key: "recordId" },
                       { label: "Name", key: "productName" },
                       { label: "Family", key: "productFamily" },
                     ]}
-                    onRecordClick={handleProductClick}
+                    onEntityClick={handleProductClick}
+                    onRemoveEntity={(recordId) => void handleUnlinkEntity("product", recordId)}
                   />
 
-                  <LinkedEntityCard
+                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                    <select
+                      value={linkDrafts.project}
+                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, project: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Select project</option>
+                      {projects.map((item) => (
+                        <option key={item.recordId} value={item.recordId}>
+                          {item.recordId} - {item.projectName}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void handleLinkEntity("project")}
+                        disabled={isUpdatingLinks || !linkDrafts.project}
+                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
+                      >
+                        Link Project
+                      </button>
+                    </div>
+                  </div>
+                  <LinkedEntityList
                     title="Project"
-                    data={project}
+                    entities={linkedProjects}
                     fields={[
                       { label: "ID", key: "recordId" },
                       { label: "Name", key: "projectName" },
                       { label: "Stage", key: "stage" },
                       { label: "Value", key: "sfdcValue" },
                     ]}
-                    onRecordClick={handleProjectClick}
+                    onEntityClick={handleProjectClick}
+                    onRemoveEntity={(recordId) => void handleUnlinkEntity("project", recordId)}
                   />
 
-                  <LinkedEntityCard
+                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                    <select
+                      value={linkDrafts.nfr}
+                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, nfr: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Select NFR</option>
+                      {nfrs.map((item) => (
+                        <option key={item.recordId} value={item.recordId}>
+                          {item.recordId} - {item.mantisId || "No Mantis ID"}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void handleLinkEntity("nfr")}
+                        disabled={isUpdatingLinks || !linkDrafts.nfr}
+                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
+                      >
+                        Link NFR
+                      </button>
+                    </div>
+                  </div>
+                  <LinkedEntityList
                     title="NFR"
-                    data={nfr}
+                    entities={linkedNfrs}
                     fields={[
                       { label: "ID", key: "recordId" },
                       { label: "Mantis ID", key: "mantisId" },
                       { label: "Status", key: "nfrStatus" },
                       { label: "Target Date", key: "nfrTargetDate" },
                     ]}
-                    onRecordClick={handleNfrClick}
+                    onEntityClick={handleNfrClick}
+                    onRemoveEntity={(recordId) => void handleUnlinkEntity("nfr", recordId)}
                   />
 
-                  <LinkedEntityCard
+                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                    <select
+                      value={linkDrafts.knock}
+                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, knock: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Select Knock</option>
+                      {knocks.map((item) => (
+                        <option key={item.recordId} value={item.recordId}>
+                          {item.recordId} - {item.knockId || "No Knock ID"}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void handleLinkEntity("knock")}
+                        disabled={isUpdatingLinks || !linkDrafts.knock}
+                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
+                      >
+                        Link Knock
+                      </button>
+                    </div>
+                  </div>
+                  <LinkedEntityList
                     title="Knock"
-                    data={knock}
+                    entities={linkedKnocks}
                     fields={[
                       { label: "ID", key: "recordId" },
                       { label: "Knock ID", key: "knockId" },
                       { label: "Status", key: "status" },
                       { label: "Target Date", key: "targetDate" },
                     ]}
-                    onRecordClick={handleKnockClick}
+                    onEntityClick={handleKnockClick}
+                    onRemoveEntity={(recordId) => void handleUnlinkEntity("knock", recordId)}
                   />
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
+              </div>
+
+              <div className="xl:col-span-1">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+              <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
-                <div className="space-y-3 mb-6">
-                  {selectedCase.history && selectedCase.history.length > 0 ? (
-                    selectedCase.history.map((entry, index) => (
-                      <div key={index} className="flex gap-4 p-4 bg-gray-50 rounded-lg">
-                        <div className="flex-shrink-0 w-40">
-                          <div className="text-sm text-gray-500">{entry.timestamp}</div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-medium text-gray-900">{entry.user}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${
-                              entry.action === "Comment"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-blue-100 text-blue-800"
-                            }`}>
-                              {entry.action}
-                            </span>
-                          </div>
-                          <div className="text-sm text-gray-700">{entry.changes}</div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-gray-500 italic">No history available</p>
-                  )}
-                </div>
+                <RecordHistoryTimeline history={selectedCase.history} onQuote={setSelectedQuote} />
 
                 <div className="border-t border-gray-200 pt-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Comment</label>
+                  {selectedQuote && (
+                    <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 border-l-4 border-l-[#6264A7]">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-gray-500 font-medium">
+                          Replying to {selectedQuote.user} - {selectedQuote.timestamp}
+                        </p>
+                        <button
+                          onClick={() => setSelectedQuote(null)}
+                          className="text-xs text-[#6264A7] hover:underline"
+                        >
+                          Clear quote
+                        </button>
+                      </div>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <textarea
                       value={newComment}
@@ -1012,6 +1311,8 @@ export function Cases() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
           </div>
         </div>
       )}

@@ -1,5 +1,7 @@
 """FastAPI main application."""
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -75,13 +77,15 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     
+    logger.info(f"Backend PID: {os.getpid()}")
     logger.info(f"Starting server on {settings.host}:{settings.port}")
     logger.info(f"Database: {settings.db_host}:{settings.db_port}/{settings.db_name}")
     logger.info(f"CORS Origin: {settings.cors_origin}")
     
     uvicorn.run(
-        "main:app",
+        app,
         host=settings.host,
         port=settings.port,
-        reload=settings.environment == "development",
+        reload=False,
+        workers=1,
     )

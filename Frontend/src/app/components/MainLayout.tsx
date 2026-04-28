@@ -3,6 +3,7 @@ import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
 import { Home, Briefcase, Building2, FolderKanban, FileText, Hammer, Package, BarChart3, PlusCircle, Search, Bell, User, X, Bookmark, LogOut } from "lucide-react";
 import { useSearch } from "../context/SearchContext";
 import { useAuth } from "../context/AuthContext";
+import { formatRoleLabel } from "../data/roleLabels";
 
 const navItems = [
   { path: "/", label: "Home", icon: Home, exact: true },
@@ -21,10 +22,12 @@ interface Notification {
   id: string;
   message: string;
   type: 'info' | 'success' | 'warning' | 'error';
-  timestamp: Date;
+  timestamp: string;
   entityType?: 'project' | 'case' | 'account' | 'nfr' | 'knock' | 'product';
   entityId?: string;
 }
+
+const API_BASE = 'http://localhost:4000/api';
 
 export function MainLayout() {
   const { searchTerm, setSearchTerm } = useSearch();
@@ -92,8 +95,34 @@ export function MainLayout() {
     }
   };
 
-  const dismissNotification = (id: string) => {
-    setNotifications(notifications.filter(n => n.id !== id));
+  const dismissNotification = async (id: string) => {
+    try {
+      await fetch(`${API_BASE}/notifications/dismiss`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ notificationId: id }),
+      });
+    } catch (error) {
+      console.error('Failed to dismiss notification:', error);
+    }
+
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const clearAllNotifications = async () => {
+    try {
+      await fetch(`${API_BASE}/notifications/clear-all`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+    } catch (error) {
+      console.error('Failed to clear notifications:', error);
+    }
+
+    setNotifications([]);
   };
 
   const getNotificationIcon = (type: string) => {
@@ -210,7 +239,9 @@ export function MainLayout() {
                     <h3 className="font-semibold text-gray-900">Notifications</h3>
                     {notifications.length > 0 && (
                       <button 
-                        onClick={() => setNotifications([])}
+                        onClick={() => {
+                          void clearAllNotifications();
+                        }}
                         className="text-xs text-gray-500 hover:text-gray-700"
                       >
                         Clear all
@@ -242,7 +273,7 @@ export function MainLayout() {
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
-                                dismissNotification(notif.id);
+                                void dismissNotification(notif.id);
                               }}
                               className="text-gray-400 hover:text-gray-600 flex-shrink-0"
                             >
@@ -272,7 +303,7 @@ export function MainLayout() {
                 </div>
                 <div>
                   <div className="font-medium text-sm text-gray-900">{user?.displayName || "Unknown User"}</div>
-                  <div className="text-xs text-gray-500">{user?.role || "User"}</div>
+                  <div className="text-xs text-gray-500">{formatRoleLabel(user?.role)}</div>
                 </div>
               </button>
               <button
