@@ -36,10 +36,10 @@ def build_history_entry(
 
 def _format_history_value(value: Any) -> str:
     if value is None:
-        return "—"
+        return "-"
 
     if isinstance(value, str):
-        return value if value.strip() else "—"
+        return value if value.strip() else "-"
 
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)

@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
-import { Home, Briefcase, Building2, FolderKanban, FileText, Hammer, Package, BarChart3, PlusCircle, Search, Bell, User, X, Bookmark, LogOut } from "lucide-react";
+import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, Home, Info, LogOut, Package, PlusCircle, Search, User, X } from "lucide-react";
 import { useSearch } from "../context/SearchContext";
 import { useAuth } from "../context/AuthContext";
 import { formatRoleLabel } from "../data/roleLabels";
+import {
+  clearAllNotifications as clearAllNotificationsApi,
+  dismissNotification as dismissNotificationApi,
+  getRecentNotifications,
+  type Notification,
+} from "../data/apiClient";
 
 const navItems = [
   { path: "/", label: "Home", icon: Home, exact: true },
@@ -18,17 +24,6 @@ const navItems = [
   { path: "/create-data", label: "Create Data", icon: PlusCircle },
 ];
 
-interface Notification {
-  id: string;
-  message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
-  timestamp: string;
-  entityType?: 'project' | 'case' | 'account' | 'nfr' | 'knock' | 'product';
-  entityId?: string;
-}
-
-const API_BASE = 'http://localhost:4000/api';
-
 export function MainLayout() {
   const { searchTerm, setSearchTerm } = useSearch();
   const { user, token, logout } = useAuth();
@@ -37,17 +32,16 @@ export function MainLayout() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
 
-  // Fetch notifications on mount and set up polling
   useEffect(() => {
     const fetchNotifications = async () => {
+      if (!token) {
+        setNotifications([]);
+        return;
+      }
+
       try {
-        const response = await fetch('http://localhost:4000/api/notifications/recent?hours=24', {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setNotifications(data);
-        }
+        const data = await getRecentNotifications(24);
+        setNotifications(data);
       } catch (error) {
         console.error('Failed to fetch notifications:', error);
       }
@@ -97,14 +91,7 @@ export function MainLayout() {
 
   const dismissNotification = async (id: string) => {
     try {
-      await fetch(`${API_BASE}/notifications/dismiss`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ notificationId: id }),
-      });
+      await dismissNotificationApi(id);
     } catch (error) {
       console.error('Failed to dismiss notification:', error);
     }
@@ -114,10 +101,7 @@ export function MainLayout() {
 
   const clearAllNotifications = async () => {
     try {
-      await fetch(`${API_BASE}/notifications/clear-all`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
+      await clearAllNotificationsApi();
     } catch (error) {
       console.error('Failed to clear notifications:', error);
     }
@@ -125,16 +109,16 @@ export function MainLayout() {
     setNotifications([]);
   };
 
-  const getNotificationIcon = (type: string) => {
+  const getNotificationIcon = (type: Notification["type"]) => {
     switch (type) {
       case 'error':
-        return '🔴';
+        return <CircleAlert className="h-4 w-4 text-red-600" />;
       case 'warning':
-        return '🟡';
+        return <AlertTriangle className="h-4 w-4 text-amber-600" />;
       case 'success':
-        return '🟢';
+        return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
       default:
-        return '🔵';
+        return <Info className="h-4 w-4 text-blue-600" />;
     }
   };
 

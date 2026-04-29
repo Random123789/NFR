@@ -8,9 +8,7 @@ import logging
 
 from config import settings
 from database import ping_database
-from routers import accounts, cases, products, projects, nfrs, knocks, reports, notifications
-from auth import ensure_default_user, router as auth_router
-from bookmarks import ensure_bookmark_tables, router as bookmarks_router
+from service_registry import SERVICES, register_services, startup_services
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,24 +31,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers under /api to match the frontend client.
-app.include_router(accounts.router, prefix="/api")
-app.include_router(cases.router, prefix="/api")
-app.include_router(products.router, prefix="/api")
-app.include_router(projects.router, prefix="/api")
-app.include_router(nfrs.router, prefix="/api")
-app.include_router(knocks.router, prefix="/api")
-app.include_router(reports.router, prefix="/api")
-app.include_router(notifications.router, prefix="/api")
-
-app.include_router(auth_router, prefix="/api")
-app.include_router(bookmarks_router, prefix="/api")
+# Register service routers under /api to match the frontend client.
+register_services(app)
 
 
 @app.on_event("startup")
 async def startup_bootstrap():
-    await ensure_bookmark_tables()
-    await ensure_default_user()
+    await startup_services()
 
 
 @app.get("/health")
@@ -71,6 +58,7 @@ async def root():
         "message": "NFR Backend API",
         "docs": "/docs",
         "version": "1.0.0",
+        "services": [service.name for service in SERVICES],
     }
 
 

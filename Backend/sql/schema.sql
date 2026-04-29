@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS nfrs (
   history JSON
 );
 
+CREATE UNIQUE INDEX uniq_nfrs_mantisId ON nfrs (mantisId);
+
 CREATE TABLE IF NOT EXISTS knocks (
   recordId VARCHAR(32) PRIMARY KEY,
   moduleId VARCHAR(32) NOT NULL,
@@ -92,6 +94,8 @@ CREATE TABLE IF NOT EXISTS knocks (
   targetDate VARCHAR(32),
   history JSON
 );
+
+CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId);
 
 CREATE TABLE IF NOT EXISTS cases (
   recordId VARCHAR(32) PRIMARY KEY,
@@ -113,6 +117,8 @@ CREATE TABLE IF NOT EXISTS cases (
   product VARCHAR(32),
   account VARCHAR(32),
   project VARCHAR(32),
+  nfrRecordId VARCHAR(32),
+  knockRecordId VARCHAR(32),
   knockId VARCHAR(120),
   mantisId VARCHAR(120),
   escalationNote TEXT,
@@ -124,8 +130,47 @@ CREATE TABLE IF NOT EXISTS cases (
 CREATE INDEX idx_cases_account ON cases (account);
 CREATE INDEX idx_cases_product ON cases (product);
 CREATE INDEX idx_cases_project ON cases (project);
+CREATE INDEX idx_cases_nfrRecordId ON cases (nfrRecordId);
+CREATE INDEX idx_cases_knockRecordId ON cases (knockRecordId);
 CREATE INDEX idx_cases_mantisId ON cases (mantisId);
 CREATE INDEX idx_cases_knockId ON cases (knockId);
+CREATE INDEX idx_projects_accountId ON projects (accountId);
+
+ALTER TABLE projects
+  ADD CONSTRAINT fk_projects_account
+  FOREIGN KEY (accountId) REFERENCES accounts(recordId)
+  ON DELETE SET NULL
+  ON UPDATE CASCADE;
+
+ALTER TABLE cases
+  ADD CONSTRAINT fk_cases_account
+  FOREIGN KEY (account) REFERENCES accounts(recordId)
+  ON DELETE SET NULL
+  ON UPDATE CASCADE;
+
+ALTER TABLE cases
+  ADD CONSTRAINT fk_cases_product
+  FOREIGN KEY (product) REFERENCES products(recordId)
+  ON DELETE SET NULL
+  ON UPDATE CASCADE;
+
+ALTER TABLE cases
+  ADD CONSTRAINT fk_cases_project
+  FOREIGN KEY (project) REFERENCES projects(recordId)
+  ON DELETE SET NULL
+  ON UPDATE CASCADE;
+
+ALTER TABLE cases
+  ADD CONSTRAINT fk_cases_nfr
+  FOREIGN KEY (nfrRecordId) REFERENCES nfrs(recordId)
+  ON DELETE SET NULL
+  ON UPDATE CASCADE;
+
+ALTER TABLE cases
+  ADD CONSTRAINT fk_cases_knock
+  FOREIGN KEY (knockRecordId) REFERENCES knocks(recordId)
+  ON DELETE SET NULL
+  ON UPDATE CASCADE;
 
 CREATE TABLE IF NOT EXISTS case_entity_links (
   caseRecordId VARCHAR(32) NOT NULL,

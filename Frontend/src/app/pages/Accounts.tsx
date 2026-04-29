@@ -301,9 +301,11 @@ export function Accounts() {
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">                <th className="text-left px-4 py-3 w-12">
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
-                </th>                <th className="text-left px-6 py-3">
+                </th>
+                <th className="text-left px-6 py-3">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
                     <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">
@@ -418,7 +420,8 @@ export function Accounts() {
                     setActiveDetailTab("details");
                   }}
                   className="hover:bg-gray-50 cursor-pointer transition-colors"
-                >                  <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                >
+                  <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -439,7 +442,8 @@ export function Accounts() {
                     >
                       <Bookmark className={`w-5 h-5 ${isBookmarked(account.recordId, 'account') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
                     </button>
-                  </td>                  <td className="px-6 py-4 text-sm font-medium text-[#E31937]">{account.recordId}</td>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-medium text-[#E31937]">{account.recordId}</td>
                   <td className="px-6 py-4 text-sm font-medium text-gray-900">{account.accountName}</td>
                   <td className="px-6 py-4 text-sm text-gray-700">{account.type}</td>
                   <td className="px-6 py-4 text-sm text-gray-700">{account.vertical}</td>

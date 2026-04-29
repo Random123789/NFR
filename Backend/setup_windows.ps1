@@ -1,6 +1,6 @@
 param(
     [string]$PythonCommand = "py -3.12",
-    [string]$DatabaseName = "nfr_db",
+    [string]$DatabaseName = "nfr",
     [string]$MysqlUser = "root"
 )
 

@@ -272,9 +272,11 @@ export function Product() {
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">                <th className="text-left px-4 py-3 w-12">
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
-                </th>                <th className="text-left px-6 py-3">
+                </th>
+                <th className="text-left px-6 py-3">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
                     <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">

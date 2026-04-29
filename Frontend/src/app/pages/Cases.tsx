@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ChevronDown, ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { cases, accounts, products, projects, nfrs, knocks, getAccountById, getProductById, getProjectById, getNfrByMantisId, getKnockByKnockId, getCaseById, updateCase, getCase, getCaseLinks, addCaseLink, removeCaseLink, type CaseLinkEntityType, type CaseLinksResponse, type HistoryEntry } from "../data/apiClient";
+import { cases, accounts, products, projects, nfrs, knocks, getAccountById, getProductById, getProjectById, getNfrById, getNfrByMantisId, getKnockById, getKnockByKnockId, getCaseById, updateCase, getCase, getCaseLinks, addCaseLink, removeCaseLink, type CaseLinkEntityType, type CaseLinksResponse, type HistoryEntry } from "../data/apiClient";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { useLocation, useNavigate } from "react-router";
@@ -228,15 +228,20 @@ export function Cases() {
     try {
       const saved = await updateCase(editedCase.recordId, {
         description: editedCase.description,
+        previousStatus: editedCase.previousStatus,
+        closeDate: editedCase.closeDate,
         status: editedCase.status,
         priority: editedCase.priority,
         category: editedCase.category,
         caseOwner: editedCase.caseOwner,
+        seOwner: editedCase.seOwner,
         product: editedCase.product,
         account: editedCase.account,
         project: editedCase.project,
         knockId: editedCase.knockId,
         mantisId: editedCase.mantisId,
+        escalationNote: editedCase.escalationNote,
+        escalationType: editedCase.escalationType,
         metaData: editedCase.metaData,
       });
 
@@ -409,8 +414,8 @@ export function Cases() {
   const account = selectedCase ? getAccountById(selectedCase.account) : null;
   const product = selectedCase ? getProductById(selectedCase.product) : null;
   const project = selectedCase ? getProjectById(selectedCase.project) : null;
-  const nfr = selectedCase ? (selectedCase.mantisId ? getNfrByMantisId(selectedCase.mantisId) : null) : null;
-  const knock = selectedCase ? (selectedCase.knockId ? getKnockByKnockId(selectedCase.knockId) : null) : null;
+  const nfr = selectedCase ? (getNfrById(selectedCase.nfrRecordId) ?? getNfrByMantisId(selectedCase.mantisId) ?? null) : null;
+  const knock = selectedCase ? (getKnockById(selectedCase.knockRecordId) ?? getKnockByKnockId(selectedCase.knockId) ?? null) : null;
 
   const linkedAccounts = caseLinks?.accounts ?? (account ? [account] : []);
   const linkedProducts = caseLinks?.products ?? (product ? [product] : []);

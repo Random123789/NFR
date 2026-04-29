@@ -1,7 +1,7 @@
 """Pydantic models for all domain entities."""
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, Field
 
 
@@ -89,6 +89,8 @@ class CaseRecord(BaseRecord):
     product: Optional[str] = None
     account: Optional[str] = None
     project: Optional[str] = None
+    nfrRecordId: Optional[str] = None
+    knockRecordId: Optional[str] = None
     knockId: Optional[str] = None
     mantisId: Optional[str] = None
     escalationNote: Optional[str] = None
@@ -125,6 +127,53 @@ class ReportFilters(BaseModel):
     product: str = ""
 
 
+class ReportJoinSpec(BaseModel):
+    """One whitelisted join selected by the visual report builder."""
+    source: str
+    joinType: str = "left"
+
+
+class ReportFilterRule(BaseModel):
+    """One filter selected by the visual report builder."""
+    field: str
+    operator: str = "eq"
+    value: Optional[str] = None
+
+
+class ReportMetricSpec(BaseModel):
+    """Aggregate metric selected by the visual report builder."""
+    type: str = "count"
+    field: Optional[str] = None
+
+
+class ReportQuerySpec(BaseModel):
+    """Safe, serializable report-builder definition."""
+    base: str = "cases"
+    joins: List[ReportJoinSpec] = Field(default_factory=list)
+    mode: str = "aggregate"
+    fields: List[str] = Field(default_factory=list)
+    filters: List[ReportFilterRule] = Field(default_factory=list)
+    groupBy: Optional[str] = "cases.status"
+    metric: ReportMetricSpec = Field(default_factory=ReportMetricSpec)
+    limit: int = 100
+    sortBy: Optional[str] = None
+    sortDirection: str = "desc"
+
+
+class ReportResultColumn(BaseModel):
+    """Column returned by a report run."""
+    key: str
+    label: str
+    type: str = "text"
+
+
+class ReportRunResult(BaseModel):
+    """Chart/table-ready report result."""
+    mode: str
+    columns: List[ReportResultColumn] = Field(default_factory=list)
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class CustomReportCreate(BaseModel):
     """Create or update a custom report configuration."""
     title: str
@@ -133,6 +182,7 @@ class CustomReportCreate(BaseModel):
     layoutSpan: int = 1
     sortOrder: int = 0
     filters: ReportFilters = Field(default_factory=ReportFilters)
+    querySpec: Optional[ReportQuerySpec] = None
 
 
 class CustomReportRecord(CustomReportCreate):
@@ -152,8 +202,53 @@ class AccountCreate(BaseModel):
     metaData: Optional[str] = None
 
 
+class ProductCreate(BaseModel):
+    productFamily: Optional[str] = None
+    productName: str
+    productUrl: Optional[str] = None
+    metaData: Optional[str] = None
+    ownedBy: Optional[str] = None
+
+
+class ProjectCreate(BaseModel):
+    projectName: str
+    accountId: Optional[str] = None
+    startDate: Optional[str] = None
+    closeDate: Optional[str] = None
+    stage: Optional[str] = None
+    sfdc: Optional[str] = None
+    sfdcValue: Optional[str] = None
+    se: Optional[str] = None
+    metaData: Optional[str] = None
+    ownedBy: Optional[str] = None
+
+
+class NfrCreate(BaseModel):
+    description: str
+    mantisId: Optional[str] = None
+    mantisUrl: Optional[str] = None
+    nfrStatus: Optional[str] = None
+    nfrRequestDate: Optional[str] = None
+    nfrTargetDate: Optional[str] = None
+    metaData: Optional[str] = None
+    ownedBy: Optional[str] = None
+
+
+class KnockCreate(BaseModel):
+    description: str
+    knockId: Optional[str] = None
+    knockUrl: Optional[str] = None
+    status: Optional[str] = None
+    requestDate: Optional[str] = None
+    targetDate: Optional[str] = None
+    metaData: Optional[str] = None
+    ownedBy: Optional[str] = None
+
+
 class CaseCreate(BaseModel):
     description: str
+    previousStatus: Optional[str] = None
+    closeDate: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
     category: Optional[str] = None
@@ -161,8 +256,13 @@ class CaseCreate(BaseModel):
     product: Optional[str] = None
     account: Optional[str] = None
     project: Optional[str] = None
+    nfrRecordId: Optional[str] = None
+    knockRecordId: Optional[str] = None
     knockId: Optional[str] = None
     mantisId: Optional[str] = None
+    escalationNote: Optional[str] = None
+    escalationType: Optional[str] = None
+    seOwner: Optional[str] = None
     metaData: Optional[str] = None
 
 
