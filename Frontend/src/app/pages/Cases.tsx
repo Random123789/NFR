@@ -3,6 +3,7 @@ import { ChevronDown, ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, B
 import { cases, accounts, products, projects, nfrs, knocks, getAccountById, getProductById, getProjectById, getNfrById, getNfrByMantisId, getKnockById, getKnockByKnockId, getCaseById, updateCase, getCase, getCaseLinks, addCaseLink, removeCaseLink, type CaseLinkEntityType, type CaseLinksResponse, type HistoryEntry } from "../data/apiClient";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
@@ -19,6 +20,53 @@ type LinkDrafts = {
 
 type LinkKey = keyof LinkDrafts;
 
+type CaseColumnKey = "recordId" | "description" | "status" | "priority" | "account" | "product" | "caseOwner" | "updatedAt";
+type CaseSearchKey = "recordId" | "description" | "account" | "product" | "caseOwner";
+
+type CaseTableColumn = {
+  key: CaseColumnKey;
+  label: string;
+  sortKey: CaseColumnKey;
+  searchKey?: CaseSearchKey;
+};
+
+const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
+  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
+  { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
+  { key: "status", label: "Status", sortKey: "status" },
+  { key: "priority", label: "Priority", sortKey: "priority" },
+  { key: "account", label: "Account", sortKey: "account", searchKey: "account" },
+  { key: "product", label: "Product", sortKey: "product", searchKey: "product" },
+  { key: "caseOwner", label: "SC Owner", sortKey: "caseOwner", searchKey: "caseOwner" },
+  { key: "updatedAt", label: "Updated", sortKey: "updatedAt" },
+];
+
+const DEFAULT_CASE_COLUMN_KEYS = CASE_TABLE_COLUMNS.map((column) => column.key);
+const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns";
+
+function getStoredCaseColumnKeys(): CaseColumnKey[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_CASE_COLUMN_KEYS;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(CASE_COLUMN_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_CASE_COLUMN_KEYS;
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_CASE_COLUMN_KEYS;
+    }
+
+    const validKeys = DEFAULT_CASE_COLUMN_KEYS.filter((key) => parsed.includes(key));
+    return validKeys.length > 0 ? validKeys : DEFAULT_CASE_COLUMN_KEYS;
+  } catch {
+    return DEFAULT_CASE_COLUMN_KEYS;
+  }
+}
+
 export function Cases() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -34,6 +82,7 @@ export function Cases() {
   const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
   const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
   const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
+  const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useState<CaseColumnKey[]>(getStoredCaseColumnKeys);
   const [caseLinks, setCaseLinks] = useState<CaseLinksResponse | null>(null);
   const [linkDrafts, setLinkDrafts] = useState<LinkDrafts>({
     account: "",
@@ -66,6 +115,10 @@ export function Cases() {
     key: "",
     direction: null,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(CASE_COLUMN_STORAGE_KEY, JSON.stringify(visibleCaseColumnKeys));
+  }, [visibleCaseColumnKeys]);
 
   useEffect(() => {
     const handleOpenDetail = (event: any) => {
@@ -123,6 +176,32 @@ export function Cases() {
       }
     }
     setSortConfig({ key, direction });
+  };
+
+  const handleToggleCaseColumn = (key: CaseColumnKey) => {
+    const column = CASE_TABLE_COLUMNS.find((item) => item.key === key);
+    const isCurrentlyVisible = visibleCaseColumnKeys.includes(key);
+    const shouldHide = isCurrentlyVisible && visibleCaseColumnKeys.length > 1;
+
+    if (shouldHide && column?.searchKey) {
+      setSearchFilters((current) => ({ ...current, [column.searchKey!]: "" }));
+    }
+
+    if (shouldHide && sortConfig.key === key) {
+      setSortConfig({ key: "", direction: null });
+    }
+
+    setVisibleCaseColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
+      }
+
+      return DEFAULT_CASE_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
+    });
+  };
+
+  const handleResetCaseColumns = () => {
+    setVisibleCaseColumnKeys(DEFAULT_CASE_COLUMN_KEYS);
   };
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
@@ -422,6 +501,75 @@ export function Cases() {
   const linkedProjects = caseLinks?.projects ?? (project ? [project] : []);
   const linkedNfrs = caseLinks?.nfrs ?? (nfr ? [nfr] : []);
   const linkedKnocks = caseLinks?.knocks ?? (knock ? [knock] : []);
+  const visibleCaseColumns = CASE_TABLE_COLUMNS.filter((column) => visibleCaseColumnKeys.includes(column.key));
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key !== key || !sortConfig.direction) {
+      return <ArrowUpDown className="w-4 h-4" />;
+    }
+
+    return sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />;
+  };
+
+  const renderColumnHeader = (column: CaseTableColumn) => (
+    <th key={column.key} className="text-left px-6 py-3">
+      <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
+        <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">{column.label}</span>
+        <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
+          {renderSortIcon(column.sortKey)}
+        </button>
+      </div>
+      {column.searchKey && (
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchFilters[column.searchKey]}
+          onChange={(e) => setSearchFilters({ ...searchFilters, [column.searchKey!]: e.target.value })}
+          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </th>
+  );
+
+  const renderColumnCell = (caseItem: typeof cases[0], column: CaseTableColumn) => {
+    switch (column.key) {
+      case "recordId":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{caseItem.recordId}</td>;
+      case "description":
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={caseItem.description}>
+            {caseItem.description}
+          </td>
+        );
+      case "status":
+        return (
+          <td key={column.key} className="px-6 py-4">
+            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${caseStatusColors[caseItem.status]}`}>
+              {caseItem.status}
+            </span>
+          </td>
+        );
+      case "priority":
+        return (
+          <td key={column.key} className="px-6 py-4">
+            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${casePriorityColors[caseItem.priority]}`}>
+              {caseItem.priority}
+            </span>
+          </td>
+        );
+      case "account":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getAccountById(caseItem.account)?.accountName || "—"}</td>;
+      case "product":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getProductById(caseItem.product)?.productName || "—"}</td>;
+      case "caseOwner":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{caseItem.caseOwner}</td>;
+      case "updatedAt":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{caseItem.updatedAt}</td>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -433,35 +581,47 @@ export function Cases() {
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedCase ? "hidden" : ""}`}>
-        <div className="p-4 border-b border-gray-200 flex gap-3">
-          <div className="relative">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="appearance-none px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
-            >
-              <option value="All">All Status</option>
-              <option value="Open">Open</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Escalated">Escalated</option>
-              <option value="Closed">Closed</option>
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+        <div className="flex flex-col gap-3 border-b border-gray-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="appearance-none px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+              >
+                <option value="All">All Status</option>
+                <option value="Open">Open</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Escalated">Escalated</option>
+                <option value="Closed">Closed</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+            </div>
+
+            <div className="relative">
+              <select
+                value={priorityFilter}
+                onChange={(e) => setPriorityFilter(e.target.value)}
+                className="appearance-none px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+              >
+                <option value="All">All Priority</option>
+                <option value="Critical">Critical</option>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+            </div>
           </div>
 
-          <div className="relative">
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              className="appearance-none px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
-            >
-              <option value="All">All Priority</option>
-              <option value="Critical">Critical</option>
-              <option value="High">High</option>
-              <option value="Medium">Medium</option>
-              <option value="Low">Low</option>
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <p className="text-sm text-gray-500">{visibleCaseColumns.length} of {CASE_TABLE_COLUMNS.length} fields shown</p>
+            <TableFieldSelector
+              columns={CASE_TABLE_COLUMNS}
+              visibleKeys={visibleCaseColumnKeys}
+              onToggle={handleToggleCaseColumn}
+              onReset={handleResetCaseColumns}
+            />
           </div>
         </div>
 
@@ -472,142 +632,7 @@ export function Cases() {
                 <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
                 </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
-                    <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "recordId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.recordId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, recordId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Description</span>
-                    <button onClick={() => handleSort("description")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "description" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.description}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, description: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Status</span>
-                    <button onClick={() => handleSort("status")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "status" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Priority</span>
-                    <button onClick={() => handleSort("priority")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "priority" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Account</span>
-                    <button onClick={() => handleSort("account")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "account" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.account}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, account: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Product</span>
-                    <button onClick={() => handleSort("product")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "product" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.product}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, product: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">SC Owner</span>
-                    <button onClick={() => handleSort("caseOwner")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "caseOwner" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.caseOwner}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, caseOwner: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Updated</span>
-                    <button onClick={() => handleSort("updatedAt")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "updatedAt" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
+                {visibleCaseColumns.map(renderColumnHeader)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -642,24 +667,7 @@ export function Cases() {
                       <Bookmark className={`w-5 h-5 ${isBookmarked(caseItem.recordId, 'case') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{caseItem.recordId}</td>
-                  <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={caseItem.description}>
-                    {caseItem.description}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${caseStatusColors[caseItem.status]}`}>
-                      {caseItem.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${casePriorityColors[caseItem.priority]}`}>
-                      {caseItem.priority}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getAccountById(caseItem.account)?.accountName || "—"}</td>
-                  <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getProductById(caseItem.product)?.productName || "—"}</td>
-                  <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{caseItem.caseOwner}</td>
-                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{caseItem.updatedAt}</td>
+                  {visibleCaseColumns.map((column) => renderColumnCell(caseItem, column))}
                 </tr>
               ))}
             </tbody>
@@ -1092,7 +1100,7 @@ export function Cases() {
                     <select
                       value={linkDrafts.account}
                       onChange={(e) => setLinkDrafts((prev) => ({ ...prev, account: e.target.value }))}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select account</option>
                       {accounts.map((item) => (
@@ -1128,7 +1136,7 @@ export function Cases() {
                     <select
                       value={linkDrafts.product}
                       onChange={(e) => setLinkDrafts((prev) => ({ ...prev, product: e.target.value }))}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select product</option>
                       {products.map((item) => (
@@ -1163,7 +1171,7 @@ export function Cases() {
                     <select
                       value={linkDrafts.project}
                       onChange={(e) => setLinkDrafts((prev) => ({ ...prev, project: e.target.value }))}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select project</option>
                       {projects.map((item) => (
@@ -1199,7 +1207,7 @@ export function Cases() {
                     <select
                       value={linkDrafts.nfr}
                       onChange={(e) => setLinkDrafts((prev) => ({ ...prev, nfr: e.target.value }))}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select NFR</option>
                       {nfrs.map((item) => (
@@ -1235,7 +1243,7 @@ export function Cases() {
                     <select
                       value={linkDrafts.knock}
                       onChange={(e) => setLinkDrafts((prev) => ({ ...prev, knock: e.target.value }))}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select Knock</option>
                       {knocks.map((item) => (
@@ -1272,7 +1280,7 @@ export function Cases() {
               </div>
 
               <div className="xl:col-span-1">
-                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
                 <RecordHistoryTimeline history={selectedCase.history} onQuote={setSelectedQuote} />
@@ -1292,7 +1300,7 @@ export function Cases() {
                           Clear quote
                         </button>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3 break-words [overflow-wrap:anywhere]">{formatHistoryEntryText(selectedQuote)}</p>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -1301,7 +1309,7 @@ export function Cases() {
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Enter your comment..."
                       rows={3}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   </div>
                   <div className="mt-2 flex justify-end">

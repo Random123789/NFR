@@ -60,6 +60,7 @@ export function formatHistoryEntryText(entry: HistoryEntry) {
 
 export function RecordHistoryTimeline({ history, emptyMessage = "No history available", initialVisibleCount = 5, onQuote }: RecordHistoryTimelineProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const wrappingTextClass = "min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
 
   const normalizedHistory = Array.isArray(history) ? history : [];
 
@@ -85,7 +86,7 @@ export function RecordHistoryTimeline({ history, emptyMessage = "No history avai
   const visibleHistory = isExpanded ? sortedHistory : sortedHistory.slice(-visibleCount);
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
       {onQuote && (
         <p className="text-xs text-gray-500">Click a history item to quote it in your comment.</p>
       )}
@@ -106,16 +107,16 @@ export function RecordHistoryTimeline({ history, emptyMessage = "No history avai
           key={`${entry.timestamp}-${index}`}
           type="button"
           onClick={() => onQuote?.(entry)}
-          className={`w-full text-left flex gap-4 p-4 bg-gray-50 rounded-lg ${
+          className={`w-full max-w-full min-w-0 text-left flex flex-col sm:flex-row gap-3 sm:gap-4 p-4 bg-gray-50 rounded-lg overflow-hidden ${
             onQuote ? "hover:bg-gray-100 transition-colors" : ""
           }`}
         >
-          <div className="flex-shrink-0 w-40">
-            <div className="text-sm text-gray-500">{entry.timestamp}</div>
+          <div className="w-full flex-shrink-0 sm:w-40">
+            <div className={`text-sm text-gray-500 ${wrappingTextClass}`}>{entry.timestamp}</div>
           </div>
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <span className="text-sm font-medium text-gray-900">{entry.user}</span>
+              <span className={`text-sm font-medium text-gray-900 ${wrappingTextClass}`}>{entry.user}</span>
               <span className={`text-xs px-2 py-0.5 rounded-full ${
                 entry.action === "Comment"
                   ? "bg-green-100 text-green-800"
@@ -131,18 +132,18 @@ export function RecordHistoryTimeline({ history, emptyMessage = "No history avai
               const parsedQuotedReply = parseQuotedReply(entry.changes);
 
               if (!parsedQuotedReply) {
-                return <div className="text-sm text-gray-700">{formatHistoryEntryText(entry)}</div>;
+                return <div className={`text-sm text-gray-700 ${wrappingTextClass}`}>{formatHistoryEntryText(entry)}</div>;
               }
 
               return (
-                <div className="space-y-2">
-                  <div className="rounded-md border border-gray-200 bg-gray-100 px-3 py-2 border-l-4 border-l-[#6264A7]">
-                    <p className="text-xs text-gray-500 font-medium">
+                <div className="min-w-0 max-w-full space-y-2 overflow-hidden">
+                  <div className="min-w-0 max-w-full rounded-md border border-gray-200 bg-gray-100 px-3 py-2 border-l-4 border-l-[#6264A7] overflow-hidden">
+                    <p className={`text-xs text-gray-500 font-medium ${wrappingTextClass}`}>
                       Replying to {parsedQuotedReply.quotedFrom} - {parsedQuotedReply.quotedAt}
                     </p>
-                    <p className="text-sm text-gray-700 mt-1">{parsedQuotedReply.quotedBody}</p>
+                    <p className={`text-sm text-gray-700 mt-1 ${wrappingTextClass}`}>{parsedQuotedReply.quotedBody}</p>
                   </div>
-                  <div className="text-sm text-gray-800 whitespace-pre-wrap">{parsedQuotedReply.replyBody}</div>
+                  <div className={`text-sm text-gray-800 ${wrappingTextClass}`}>{parsedQuotedReply.replyBody}</div>
                 </div>
               );
             })()}

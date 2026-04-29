@@ -3,11 +3,57 @@ import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, 
 import { nfrs, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getNfrById, updateNfr, type HistoryEntry } from "../data/apiClient";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
 import { nfrStatusColors } from "../data/recordStyles";
+
+type NfrColumnKey = "recordId" | "description" | "mantisId" | "nfrStatus" | "nfrRequestDate" | "nfrTargetDate";
+type NfrSearchKey = "recordId" | "description" | "mantisId";
+
+type NfrTableColumn = {
+  key: NfrColumnKey;
+  label: string;
+  sortKey: NfrColumnKey;
+  searchKey?: NfrSearchKey;
+};
+
+const NFR_TABLE_COLUMNS: NfrTableColumn[] = [
+  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
+  { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
+  { key: "mantisId", label: "Mantis ID", sortKey: "mantisId", searchKey: "mantisId" },
+  { key: "nfrStatus", label: "Status", sortKey: "nfrStatus" },
+  { key: "nfrRequestDate", label: "Request Date", sortKey: "nfrRequestDate" },
+  { key: "nfrTargetDate", label: "Target Date", sortKey: "nfrTargetDate" },
+];
+
+const DEFAULT_NFR_COLUMN_KEYS = NFR_TABLE_COLUMNS.map((column) => column.key);
+const NFR_COLUMN_STORAGE_KEY = "nfr.visibleTableColumns";
+
+function getStoredNfrColumnKeys(): NfrColumnKey[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_NFR_COLUMN_KEYS;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(NFR_COLUMN_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_NFR_COLUMN_KEYS;
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_NFR_COLUMN_KEYS;
+    }
+
+    const validKeys = DEFAULT_NFR_COLUMN_KEYS.filter((key) => parsed.includes(key));
+    return validKeys.length > 0 ? validKeys : DEFAULT_NFR_COLUMN_KEYS;
+  } catch {
+    return DEFAULT_NFR_COLUMN_KEYS;
+  }
+}
 
 export function NFR() {
   const navigate = useNavigate();
@@ -24,6 +70,7 @@ export function NFR() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const [visibleNfrColumnKeys, setVisibleNfrColumnKeys] = useState<NfrColumnKey[]>(getStoredNfrColumnKeys);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -44,6 +91,10 @@ export function NFR() {
     key: "",
     direction: null,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(NFR_COLUMN_STORAGE_KEY, JSON.stringify(visibleNfrColumnKeys));
+  }, [visibleNfrColumnKeys]);
 
   useEffect(() => {
     const handleOpenDetail = (event: any) => {
@@ -232,6 +283,32 @@ export function NFR() {
     setSortConfig({ key, direction });
   };
 
+  const handleToggleNfrColumn = (key: NfrColumnKey) => {
+    const column = NFR_TABLE_COLUMNS.find((item) => item.key === key);
+    const isCurrentlyVisible = visibleNfrColumnKeys.includes(key);
+    const shouldHide = isCurrentlyVisible && visibleNfrColumnKeys.length > 1;
+
+    if (shouldHide && column?.searchKey) {
+      setSearchFilters((current) => ({ ...current, [column.searchKey!]: "" }));
+    }
+
+    if (shouldHide && sortConfig.key === key) {
+      setSortConfig({ key: "", direction: null });
+    }
+
+    setVisibleNfrColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
+      }
+
+      return DEFAULT_NFR_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
+    });
+  };
+
+  const handleResetNfrColumns = () => {
+    setVisibleNfrColumnKeys(DEFAULT_NFR_COLUMN_KEYS);
+  };
+
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredNfrs = nfrs.filter((nfr) => {
@@ -265,6 +342,65 @@ export function NFR() {
   });
 
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
+  const visibleNfrColumns = NFR_TABLE_COLUMNS.filter((column) => visibleNfrColumnKeys.includes(column.key));
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key !== key || !sortConfig.direction) {
+      return <ArrowUpDown className="w-4 h-4" />;
+    }
+
+    return sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />;
+  };
+
+  const renderColumnHeader = (column: NfrTableColumn) => (
+    <th key={column.key} className="text-left px-6 py-3">
+      <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
+        <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">{column.label}</span>
+        <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
+          {renderSortIcon(column.sortKey)}
+        </button>
+      </div>
+      {column.searchKey && (
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchFilters[column.searchKey]}
+          onChange={(e) => setSearchFilters({ ...searchFilters, [column.searchKey!]: e.target.value })}
+          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </th>
+  );
+
+  const renderColumnCell = (nfr: typeof nfrs[0], column: NfrTableColumn) => {
+    switch (column.key) {
+      case "recordId":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{nfr.recordId}</td>;
+      case "description":
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={nfr.description}>
+            {nfr.description}
+          </td>
+        );
+      case "mantisId":
+        return <td key={column.key} className="px-6 py-4 text-sm text-[#E31937] hover:underline whitespace-nowrap">{nfr.mantisId}</td>;
+      case "nfrStatus":
+        return (
+          <td key={column.key} className="px-6 py-4">
+            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${nfrStatusColors[nfr.nfrStatus]}`}>
+              {nfr.nfrStatus}
+            </span>
+          </td>
+        );
+      case "nfrRequestDate":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{nfr.nfrRequestDate}</td>;
+      case "nfrTargetDate":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{nfr.nfrTargetDate}</td>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -274,6 +410,18 @@ export function NFR() {
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedNfr ? "hidden" : ""}`}>
+        <div className="flex flex-col gap-3 border-b border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">NFR Records</h2>
+            <p className="text-sm text-gray-500">{visibleNfrColumns.length} of {NFR_TABLE_COLUMNS.length} fields shown</p>
+          </div>
+          <TableFieldSelector
+            columns={NFR_TABLE_COLUMNS}
+            visibleKeys={visibleNfrColumnKeys}
+            onToggle={handleToggleNfrColumn}
+            onReset={handleResetNfrColumns}
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -281,102 +429,7 @@ export function NFR() {
                 <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
                 </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
-                    <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "recordId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.recordId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, recordId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Description</span>
-                    <button onClick={() => handleSort("description")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "description" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.description}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, description: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Mantis ID</span>
-                    <button onClick={() => handleSort("mantisId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "mantisId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.mantisId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, mantisId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Status</span>
-                    <button onClick={() => handleSort("nfrStatus")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "nfrStatus" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Request Date</span>
-                    <button onClick={() => handleSort("nfrRequestDate")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "nfrRequestDate" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Target Date</span>
-                    <button onClick={() => handleSort("nfrTargetDate")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "nfrTargetDate" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
+                {visibleNfrColumns.map(renderColumnHeader)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -411,18 +464,7 @@ export function NFR() {
                       <Bookmark className={`w-5 h-5 ${isBookmarked(nfr.recordId, 'nfr') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{nfr.recordId}</td>
-                  <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={nfr.description}>
-                    {nfr.description}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-[#E31937] hover:underline whitespace-nowrap">{nfr.mantisId}</td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${nfrStatusColors[nfr.nfrStatus]}`}>
-                      {nfr.nfrStatus}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{nfr.nfrRequestDate}</td>
-                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{nfr.nfrTargetDate}</td>
+                  {visibleNfrColumns.map((column) => renderColumnCell(nfr, column))}
                 </tr>
               ))}
             </tbody>
@@ -648,7 +690,7 @@ export function NFR() {
               </div>
 
               <div className="xl:col-span-1">
-                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
                 <RecordHistoryTimeline history={selectedNfr.history} onQuote={setSelectedQuote} />
@@ -668,7 +710,7 @@ export function NFR() {
                           Clear quote
                         </button>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3 break-words [overflow-wrap:anywhere]">{formatHistoryEntryText(selectedQuote)}</p>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -677,7 +719,7 @@ export function NFR() {
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Enter your comment..."
                       rows={3}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   </div>
                   <div className="mt-2 flex justify-end">

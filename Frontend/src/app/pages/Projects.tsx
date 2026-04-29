@@ -3,11 +3,58 @@ import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } fro
 import { projects, cases, getAccountById, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getProjectById, updateProject, type HistoryEntry } from "../data/apiClient";
 import { LinkedEntityList, LinkedCasesList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
 import { projectStageColors } from "../data/recordStyles";
+
+type ProjectColumnKey = "recordId" | "projectName" | "account" | "stage" | "sfdcValue" | "se" | "closeDate";
+type ProjectSearchKey = "recordId" | "projectName" | "account" | "se";
+
+type ProjectTableColumn = {
+  key: ProjectColumnKey;
+  label: string;
+  sortKey: ProjectColumnKey;
+  searchKey?: ProjectSearchKey;
+};
+
+const PROJECT_TABLE_COLUMNS: ProjectTableColumn[] = [
+  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
+  { key: "projectName", label: "Project Name", sortKey: "projectName", searchKey: "projectName" },
+  { key: "account", label: "Account", sortKey: "account", searchKey: "account" },
+  { key: "stage", label: "Stage", sortKey: "stage" },
+  { key: "sfdcValue", label: "SFDC Value", sortKey: "sfdcValue" },
+  { key: "se", label: "Solution Consultant", sortKey: "se", searchKey: "se" },
+  { key: "closeDate", label: "Close Date", sortKey: "closeDate" },
+];
+
+const DEFAULT_PROJECT_COLUMN_KEYS = PROJECT_TABLE_COLUMNS.map((column) => column.key);
+const PROJECT_COLUMN_STORAGE_KEY = "projects.visibleTableColumns";
+
+function getStoredProjectColumnKeys(): ProjectColumnKey[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_PROJECT_COLUMN_KEYS;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(PROJECT_COLUMN_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_PROJECT_COLUMN_KEYS;
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_PROJECT_COLUMN_KEYS;
+    }
+
+    const validKeys = DEFAULT_PROJECT_COLUMN_KEYS.filter((key) => parsed.includes(key));
+    return validKeys.length > 0 ? validKeys : DEFAULT_PROJECT_COLUMN_KEYS;
+  } catch {
+    return DEFAULT_PROJECT_COLUMN_KEYS;
+  }
+}
 
 export function Projects() {
   const navigate = useNavigate();
@@ -24,6 +71,7 @@ export function Projects() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const [visibleProjectColumnKeys, setVisibleProjectColumnKeys] = useState<ProjectColumnKey[]>(getStoredProjectColumnKeys);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -45,6 +93,10 @@ export function Projects() {
     key: "",
     direction: null,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(PROJECT_COLUMN_STORAGE_KEY, JSON.stringify(visibleProjectColumnKeys));
+  }, [visibleProjectColumnKeys]);
 
   useEffect(() => {
     const handleOpenDetail = (event: any) => {
@@ -253,6 +305,32 @@ export function Projects() {
     setSortConfig({ key, direction });
   };
 
+  const handleToggleProjectColumn = (key: ProjectColumnKey) => {
+    const column = PROJECT_TABLE_COLUMNS.find((item) => item.key === key);
+    const isCurrentlyVisible = visibleProjectColumnKeys.includes(key);
+    const shouldHide = isCurrentlyVisible && visibleProjectColumnKeys.length > 1;
+
+    if (shouldHide && column?.searchKey) {
+      setSearchFilters((current) => ({ ...current, [column.searchKey!]: "" }));
+    }
+
+    if (shouldHide && sortConfig.key === key) {
+      setSortConfig({ key: "", direction: null });
+    }
+
+    setVisibleProjectColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
+      }
+
+      return DEFAULT_PROJECT_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
+    });
+  };
+
+  const handleResetProjectColumns = () => {
+    setVisibleProjectColumnKeys(DEFAULT_PROJECT_COLUMN_KEYS);
+  };
+
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredProjects = projects.filter((project) => {
@@ -304,6 +382,63 @@ export function Projects() {
 
   const account = selectedProject ? getAccountById(selectedProject.accountId) : null;
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
+  const visibleProjectColumns = PROJECT_TABLE_COLUMNS.filter((column) => visibleProjectColumnKeys.includes(column.key));
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key !== key || !sortConfig.direction) {
+      return <ArrowUpDown className="w-4 h-4" />;
+    }
+
+    return sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />;
+  };
+
+  const renderColumnHeader = (column: ProjectTableColumn) => (
+    <th key={column.key} className="text-left px-6 py-3">
+      <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
+        <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">{column.label}</span>
+        <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
+          {renderSortIcon(column.sortKey)}
+        </button>
+      </div>
+      {column.searchKey && (
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchFilters[column.searchKey]}
+          onChange={(e) => setSearchFilters({ ...searchFilters, [column.searchKey!]: e.target.value })}
+          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </th>
+  );
+
+  const renderColumnCell = (project: typeof projects[0], column: ProjectTableColumn) => {
+    switch (column.key) {
+      case "recordId":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{project.recordId}</td>;
+      case "projectName":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{project.projectName}</td>;
+      case "account":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getAccountById(project.accountId)?.accountName || "â€”"}</td>;
+      case "stage":
+        return (
+          <td key={column.key} className="px-6 py-4">
+            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${projectStageColors[project.stage]}`}>
+              {project.stage}
+            </span>
+          </td>
+        );
+      case "sfdcValue":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{project.sfdcValue}</td>;
+      case "se":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{project.se}</td>;
+      case "closeDate":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{project.closeDate}</td>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -313,6 +448,18 @@ export function Projects() {
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedProject ? "hidden" : ""}`}>
+        <div className="flex flex-col gap-3 border-b border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Project Records</h2>
+            <p className="text-sm text-gray-500">{visibleProjectColumns.length} of {PROJECT_TABLE_COLUMNS.length} fields shown</p>
+          </div>
+          <TableFieldSelector
+            columns={PROJECT_TABLE_COLUMNS}
+            visibleKeys={visibleProjectColumnKeys}
+            onToggle={handleToggleProjectColumn}
+            onReset={handleResetProjectColumns}
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -320,122 +467,7 @@ export function Projects() {
                 <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
                 </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
-                    <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "recordId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.recordId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, recordId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Project Name</span>
-                    <button onClick={() => handleSort("projectName")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "projectName" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.projectName}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, projectName: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Account</span>
-                    <button onClick={() => handleSort("account")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "account" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.account}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, account: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Stage</span>
-                    <button onClick={() => handleSort("stage")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "stage" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">SFDC Value</span>
-                    <button onClick={() => handleSort("sfdcValue")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "sfdcValue" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Solution Consultant</span>
-                    <button onClick={() => handleSort("se")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "se" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.se}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, se: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Close Date</span>
-                    <button onClick={() => handleSort("closeDate")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "closeDate" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
+                {visibleProjectColumns.map(renderColumnHeader)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -470,17 +502,7 @@ export function Projects() {
                       <Bookmark className={`w-5 h-5 ${isBookmarked(project.recordId, 'project') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{project.recordId}</td>
-                  <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{project.projectName}</td>
-                  <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getAccountById(project.accountId)?.accountName || "—"}</td>
-                  <td className="px-6 py-4">
-                      <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${projectStageColors[project.stage]}`}>
-                      {project.stage}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{project.sfdcValue}</td>
-                  <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{project.se}</td>
-                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{project.closeDate}</td>
+                  {visibleProjectColumns.map((column) => renderColumnCell(project, column))}
                 </tr>
               ))}
             </tbody>
@@ -726,7 +748,7 @@ export function Projects() {
               </div>
 
               <div className="xl:col-span-1">
-                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
                 <RecordHistoryTimeline history={selectedProject.history} onQuote={setSelectedQuote} />
@@ -746,7 +768,7 @@ export function Projects() {
                           Clear quote
                         </button>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3 break-words [overflow-wrap:anywhere]">{formatHistoryEntryText(selectedQuote)}</p>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -755,7 +777,7 @@ export function Projects() {
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Enter your comment..."
                       rows={3}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   </div>
                   <div className="mt-2 flex justify-end">

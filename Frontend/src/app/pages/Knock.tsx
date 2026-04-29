@@ -3,11 +3,57 @@ import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, 
 import { knocks, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getKnockById, updateKnock, type HistoryEntry } from "../data/apiClient";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
 import { knockStatusColors } from "../data/recordStyles";
+
+type KnockColumnKey = "recordId" | "description" | "knockId" | "status" | "requestDate" | "targetDate";
+type KnockSearchKey = "recordId" | "description" | "knockId";
+
+type KnockTableColumn = {
+  key: KnockColumnKey;
+  label: string;
+  sortKey: KnockColumnKey;
+  searchKey?: KnockSearchKey;
+};
+
+const KNOCK_TABLE_COLUMNS: KnockTableColumn[] = [
+  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
+  { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
+  { key: "knockId", label: "Knock ID", sortKey: "knockId", searchKey: "knockId" },
+  { key: "status", label: "Status", sortKey: "status" },
+  { key: "requestDate", label: "Request Date", sortKey: "requestDate" },
+  { key: "targetDate", label: "Target Date", sortKey: "targetDate" },
+];
+
+const DEFAULT_KNOCK_COLUMN_KEYS = KNOCK_TABLE_COLUMNS.map((column) => column.key);
+const KNOCK_COLUMN_STORAGE_KEY = "knock.visibleTableColumns";
+
+function getStoredKnockColumnKeys(): KnockColumnKey[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_KNOCK_COLUMN_KEYS;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(KNOCK_COLUMN_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_KNOCK_COLUMN_KEYS;
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_KNOCK_COLUMN_KEYS;
+    }
+
+    const validKeys = DEFAULT_KNOCK_COLUMN_KEYS.filter((key) => parsed.includes(key));
+    return validKeys.length > 0 ? validKeys : DEFAULT_KNOCK_COLUMN_KEYS;
+  } catch {
+    return DEFAULT_KNOCK_COLUMN_KEYS;
+  }
+}
 
 export function Knock() {
   const navigate = useNavigate();
@@ -24,6 +70,7 @@ export function Knock() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const [visibleKnockColumnKeys, setVisibleKnockColumnKeys] = useState<KnockColumnKey[]>(getStoredKnockColumnKeys);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -44,6 +91,10 @@ export function Knock() {
     key: "",
     direction: null,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(KNOCK_COLUMN_STORAGE_KEY, JSON.stringify(visibleKnockColumnKeys));
+  }, [visibleKnockColumnKeys]);
 
   useEffect(() => {
     const handleOpenDetail = (event: any) => {
@@ -232,6 +283,32 @@ export function Knock() {
     setSortConfig({ key, direction });
   };
 
+  const handleToggleKnockColumn = (key: KnockColumnKey) => {
+    const column = KNOCK_TABLE_COLUMNS.find((item) => item.key === key);
+    const isCurrentlyVisible = visibleKnockColumnKeys.includes(key);
+    const shouldHide = isCurrentlyVisible && visibleKnockColumnKeys.length > 1;
+
+    if (shouldHide && column?.searchKey) {
+      setSearchFilters((current) => ({ ...current, [column.searchKey!]: "" }));
+    }
+
+    if (shouldHide && sortConfig.key === key) {
+      setSortConfig({ key: "", direction: null });
+    }
+
+    setVisibleKnockColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
+      }
+
+      return DEFAULT_KNOCK_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
+    });
+  };
+
+  const handleResetKnockColumns = () => {
+    setVisibleKnockColumnKeys(DEFAULT_KNOCK_COLUMN_KEYS);
+  };
+
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredKnocks = knocks.filter((knock) => {
@@ -265,6 +342,65 @@ export function Knock() {
   });
 
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
+  const visibleKnockColumns = KNOCK_TABLE_COLUMNS.filter((column) => visibleKnockColumnKeys.includes(column.key));
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key !== key || !sortConfig.direction) {
+      return <ArrowUpDown className="w-4 h-4" />;
+    }
+
+    return sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />;
+  };
+
+  const renderColumnHeader = (column: KnockTableColumn) => (
+    <th key={column.key} className="text-left px-6 py-3">
+      <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
+        <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">{column.label}</span>
+        <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
+          {renderSortIcon(column.sortKey)}
+        </button>
+      </div>
+      {column.searchKey && (
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchFilters[column.searchKey]}
+          onChange={(e) => setSearchFilters({ ...searchFilters, [column.searchKey!]: e.target.value })}
+          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </th>
+  );
+
+  const renderColumnCell = (knock: typeof knocks[0], column: KnockTableColumn) => {
+    switch (column.key) {
+      case "recordId":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{knock.recordId}</td>;
+      case "description":
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={knock.description}>
+            {knock.description}
+          </td>
+        );
+      case "knockId":
+        return <td key={column.key} className="px-6 py-4 text-sm text-[#E31937] hover:underline whitespace-nowrap">{knock.knockId}</td>;
+      case "status":
+        return (
+          <td key={column.key} className="px-6 py-4">
+            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${knockStatusColors[knock.status ?? "Active"]}`}>
+              {knock.status ?? "â€”"}
+            </span>
+          </td>
+        );
+      case "requestDate":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{knock.requestDate}</td>;
+      case "targetDate":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{knock.targetDate}</td>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -274,6 +410,18 @@ export function Knock() {
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedKnock ? "hidden" : ""}`}>
+        <div className="flex flex-col gap-3 border-b border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Knock Records</h2>
+            <p className="text-sm text-gray-500">{visibleKnockColumns.length} of {KNOCK_TABLE_COLUMNS.length} fields shown</p>
+          </div>
+          <TableFieldSelector
+            columns={KNOCK_TABLE_COLUMNS}
+            visibleKeys={visibleKnockColumnKeys}
+            onToggle={handleToggleKnockColumn}
+            onReset={handleResetKnockColumns}
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -281,102 +429,7 @@ export function Knock() {
                 <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
                 </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
-                    <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "recordId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.recordId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, recordId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Description</span>
-                    <button onClick={() => handleSort("description")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "description" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.description}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, description: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Knock ID</span>
-                    <button onClick={() => handleSort("knockId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "knockId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.knockId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, knockId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Status</span>
-                    <button onClick={() => handleSort("status")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "status" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Request Date</span>
-                    <button onClick={() => handleSort("requestDate")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "requestDate" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Target Date</span>
-                    <button onClick={() => handleSort("targetDate")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "targetDate" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
+                {visibleKnockColumns.map(renderColumnHeader)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -411,18 +464,7 @@ export function Knock() {
                       <Bookmark className={`w-5 h-5 ${isBookmarked(knock.recordId, 'knock') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{knock.recordId}</td>
-                  <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={knock.description}>
-                    {knock.description}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-[#E31937] hover:underline whitespace-nowrap">{knock.knockId}</td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${knockStatusColors[knock.status ?? "Active"]}`}>
-                      {knock.status ?? "—"}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{knock.requestDate}</td>
-                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{knock.targetDate}</td>
+                  {visibleKnockColumns.map((column) => renderColumnCell(knock, column))}
                 </tr>
               ))}
             </tbody>
@@ -651,7 +693,7 @@ export function Knock() {
               </div>
 
               <div className="xl:col-span-1">
-                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
                 <RecordHistoryTimeline history={selectedKnock.history} onQuote={setSelectedQuote} />
@@ -671,7 +713,7 @@ export function Knock() {
                           Clear quote
                         </button>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3 break-words [overflow-wrap:anywhere]">{formatHistoryEntryText(selectedQuote)}</p>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -680,7 +722,7 @@ export function Knock() {
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Enter your comment..."
                       rows={3}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   </div>
                   <div className="mt-2 flex justify-end">

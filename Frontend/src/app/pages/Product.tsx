@@ -3,10 +3,55 @@ import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, 
 import { products, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getProductById, updateProduct, type HistoryEntry } from "../data/apiClient";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
+
+type ProductColumnKey = "recordId" | "productName" | "productFamily" | "productUrl" | "updatedAt";
+type ProductSearchKey = "recordId" | "productName" | "productFamily";
+
+type ProductTableColumn = {
+  key: ProductColumnKey;
+  label: string;
+  sortKey: ProductColumnKey;
+  searchKey?: ProductSearchKey;
+};
+
+const PRODUCT_TABLE_COLUMNS: ProductTableColumn[] = [
+  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
+  { key: "productName", label: "Product Name", sortKey: "productName", searchKey: "productName" },
+  { key: "productFamily", label: "Product Family", sortKey: "productFamily", searchKey: "productFamily" },
+  { key: "productUrl", label: "Product URL", sortKey: "productUrl" },
+  { key: "updatedAt", label: "Updated At", sortKey: "updatedAt" },
+];
+
+const DEFAULT_PRODUCT_COLUMN_KEYS = PRODUCT_TABLE_COLUMNS.map((column) => column.key);
+const PRODUCT_COLUMN_STORAGE_KEY = "product.visibleTableColumns";
+
+function getStoredProductColumnKeys(): ProductColumnKey[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_PRODUCT_COLUMN_KEYS;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(PRODUCT_COLUMN_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_PRODUCT_COLUMN_KEYS;
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_PRODUCT_COLUMN_KEYS;
+    }
+
+    const validKeys = DEFAULT_PRODUCT_COLUMN_KEYS.filter((key) => parsed.includes(key));
+    return validKeys.length > 0 ? validKeys : DEFAULT_PRODUCT_COLUMN_KEYS;
+  } catch {
+    return DEFAULT_PRODUCT_COLUMN_KEYS;
+  }
+}
 
 export function Product() {
   const navigate = useNavigate();
@@ -23,6 +68,7 @@ export function Product() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const [visibleProductColumnKeys, setVisibleProductColumnKeys] = useState<ProductColumnKey[]>(getStoredProductColumnKeys);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -43,6 +89,10 @@ export function Product() {
     key: "",
     direction: null,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(PRODUCT_COLUMN_STORAGE_KEY, JSON.stringify(visibleProductColumnKeys));
+  }, [visibleProductColumnKeys]);
 
   useEffect(() => {
     const handleOpenDetail = (event: any) => {
@@ -228,6 +278,32 @@ export function Product() {
     setSortConfig({ key, direction });
   };
 
+  const handleToggleProductColumn = (key: ProductColumnKey) => {
+    const column = PRODUCT_TABLE_COLUMNS.find((item) => item.key === key);
+    const isCurrentlyVisible = visibleProductColumnKeys.includes(key);
+    const shouldHide = isCurrentlyVisible && visibleProductColumnKeys.length > 1;
+
+    if (shouldHide && column?.searchKey) {
+      setSearchFilters((current) => ({ ...current, [column.searchKey!]: "" }));
+    }
+
+    if (shouldHide && sortConfig.key === key) {
+      setSortConfig({ key: "", direction: null });
+    }
+
+    setVisibleProductColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
+      }
+
+      return DEFAULT_PRODUCT_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
+    });
+  };
+
+  const handleResetProductColumns = () => {
+    setVisibleProductColumnKeys(DEFAULT_PRODUCT_COLUMN_KEYS);
+  };
+
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredProducts = products.filter((product) => {
@@ -260,6 +336,60 @@ export function Product() {
   });
 
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
+  const visibleProductColumns = PRODUCT_TABLE_COLUMNS.filter((column) => visibleProductColumnKeys.includes(column.key));
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key !== key || !sortConfig.direction) {
+      return <ArrowUpDown className="w-4 h-4" />;
+    }
+
+    return sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />;
+  };
+
+  const renderColumnHeader = (column: ProductTableColumn) => (
+    <th key={column.key} className="text-left px-6 py-3">
+      <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
+        <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">{column.label}</span>
+        <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
+          {renderSortIcon(column.sortKey)}
+        </button>
+      </div>
+      {column.searchKey && (
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchFilters[column.searchKey]}
+          onChange={(e) => setSearchFilters({ ...searchFilters, [column.searchKey!]: e.target.value })}
+          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </th>
+  );
+
+  const renderColumnCell = (product: typeof products[0], column: ProductTableColumn) => {
+    switch (column.key) {
+      case "recordId":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{product.recordId}</td>;
+      case "productName":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{product.productName}</td>;
+      case "productFamily":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{product.productFamily}</td>;
+      case "productUrl":
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm">
+            <a href={product.productUrl ?? undefined} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+              View Product
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </td>
+        );
+      case "updatedAt":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{product.updatedAt}</td>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -269,6 +399,18 @@ export function Product() {
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedProduct ? "hidden" : ""}`}>
+        <div className="flex flex-col gap-3 border-b border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Product Records</h2>
+            <p className="text-sm text-gray-500">{visibleProductColumns.length} of {PRODUCT_TABLE_COLUMNS.length} fields shown</p>
+          </div>
+          <TableFieldSelector
+            columns={PRODUCT_TABLE_COLUMNS}
+            visibleKeys={visibleProductColumnKeys}
+            onToggle={handleToggleProductColumn}
+            onReset={handleResetProductColumns}
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -276,90 +418,7 @@ export function Product() {
                 <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
                 </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
-                    <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "recordId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.recordId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, recordId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Product Name</span>
-                    <button onClick={() => handleSort("productName")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "productName" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.productName}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, productName: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Product Family</span>
-                    <button onClick={() => handleSort("productFamily")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "productFamily" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.productFamily}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, productFamily: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Product URL</span>
-                    <button onClick={() => handleSort("productUrl")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "productUrl" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Updated At</span>
-                    <button onClick={() => handleSort("updatedAt")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "updatedAt" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
+                {visibleProductColumns.map(renderColumnHeader)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -394,16 +453,7 @@ export function Product() {
                       <Bookmark className={`w-5 h-5 ${isBookmarked(product.recordId, 'product') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{product.recordId}</td>
-                  <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{product.productName}</td>
-                  <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{product.productFamily}</td>
-                  <td className="px-6 py-4 text-sm">
-                    <a href={product.productUrl ?? undefined} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      View Product
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{product.updatedAt}</td>
+                  {visibleProductColumns.map((column) => renderColumnCell(product, column))}
                 </tr>
               ))}
             </tbody>
@@ -587,7 +637,7 @@ export function Product() {
               </div>
 
               <div className="xl:col-span-1">
-                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
                 <RecordHistoryTimeline history={selectedProduct.history} onQuote={setSelectedQuote} />
@@ -607,7 +657,7 @@ export function Product() {
                           Clear quote
                         </button>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3 break-words [overflow-wrap:anywhere]">{formatHistoryEntryText(selectedQuote)}</p>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -616,7 +666,7 @@ export function Product() {
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Enter your comment..."
                       rows={3}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   </div>
                   <div className="mt-2 flex justify-end">

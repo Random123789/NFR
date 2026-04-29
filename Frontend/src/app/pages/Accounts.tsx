@@ -3,10 +3,56 @@ import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, 
 import { accounts, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getProjectsByAccountId, getCaseById, updateAccount, type HistoryEntry } from "../data/apiClient";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
+
+type AccountColumnKey = "recordId" | "accountName" | "type" | "vertical" | "website" | "updatedAt";
+type AccountSearchKey = "recordId" | "accountName" | "type" | "vertical";
+
+type AccountTableColumn = {
+  key: AccountColumnKey;
+  label: string;
+  sortKey: AccountColumnKey;
+  searchKey?: AccountSearchKey;
+};
+
+const ACCOUNT_TABLE_COLUMNS: AccountTableColumn[] = [
+  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
+  { key: "accountName", label: "Account Name", sortKey: "accountName", searchKey: "accountName" },
+  { key: "type", label: "Type", sortKey: "type", searchKey: "type" },
+  { key: "vertical", label: "Vertical", sortKey: "vertical", searchKey: "vertical" },
+  { key: "website", label: "Website", sortKey: "website" },
+  { key: "updatedAt", label: "Updated At", sortKey: "updatedAt" },
+];
+
+const DEFAULT_ACCOUNT_COLUMN_KEYS = ACCOUNT_TABLE_COLUMNS.map((column) => column.key);
+const ACCOUNT_COLUMN_STORAGE_KEY = "accounts.visibleTableColumns";
+
+function getStoredAccountColumnKeys(): AccountColumnKey[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_ACCOUNT_COLUMN_KEYS;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(ACCOUNT_COLUMN_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_ACCOUNT_COLUMN_KEYS;
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_ACCOUNT_COLUMN_KEYS;
+    }
+
+    const validKeys = DEFAULT_ACCOUNT_COLUMN_KEYS.filter((key) => parsed.includes(key));
+    return validKeys.length > 0 ? validKeys : DEFAULT_ACCOUNT_COLUMN_KEYS;
+  } catch {
+    return DEFAULT_ACCOUNT_COLUMN_KEYS;
+  }
+}
 
 export function Accounts() {
   const navigate = useNavigate();
@@ -23,6 +69,7 @@ export function Accounts() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const [visibleAccountColumnKeys, setVisibleAccountColumnKeys] = useState<AccountColumnKey[]>(getStoredAccountColumnKeys);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -45,6 +92,10 @@ export function Accounts() {
     key: "",
     direction: null,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(ACCOUNT_COLUMN_STORAGE_KEY, JSON.stringify(visibleAccountColumnKeys));
+  }, [visibleAccountColumnKeys]);
 
   useEffect(() => {
     const handleOpenDetail = (event: any) => {
@@ -251,6 +302,32 @@ export function Accounts() {
     setSortConfig({ key, direction });
   };
 
+  const handleToggleAccountColumn = (key: AccountColumnKey) => {
+    const column = ACCOUNT_TABLE_COLUMNS.find((item) => item.key === key);
+    const isCurrentlyVisible = visibleAccountColumnKeys.includes(key);
+    const shouldHide = isCurrentlyVisible && visibleAccountColumnKeys.length > 1;
+
+    if (shouldHide && column?.searchKey) {
+      setSearchFilters((current) => ({ ...current, [column.searchKey!]: "" }));
+    }
+
+    if (shouldHide && sortConfig.key === key) {
+      setSortConfig({ key: "", direction: null });
+    }
+
+    setVisibleAccountColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
+      }
+
+      return DEFAULT_ACCOUNT_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
+    });
+  };
+
+  const handleResetAccountColumns = () => {
+    setVisibleAccountColumnKeys(DEFAULT_ACCOUNT_COLUMN_KEYS);
+  };
+
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredAccounts = accounts.filter((account) => {
@@ -289,6 +366,62 @@ export function Accounts() {
   const relatedCases = linkedCases;
   const relatedProjects = selectedAccount ? getProjectsByAccountId(selectedAccount.recordId) : [];
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
+  const visibleAccountColumns = ACCOUNT_TABLE_COLUMNS.filter((column) => visibleAccountColumnKeys.includes(column.key));
+
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key !== key || !sortConfig.direction) {
+      return <ArrowUpDown className="w-4 h-4" />;
+    }
+
+    return sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />;
+  };
+
+  const renderColumnHeader = (column: AccountTableColumn) => (
+    <th key={column.key} className="text-left px-6 py-3">
+      <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
+        <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">{column.label}</span>
+        <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
+          {renderSortIcon(column.sortKey)}
+        </button>
+      </div>
+      {column.searchKey && (
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchFilters[column.searchKey]}
+          onChange={(e) => setSearchFilters({ ...searchFilters, [column.searchKey!]: e.target.value })}
+          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </th>
+  );
+
+  const renderColumnCell = (account: typeof accounts[0], column: AccountTableColumn) => {
+    switch (column.key) {
+      case "recordId":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937]">{account.recordId}</td>;
+      case "accountName":
+        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900">{account.accountName}</td>;
+      case "type":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700">{account.type}</td>;
+      case "vertical":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700">{account.vertical}</td>;
+      case "website":
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm">
+            <a href={account.website} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              {account.website}
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </td>
+        );
+      case "updatedAt":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500">{account.updatedAt}</td>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -298,6 +431,18 @@ export function Accounts() {
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedAccount ? "hidden" : ""}`}>
+        <div className="flex flex-col gap-3 border-b border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Account Records</h2>
+            <p className="text-sm text-gray-500">{visibleAccountColumns.length} of {ACCOUNT_TABLE_COLUMNS.length} fields shown</p>
+          </div>
+          <TableFieldSelector
+            columns={ACCOUNT_TABLE_COLUMNS}
+            visibleKeys={visibleAccountColumnKeys}
+            onToggle={handleToggleAccountColumn}
+            onReset={handleResetAccountColumns}
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -305,110 +450,7 @@ export function Accounts() {
                 <th className="text-left px-4 py-3 w-12">
                   <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
                 </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Record ID</span>
-                    <button onClick={() => handleSort("recordId")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "recordId" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.recordId}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, recordId: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Account Name</span>
-                    <button onClick={() => handleSort("accountName")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "accountName" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.accountName}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, accountName: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Type</span>
-                    <button onClick={() => handleSort("type")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "type" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.type}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, type: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Vertical</span>
-                    <button onClick={() => handleSort("vertical")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "vertical" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchFilters.vertical}
-                    onChange={(e) => setSearchFilters({ ...searchFilters, vertical: e.target.value })}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Website</span>
-                    <button onClick={() => handleSort("website")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "website" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
-                <th className="text-left px-6 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">Updated At</span>
-                    <button onClick={() => handleSort("updatedAt")} className="text-gray-400 hover:text-gray-600">
-                      {sortConfig.key === "updatedAt" ? (
-                        sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </th>
+                {visibleAccountColumns.map(renderColumnHeader)}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -443,17 +485,7 @@ export function Accounts() {
                       <Bookmark className={`w-5 h-5 ${isBookmarked(account.recordId, 'account') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-sm font-medium text-[#E31937]">{account.recordId}</td>
-                  <td className="px-6 py-4 text-sm font-medium text-gray-900">{account.accountName}</td>
-                  <td className="px-6 py-4 text-sm text-gray-700">{account.type}</td>
-                  <td className="px-6 py-4 text-sm text-gray-700">{account.vertical}</td>
-                  <td className="px-6 py-4 text-sm">
-                    <a href={account.website} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                      {account.website}
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">{account.updatedAt}</td>
+                  {visibleAccountColumns.map((column) => renderColumnCell(account, column))}
                 </tr>
               ))}
             </tbody>
@@ -768,7 +800,7 @@ export function Accounts() {
               </div>
 
               <div className="xl:col-span-1">
-                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto">
+                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
                 <RecordHistoryTimeline history={selectedAccount.history} onQuote={setSelectedQuote} />
@@ -788,7 +820,7 @@ export function Accounts() {
                           Clear quote
                         </button>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1 line-clamp-3">{formatHistoryEntryText(selectedQuote)}</p>
+                      <p className="text-sm text-gray-700 mt-1 line-clamp-3 break-words [overflow-wrap:anywhere]">{formatHistoryEntryText(selectedQuote)}</p>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -797,7 +829,7 @@ export function Accounts() {
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Enter your comment..."
                       rows={3}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   </div>
                   <div className="mt-2 flex justify-end">
