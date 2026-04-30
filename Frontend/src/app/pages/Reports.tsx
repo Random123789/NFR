@@ -61,7 +61,7 @@ const defaultFilters = {
 };
 
 const TABLE_FIELD_PRESETS: Record<string, string[]> = {
-  cases: ["cases.recordId", "cases.createdAt", "cases.updatedAt", "cases.status", "cases.priority", "cases.caseOwner", "cases.nfrRecordId", "cases.knockRecordId"],
+  cases: ["cases.recordId", "cases.createdAt", "cases.updatedAt", "cases.status", "cases.priority", "cases.caseOwner", "cases.assignedTo", "cases.nfrRecordId", "cases.knockRecordId"],
   accounts: ["accounts.recordId", "accounts.accountName", "accounts.type", "accounts.vertical", "accounts.createdAt", "accounts.updatedAt"],
   projects: ["projects.recordId", "projects.projectName", "projects.stage", "projects.se", "projects.startDate", "projects.closeDate"],
   products: ["products.recordId", "products.productName", "products.productFamily", "products.createdAt", "products.updatedAt"],

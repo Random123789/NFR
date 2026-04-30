@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { cases, accounts, products, projects, nfrs, knocks, getAccountById, getProductById, getProjectById, getNfrById, getNfrByMantisId, getKnockById, getKnockByKnockId, getCaseById, updateCase, getCase, getCaseLinks, addCaseLink, removeCaseLink, type CaseLinkEntityType, type CaseLinksResponse, type HistoryEntry } from "../data/apiClient";
+import { ChevronDown, ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark, UserRound } from "lucide-react";
+import { cases, accounts, products, projects, nfrs, knocks, getAccountById, getProductById, getProjectById, getNfrById, getNfrByMantisId, getKnockById, getKnockByKnockId, getCaseById, updateCase, getCase, getCaseLinks, addCaseLink, removeCaseLink, listAssignableUsers, type AssignableUser, type CaseLinkEntityType, type CaseLinksResponse, type HistoryEntry } from "../data/apiClient";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { TableFieldSelector } from "../components/TableFieldSelector";
@@ -20,8 +20,8 @@ type LinkDrafts = {
 
 type LinkKey = keyof LinkDrafts;
 
-type CaseColumnKey = "recordId" | "description" | "status" | "priority" | "account" | "product" | "caseOwner" | "updatedAt";
-type CaseSearchKey = "recordId" | "description" | "account" | "product" | "caseOwner";
+type CaseColumnKey = "recordId" | "description" | "status" | "priority" | "account" | "product" | "caseOwner" | "assignedTo" | "updatedAt";
+type CaseSearchKey = "recordId" | "description" | "account" | "product" | "caseOwner" | "assignedTo";
 
 type CaseTableColumn = {
   key: CaseColumnKey;
@@ -38,11 +38,12 @@ const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
   { key: "account", label: "Account", sortKey: "account", searchKey: "account" },
   { key: "product", label: "Product", sortKey: "product", searchKey: "product" },
   { key: "caseOwner", label: "SC Owner", sortKey: "caseOwner", searchKey: "caseOwner" },
+  { key: "assignedTo", label: "Assigned To", sortKey: "assignedTo", searchKey: "assignedTo" },
   { key: "updatedAt", label: "Updated", sortKey: "updatedAt" },
 ];
 
 const DEFAULT_CASE_COLUMN_KEYS = CASE_TABLE_COLUMNS.map((column) => column.key);
-const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns";
+const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns.v2";
 
 function getStoredCaseColumnKeys(): CaseColumnKey[] {
   if (typeof window === "undefined") {
@@ -67,6 +68,26 @@ function getStoredCaseColumnKeys(): CaseColumnKey[] {
   }
 }
 
+function assigneeLabel(user: AssignableUser) {
+  return `${user.displayName} (${user.email})${user.isActive ? "" : " - inactive"}`;
+}
+
+function AssignedToBadge({ value }: { value: string | null | undefined }) {
+  const hasAssignee = Boolean(value);
+
+  return (
+    <span
+      className={`inline-flex max-w-[12rem] items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${
+        hasAssignee ? "bg-red-50 text-[#B5122B] ring-red-200" : "bg-gray-100 text-gray-500 ring-gray-200"
+      }`}
+      title={value || "Unassigned"}
+    >
+      <UserRound className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{value || "Unassigned"}</span>
+    </span>
+  );
+}
+
 export function Cases() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -76,6 +97,7 @@ export function Cases() {
   const [selectedCase, setSelectedCase] = useState<typeof cases[0] | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedCase, setEditedCase] = useState<typeof cases[0] | null>(null);
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [priorityFilter, setPriorityFilter] = useState<string>("All");
   const [newComment, setNewComment] = useState("");
@@ -108,6 +130,7 @@ export function Cases() {
     account: "",
     product: "",
     caseOwner: "",
+    assignedTo: "",
     seOwner: "",
   });
 
@@ -119,6 +142,25 @@ export function Cases() {
   useEffect(() => {
     window.localStorage.setItem(CASE_COLUMN_STORAGE_KEY, JSON.stringify(visibleCaseColumnKeys));
   }, [visibleCaseColumnKeys]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const users = await listAssignableUsers();
+        if (!cancelled) {
+          setAssignableUsers(users);
+        }
+      } catch (error) {
+        console.error("Failed to load assignable users:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const handleOpenDetail = (event: any) => {
@@ -225,6 +267,7 @@ export function Cases() {
         c.priority,
         c.category,
         c.caseOwner,
+        c.assignedTo,
         c.seOwner,
         account?.accountName,
         product?.productName,
@@ -249,8 +292,9 @@ export function Cases() {
       const product = getProductById(c.product);
       if (!product?.productName.toLowerCase().includes(searchFilters.product.toLowerCase())) return false;
     }
-    if (searchFilters.caseOwner && !c.caseOwner.toLowerCase().includes(searchFilters.caseOwner.toLowerCase())) return false;
-    if (searchFilters.seOwner && !c.seOwner.toLowerCase().includes(searchFilters.seOwner.toLowerCase())) return false;
+    if (searchFilters.caseOwner && !(c.caseOwner ?? "").toLowerCase().includes(searchFilters.caseOwner.toLowerCase())) return false;
+    if (searchFilters.assignedTo && !(c.assignedTo ?? "").toLowerCase().includes(searchFilters.assignedTo.toLowerCase())) return false;
+    if (searchFilters.seOwner && !(c.seOwner ?? "").toLowerCase().includes(searchFilters.seOwner.toLowerCase())) return false;
 
     return true;
   });
@@ -313,6 +357,7 @@ export function Cases() {
         priority: editedCase.priority,
         category: editedCase.category,
         caseOwner: editedCase.caseOwner,
+        assignedTo: editedCase.assignedTo,
         seOwner: editedCase.seOwner,
         product: editedCase.product,
         account: editedCase.account,
@@ -563,7 +608,13 @@ export function Cases() {
       case "product":
         return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getProductById(caseItem.product)?.productName || "—"}</td>;
       case "caseOwner":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{caseItem.caseOwner}</td>;
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{caseItem.caseOwner || "—"}</td>;
+      case "assignedTo":
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">
+            <AssignedToBadge value={caseItem.assignedTo} />
+          </td>
+        );
       case "updatedAt":
         return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{caseItem.updatedAt}</td>;
       default:
@@ -979,12 +1030,34 @@ export function Cases() {
                   {isEditing && editedCase ? (
                     <input
                       type="text"
-                      value={editedCase.caseOwner}
+                      value={editedCase.caseOwner || ""}
                       onChange={(e) => setEditedCase({ ...editedCase, caseOwner: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
-                    <p className="text-gray-900">{selectedCase.caseOwner}</p>
+                    <p className="text-gray-900">{selectedCase.caseOwner || "—"}</p>
+                  )}
+                </div>
+                <div className="col-span-2 rounded-lg border-2 border-red-200 bg-red-50 p-3 shadow-sm">
+                  <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#B5122B]">
+                    <UserRound className="h-4 w-4" />
+                    Assigned To
+                  </label>
+                  {isEditing && editedCase ? (
+                    <select
+                      value={editedCase.assignedTo || ""}
+                      onChange={(e) => setEditedCase({ ...editedCase, assignedTo: e.target.value })}
+                      className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Unassigned</option>
+                      {assignableUsers.map((assignableUser) => (
+                        <option key={assignableUser.id} value={assignableUser.displayName}>
+                          {assigneeLabel(assignableUser)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <AssignedToBadge value={selectedCase.assignedTo} />
                   )}
                 </div>
                 <div>
@@ -992,12 +1065,12 @@ export function Cases() {
                   {isEditing && editedCase ? (
                     <input
                       type="text"
-                      value={editedCase.seOwner}
+                      value={editedCase.seOwner || ""}
                       onChange={(e) => setEditedCase({ ...editedCase, seOwner: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
-                    <p className="text-gray-900">{selectedCase.seOwner}</p>
+                    <p className="text-gray-900">{selectedCase.seOwner || "—"}</p>
                   )}
                 </div>
                 <div>

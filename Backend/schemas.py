@@ -86,6 +86,7 @@ class CaseRecord(BaseRecord):
     priority: Optional[str] = None
     category: Optional[str] = None
     caseOwner: Optional[str] = None
+    assignedTo: Optional[str] = None
     product: Optional[str] = None
     account: Optional[str] = None
     project: Optional[str] = None
@@ -253,6 +254,7 @@ class CaseCreate(BaseModel):
     priority: Optional[str] = None
     category: Optional[str] = None
     caseOwner: Optional[str] = None
+    assignedTo: Optional[str] = None
     product: Optional[str] = None
     account: Optional[str] = None
     project: Optional[str] = None

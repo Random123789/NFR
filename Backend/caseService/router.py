@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 SEARCH_FIELDS = [
     "recordId", "description", "status", "priority", "category",
-    "caseOwner", "seOwner", "account", "product", "project",
+    "caseOwner", "assignedTo", "seOwner", "account", "product", "project",
     "nfrRecordId", "knockRecordId", "mantisId", "knockId"
 ]
 
@@ -90,6 +90,7 @@ def _case_payload(data: CaseCreate) -> dict:
         "priority": _blank_to_none(data.priority),
         "category": _blank_to_none(data.category),
         "caseOwner": _blank_to_none(data.caseOwner),
+        "assignedTo": _blank_to_none(data.assignedTo),
         "product": _blank_to_none(data.product),
         "account": _blank_to_none(data.account),
         "project": _blank_to_none(data.project),
@@ -213,6 +214,7 @@ async def _normalize_foreign_key_values() -> None:
         ("cases", "project"),
         ("cases", "nfrRecordId"),
         ("cases", "knockRecordId"),
+        ("cases", "assignedTo"),
         ("cases", "mantisId"),
         ("cases", "knockId"),
         ("projects", "accountId"),
@@ -326,6 +328,11 @@ async def _normalize_foreign_key_values() -> None:
 async def ensure_case_foreign_keys() -> None:
     await _add_column_if_missing(
         "cases",
+        "assignedTo",
+        "ALTER TABLE cases ADD COLUMN assignedTo VARCHAR(120) NULL AFTER caseOwner",
+    )
+    await _add_column_if_missing(
+        "cases",
         "nfrRecordId",
         "ALTER TABLE cases ADD COLUMN nfrRecordId VARCHAR(32) NULL AFTER project",
     )
@@ -343,6 +350,11 @@ async def ensure_case_foreign_keys() -> None:
         "cases",
         "idx_cases_knockRecordId",
         "CREATE INDEX idx_cases_knockRecordId ON cases (knockRecordId)",
+    )
+    await _add_index_if_missing(
+        "cases",
+        "idx_cases_assignedTo",
+        "CREATE INDEX idx_cases_assignedTo ON cases (assignedTo)",
     )
 
     await _normalize_foreign_key_values()
@@ -672,6 +684,7 @@ def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
         return False
 
     visible_values = [
+        case_record.get("assignedTo"),
         case_record.get("seOwner"),
         case_record.get("caseOwner"),
         case_record.get("ownedBy"),
@@ -697,8 +710,8 @@ async def list_cases(
     params = []
 
     if actor.get("role") != "admin":
-        where_parts.append("(`seOwner` = %s OR `caseOwner` = %s OR `ownedBy` = %s OR `createdBy` = %s OR `updatedBy` = %s)")
-        params.extend([actor["displayName"]] * 5)
+        where_parts.append("(`assignedTo` = %s OR `seOwner` = %s OR `caseOwner` = %s OR `ownedBy` = %s OR `createdBy` = %s OR `updatedBy` = %s)")
+        params.extend([actor["displayName"]] * 6)
     
     # Search across defined fields
     if q:
@@ -783,10 +796,10 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
             recordId, moduleId, recordRevision, metaData, ownedBy,
             createdAt, createdBy, updatedAt, updatedBy,
             description, previousStatus, closeDate, status, priority,
-            category, caseOwner, product, account, project,
+            category, caseOwner, assignedTo, product, account, project,
             nfrRecordId, knockRecordId, knockId, mantisId,
             escalationNote, escalationType, seOwner, history
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     
     params = [
@@ -806,6 +819,7 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
         payload["priority"],
         payload["category"],
         payload["caseOwner"],
+        payload["assignedTo"],
         payload["product"],
         payload["account"],
         payload["project"],
@@ -865,6 +879,7 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
         "priority": payload["priority"],
         "category": payload["category"],
         "caseOwner": payload["caseOwner"],
+        "assignedTo": payload["assignedTo"],
         "product": payload["product"],
         "account": payload["account"],
         "project": payload["project"],
@@ -891,6 +906,7 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
                 "priority": "Priority",
                 "category": "Category",
                 "caseOwner": "Case Owner",
+                "assignedTo": "Assigned To",
                 "product": "Product",
                 "account": "Account",
                 "project": "Project",
@@ -914,7 +930,7 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
         UPDATE cases SET
             description = %s, previousStatus = %s, closeDate = %s,
             status = %s, priority = %s, category = %s,
-            caseOwner = %s, product = %s, account = %s, project = %s,
+            caseOwner = %s, assignedTo = %s, product = %s, account = %s, project = %s,
             nfrRecordId = %s, knockRecordId = %s, knockId = %s,
             mantisId = %s, escalationNote = %s,
             escalationType = %s, seOwner = %s, metaData = %s,
@@ -930,6 +946,7 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
         payload["priority"],
         payload["category"],
         payload["caseOwner"],
+        payload["assignedTo"],
         payload["product"],
         payload["account"],
         payload["project"],

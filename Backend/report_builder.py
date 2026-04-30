@@ -62,6 +62,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("cases", "c", "priority", "Priority"),
             _field("cases", "c", "category", "Category"),
             _field("cases", "c", "caseOwner", "Case Owner"),
+            _field("cases", "c", "assignedTo", "Assigned To"),
             _field("cases", "c", "seOwner", "SE Owner"),
             _field("cases", "c", "createdAt", "Case Created", "date"),
             _field("cases", "c", "updatedAt", "Case Updated", "date"),
@@ -396,9 +397,9 @@ def _apply_case_visibility(where_parts: List[str], params: List[Any], active_sou
         return
 
     where_parts.append(
-        "(c.seOwner = %s OR c.caseOwner = %s OR c.ownedBy = %s OR c.createdBy = %s OR c.updatedBy = %s)"
+        "(c.assignedTo = %s OR c.seOwner = %s OR c.caseOwner = %s OR c.ownedBy = %s OR c.createdBy = %s OR c.updatedBy = %s)"
     )
-    params.extend([actor["displayName"]] * 5)
+    params.extend([actor["displayName"]] * 6)
 
 
 def _limit(value: int) -> int:

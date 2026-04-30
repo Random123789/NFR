@@ -35,6 +35,10 @@ class AuthUser(BaseModel):
     role: str
 
 
+class AssignableUser(AuthUser):
+    isActive: int
+
+
 class LoginResponse(BaseModel):
     token: str
     user: AuthUser
@@ -301,6 +305,20 @@ async def login(data: LoginRequest) -> LoginResponse:
 async def me(request: Request) -> MeResponse:
     user = await require_auth_user(request)
     return MeResponse(user=AuthUser(**user))
+
+
+@router.get("/assignees", response_model=list[AssignableUser])
+async def list_assignable_users(request: Request) -> list[AssignableUser]:
+    await require_auth_user(request)
+
+    rows = await execute_query(
+        """
+        SELECT id, email, displayName, role, isActive
+        FROM users
+        ORDER BY isActive DESC, displayName ASC, email ASC
+        """,
+    )
+    return [AssignableUser(**row) for row in rows]
 
 
 @router.put("/me", response_model=MeResponse)

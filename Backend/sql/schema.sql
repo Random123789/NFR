@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS cases (
   priority VARCHAR(120),
   category VARCHAR(120),
   caseOwner VARCHAR(120),
+  assignedTo VARCHAR(120),
   product VARCHAR(32),
   account VARCHAR(32),
   project VARCHAR(32),
@@ -130,6 +131,7 @@ CREATE TABLE IF NOT EXISTS cases (
 CREATE INDEX idx_cases_account ON cases (account);
 CREATE INDEX idx_cases_product ON cases (product);
 CREATE INDEX idx_cases_project ON cases (project);
+CREATE INDEX idx_cases_assignedTo ON cases (assignedTo);
 CREATE INDEX idx_cases_nfrRecordId ON cases (nfrRecordId);
 CREATE INDEX idx_cases_knockRecordId ON cases (knockRecordId);
 CREATE INDEX idx_cases_mantisId ON cases (mantisId);

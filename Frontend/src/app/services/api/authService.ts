@@ -1,5 +1,6 @@
 import { fetchJson } from './http';
 import type {
+  AssignableUser,
   AuthResponse,
   AuthUser,
   CreateUserRequest,
@@ -45,6 +46,10 @@ export async function deleteCurrentUser() {
 
 export async function listManagedUsers() {
   return fetchJson<ManagedUser[]>('/auth/users');
+}
+
+export async function listAssignableUsers() {
+  return fetchJson<AssignableUser[]>('/auth/assignees');
 }
 
 export async function createManagedUser(data: CreateUserRequest) {

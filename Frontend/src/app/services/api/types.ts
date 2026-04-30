@@ -5,6 +5,10 @@ export interface AuthUser {
   role: string;
 }
 
+export interface AssignableUser extends AuthUser {
+  isActive: number;
+}
+
 export interface AuthResponse {
   token: string;
   user: AuthUser;
@@ -119,6 +123,7 @@ export interface CaseRecord extends BaseRecord {
   priority: string | null;
   category: string | null;
   caseOwner: string | null;
+  assignedTo: string | null;
   product: string | null;
   account: string | null;
   project: string | null;

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Check, Briefcase, Building2, FolderKanban, FileText, Hammer, Package } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, Briefcase, Building2, FolderKanban, FileText, Hammer, Package, UserRound } from "lucide-react";
 import {
   accounts,
   projects,
@@ -15,7 +15,9 @@ import {
   createProduct,
   createProject,
   initializeData,
+  listAssignableUsers,
   type AccountRecord,
+  type AssignableUser,
   type CaseRecord,
   type KnockRecord,
   type NfrRecord,
@@ -34,6 +36,7 @@ type FormData = {
     category: string;
     status: string;
     caseOwner: string;
+    assignedTo: string;
     seOwner: string;
     account: string;
     project: string;
@@ -142,6 +145,9 @@ const cleanString = (value: string | null | undefined) => {
 
 const nullableString = (value: string | null | undefined) => cleanString(value) ?? null;
 
+const assigneeLabel = (user: AssignableUser) =>
+  `${user.displayName} (${user.email})${user.isActive ? "" : " - inactive"}`;
+
 export function CreateData() {
   const { user } = useAuth();
   const { showToast } = useToast();
@@ -150,6 +156,7 @@ export function CreateData() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [createdRecordIds, setCreatedRecordIds] = useState<string[]>([]);
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [formData, setFormData] = useState<FormData>({
     case: {
       description: "",
@@ -157,6 +164,7 @@ export function CreateData() {
       category: "Technical",
       status: "Open",
       caseOwner: "",
+      assignedTo: "",
       seOwner: "",
       account: "",
       project: "",
@@ -203,6 +211,25 @@ export function CreateData() {
       linkedCase: "",
     },
   });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const users = await listAssignableUsers();
+        if (!cancelled) {
+          setAssignableUsers(users);
+        }
+      } catch (error) {
+        console.error("Failed to load assignable users:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const toggleEntity = (entity: EntityType) => {
     if (selectedEntities.includes(entity)) {
@@ -356,6 +383,7 @@ export function CreateData() {
           priority: nullableString(formData.case.priority),
           category: nullableString(formData.case.category),
           caseOwner: cleanString(formData.case.caseOwner) ?? user?.displayName ?? null,
+          assignedTo: nullableString(formData.case.assignedTo),
           seOwner: nullableString(formData.case.seOwner),
           account: created.account?.recordId ?? nullableString(formData.case.account),
           project: created.project?.recordId ?? nullableString(formData.case.project),
@@ -590,7 +618,26 @@ export function CreateData() {
                     />
                   </div>
 
-                  <div className="col-span-2">
+                  <div className="col-span-2 rounded-lg border-2 border-red-200 bg-red-50 p-4 shadow-sm">
+                    <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#B5122B]">
+                      <UserRound className="h-4 w-4" />
+                      Assigned To
+                    </label>
+                    <select
+                      value={formData.case.assignedTo}
+                      onChange={(e) => setFormData({ ...formData, case: { ...formData.case, assignedTo: e.target.value } })}
+                      className="w-full rounded-lg border border-red-300 bg-white px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Unassigned</option>
+                      {assignableUsers.map((assignableUser) => (
+                        <option key={assignableUser.id} value={assignableUser.displayName}>
+                          {assigneeLabel(assignableUser)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">SE Owner</label>
                     <input
                       type="text"
@@ -1112,6 +1159,15 @@ export function CreateData() {
                   <p><strong>Category:</strong> {formData.case.category}</p>
                   <p><strong>Status:</strong> {formData.case.status}</p>
                   <p><strong>Case Owner:</strong> {formData.case.caseOwner || "—"}</p>
+                  <p className="flex flex-wrap items-center gap-2">
+                    <strong>Assigned To:</strong>
+                    <span className={`inline-flex max-w-[12rem] items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${
+                      formData.case.assignedTo ? "bg-red-50 text-[#B5122B] ring-red-200" : "bg-gray-100 text-gray-500 ring-gray-200"
+                    }`}>
+                      <UserRound className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{formData.case.assignedTo || "Unassigned"}</span>
+                    </span>
+                  </p>
                   <p><strong>SE Owner:</strong> {formData.case.seOwner || "—"}</p>
                   {formData.case.account && (
                     <p><strong>Linked Account:</strong> {formData.case.account}</p>
