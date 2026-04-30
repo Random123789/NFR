@@ -97,6 +97,10 @@ def normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """
     if not record:
         return record
+
+    for key, value in list(record.items()):
+        if isinstance(value, datetime):
+            record[key] = value.strftime("%Y-%m-%d %H:%M:%S")
     
     # Ensure history is always a list for response model validation.
     if "history" not in record or record["history"] is None:

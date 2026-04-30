@@ -57,9 +57,10 @@ async def get_nfr(recordId: str) -> NfrRecord:
 
 
 @router.post("", response_model=NfrRecord)
-async def create_nfr(data: NfrCreate) -> NfrRecord:
+async def create_nfr(data: NfrCreate, request: Request) -> NfrRecord:
     """Create a new NFR."""
-    return await create_entity(NFR_CONFIG, data)
+    actor = await require_auth_user(request)
+    return await create_entity(NFR_CONFIG, data, actor["displayName"])
 
 
 @router.put("/{recordId}", response_model=NfrRecord)

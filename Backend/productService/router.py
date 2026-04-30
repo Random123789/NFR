@@ -53,9 +53,10 @@ async def get_product(recordId: str) -> ProductRecord:
 
 
 @router.post("", response_model=ProductRecord)
-async def create_product(data: ProductCreate) -> ProductRecord:
+async def create_product(data: ProductCreate, request: Request) -> ProductRecord:
     """Create a new product."""
-    return await create_entity(PRODUCT_CONFIG, data)
+    actor = await require_auth_user(request)
+    return await create_entity(PRODUCT_CONFIG, data, actor["displayName"])
 
 
 @router.put("/{recordId}", response_model=ProductRecord)

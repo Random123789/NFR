@@ -54,9 +54,10 @@ async def get_account(recordId: str) -> AccountRecord:
 
 
 @router.post("", response_model=AccountRecord)
-async def create_account(data: AccountCreate) -> AccountRecord:
+async def create_account(data: AccountCreate, request: Request) -> AccountRecord:
     """Create a new account."""
-    return await create_entity(ACCOUNT_CONFIG, data)
+    actor = await require_auth_user(request)
+    return await create_entity(ACCOUNT_CONFIG, data, actor["displayName"])
 
 
 @router.put("/{recordId}", response_model=AccountRecord)

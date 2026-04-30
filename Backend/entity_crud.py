@@ -105,7 +105,7 @@ async def list_entities(
         params.extend([f"%{q}%" for _ in config.search_fields])
 
     where_clause = " AND ".join(where_parts)
-    sql = f"SELECT * FROM {config.table_name} WHERE {where_clause} LIMIT %s OFFSET %s"
+    sql = f"SELECT * FROM {config.table_name} WHERE {where_clause} ORDER BY createdAt DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
 
     results = await execute_query(sql, params)
@@ -129,13 +129,15 @@ async def get_entity_or_404(config: EntityCrudConfig, record_id: str) -> dict[st
 async def create_entity(
     config: EntityCrudConfig,
     data: Payload,
+    actor_display_name: str = "System",
 ) -> dict[str, Any]:
     """Create a standard entity record."""
     await _ensure_unique_fields(config, data)
 
     record_id = generate_record_id(config.record_prefix, config.table_name)
     now = _now()
-    history = [build_history_entry("Created", f"{config.entity_label} created")]
+    actor = actor_display_name or "System"
+    history = [build_history_entry("Created", f"{config.entity_label} created", user=actor)]
 
     columns = [
         "recordId",
@@ -158,11 +160,11 @@ async def create_entity(
         config.module_id,
         "1.0",
         _db_value(config, data, "metaData"),
-        _payload_value(data, "ownedBy", "System") or "System",
+        actor,
         now,
-        "System",
+        actor,
         now,
-        "System",
+        actor,
         *[_db_value(config, data, field) for field in config.data_fields],
         json.dumps(history),
     ]

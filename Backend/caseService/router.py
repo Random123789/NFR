@@ -469,6 +469,28 @@ async def _resolve_case_reference_fields(payload: dict) -> dict:
     return payload
 
 
+async def _add_case_links_from_payload(record_id: str, payload: dict, actor_display_name: str) -> None:
+    link_values = [
+        ("account", payload.get("account")),
+        ("product", payload.get("product")),
+        ("project", payload.get("project")),
+        ("nfr", payload.get("nfrRecordId")),
+        ("knock", payload.get("knockRecordId")),
+    ]
+
+    for entity_type, entity_record_id in link_values:
+        if not entity_record_id:
+            continue
+
+        await execute_mutation(
+            """
+            INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+            VALUES (%s, %s, %s, NOW(), %s)
+            """,
+            [record_id, entity_type, entity_record_id, actor_display_name],
+        )
+
+
 async def get_case_or_404(record_id: str) -> dict:
     case_row = await execute_query(
         "SELECT * FROM cases WHERE recordId = %s",
@@ -737,19 +759,22 @@ async def get_case(recordId: str, request: Request) -> CaseRecord:
 
 
 @router.post("", response_model=CaseRecord)
-async def create_case(data: CaseCreate) -> CaseRecord:
+async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
     """Create a new case."""
-    
+    actor = await require_auth_user(request)
+    await ensure_case_link_tables()
+
     record_id = generate_record_id("REC", "cases")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     payload = _case_payload(data)
     payload = await _resolve_case_reference_fields(payload)
+    actor_display_name = actor["displayName"]
     
     history = [
         build_history_entry(
             action="Created",
             changes="Case created",
-            user="System"
+            user=actor_display_name
         )
     ]
     
@@ -769,11 +794,11 @@ async def create_case(data: CaseCreate) -> CaseRecord:
         "MOD-CASE",
         "1.0",
         payload["metaData"],
-        "System",
+        actor_display_name,
         now,
-        "System",
+        actor_display_name,
         now,
-        "System",
+        actor_display_name,
         payload["description"],
         payload["previousStatus"],
         payload["closeDate"],
@@ -795,6 +820,7 @@ async def create_case(data: CaseCreate) -> CaseRecord:
     ]
     
     await execute_mutation(sql, params)
+    await _add_case_links_from_payload(record_id, payload, actor_display_name)
     
     # Fetch and return created record
     result = await execute_query(

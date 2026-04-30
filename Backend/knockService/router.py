@@ -57,9 +57,10 @@ async def get_knock(recordId: str) -> KnockRecord:
 
 
 @router.post("", response_model=KnockRecord)
-async def create_knock(data: KnockCreate) -> KnockRecord:
+async def create_knock(data: KnockCreate, request: Request) -> KnockRecord:
     """Create a new knock."""
-    return await create_entity(KNOCK_CONFIG, data)
+    actor = await require_auth_user(request)
+    return await create_entity(KNOCK_CONFIG, data, actor["displayName"])
 
 
 @router.put("/{recordId}", response_model=KnockRecord)

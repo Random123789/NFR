@@ -58,9 +58,10 @@ async def get_project(recordId: str) -> ProjectRecord:
 
 
 @router.post("", response_model=ProjectRecord)
-async def create_project(data: ProjectCreate) -> ProjectRecord:
+async def create_project(data: ProjectCreate, request: Request) -> ProjectRecord:
     """Create a new project."""
-    return await create_entity(PROJECT_CONFIG, data)
+    actor = await require_auth_user(request)
+    return await create_entity(PROJECT_CONFIG, data, actor["displayName"])
 
 
 @router.put("/{recordId}", response_model=ProjectRecord)

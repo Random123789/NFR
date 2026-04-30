@@ -1,6 +1,29 @@
 import { useState } from "react";
 import { Check, Briefcase, Building2, FolderKanban, FileText, Hammer, Package } from "lucide-react";
-import { accounts, projects, products, nfrs, knocks, cases } from "../data/apiClient";
+import {
+  accounts,
+  projects,
+  products,
+  nfrs,
+  knocks,
+  cases,
+  addCaseLink,
+  createAccount,
+  createCase,
+  createKnock,
+  createNfr,
+  createProduct,
+  createProject,
+  initializeData,
+  type AccountRecord,
+  type CaseRecord,
+  type KnockRecord,
+  type NfrRecord,
+  type ProductRecord,
+  type ProjectRecord,
+} from "../data/apiClient";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 
 type EntityType = "case" | "account" | "project" | "nfr" | "knock" | "product";
 
@@ -15,8 +38,8 @@ type FormData = {
     account: string;
     project: string;
     product: string;
-    mantisId: string;
-    knockId: string;
+    nfrRecordId: string;
+    knockRecordId: string;
   };
   account: {
     accountName: string;
@@ -103,9 +126,30 @@ const entityOptions = [
   },
 ];
 
+type CreatedRecords = Partial<{
+  case: CaseRecord;
+  account: AccountRecord;
+  project: ProjectRecord;
+  product: ProductRecord;
+  nfr: NfrRecord;
+  knock: KnockRecord;
+}>;
+
+const cleanString = (value: string | null | undefined) => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const nullableString = (value: string | null | undefined) => cleanString(value) ?? null;
+
 export function CreateData() {
+  const { user } = useAuth();
+  const { showToast } = useToast();
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedEntities, setSelectedEntities] = useState<EntityType[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [createdRecordIds, setCreatedRecordIds] = useState<string[]>([]);
   const [formData, setFormData] = useState<FormData>({
     case: {
       description: "",
@@ -117,8 +161,8 @@ export function CreateData() {
       account: "",
       project: "",
       product: "",
-      mantisId: "",
-      knockId: "",
+      nfrRecordId: "",
+      knockRecordId: "",
     },
     account: {
       accountName: "",
@@ -191,16 +235,173 @@ export function CreateData() {
     }
   };
 
-  const handleSubmit = () => {
-    const createdEntities = selectedEntities.map(entity =>
-      entityOptions.find(e => e.type === entity)?.label
-    ).join(", ");
-    alert(`Successfully created: ${createdEntities}`);
+  const getValidationError = (entity: EntityType) => {
+    if (entity === "case" && !cleanString(formData.case.description)) {
+      return "Case description is required.";
+    }
+    if (entity === "account" && !cleanString(formData.account.accountName)) {
+      return "Account name is required.";
+    }
+    if (entity === "project" && !cleanString(formData.project.projectName)) {
+      return "Project name is required.";
+    }
+    if (entity === "product" && !cleanString(formData.product.productName)) {
+      return "Product name is required.";
+    }
+    if (entity === "nfr" && !cleanString(formData.nfr.description)) {
+      return "NFR description is required.";
+    }
+    if (entity === "knock" && !cleanString(formData.knock.description)) {
+      return "Knock description is required.";
+    }
+    return "";
+  };
+
+  const getFirstValidationError = () => {
+    for (const entity of selectedEntities) {
+      const error = getValidationError(entity);
+      if (error) {
+        return error;
+      }
+    }
+    return "";
+  };
+
+  const linkCreatedEntityToCases = async (
+    caseRecordIds: Array<string | undefined>,
+    entityType: Exclude<EntityType, "case">,
+    entityRecordId: string | undefined,
+  ) => {
+    if (!entityRecordId) {
+      return;
+    }
+
+    const uniqueCaseIds = Array.from(new Set(caseRecordIds.map(cleanString).filter((caseId): caseId is string => Boolean(caseId))));
+    await Promise.all(uniqueCaseIds.map((caseRecordId) => addCaseLink(caseRecordId, entityType, entityRecordId)));
+  };
+
+  const handleSubmit = async () => {
+    const validationError = getFirstValidationError();
+    if (validationError) {
+      setSubmitError(validationError);
+      showToast(validationError, "error");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError("");
+    setCreatedRecordIds([]);
+
+    try {
+      const created: CreatedRecords = {};
+
+      if (selectedEntities.includes("account")) {
+        created.account = await createAccount({
+          accountName: formData.account.accountName.trim(),
+          website: nullableString(formData.account.website),
+          type: nullableString(formData.account.type),
+          vertical: nullableString(formData.account.vertical),
+        });
+      }
+
+      if (selectedEntities.includes("product")) {
+        created.product = await createProduct({
+          productName: formData.product.productName.trim(),
+          productFamily: nullableString(formData.product.productFamily),
+          productUrl: nullableString(formData.product.productUrl),
+        });
+      }
+
+      if (selectedEntities.includes("project")) {
+        created.project = await createProject({
+          projectName: formData.project.projectName.trim(),
+          accountId: created.account?.recordId ?? null,
+          startDate: nullableString(formData.project.startDate),
+          closeDate: nullableString(formData.project.closeDate),
+          stage: nullableString(formData.project.stage),
+          sfdc: null,
+          sfdcValue: nullableString(formData.project.sfdcValue),
+          se: nullableString(formData.project.se),
+        });
+      }
+
+      if (selectedEntities.includes("nfr")) {
+        created.nfr = await createNfr({
+          description: formData.nfr.description.trim(),
+          mantisId: nullableString(formData.nfr.mantisId),
+          mantisUrl: null,
+          nfrStatus: nullableString(formData.nfr.nfrStatus),
+          nfrRequestDate: nullableString(formData.nfr.nfrRequestDate),
+          nfrTargetDate: nullableString(formData.nfr.nfrTargetDate),
+        });
+      }
+
+      if (selectedEntities.includes("knock")) {
+        created.knock = await createKnock({
+          description: formData.knock.description.trim(),
+          knockId: nullableString(formData.knock.knockId),
+          knockUrl: null,
+          status: nullableString(formData.knock.status),
+          requestDate: nullableString(formData.knock.requestDate),
+          targetDate: nullableString(formData.knock.targetDate),
+        });
+      }
+
+      if (selectedEntities.includes("case")) {
+        created.case = await createCase({
+          description: formData.case.description.trim(),
+          previousStatus: null,
+          closeDate: null,
+          status: nullableString(formData.case.status),
+          priority: nullableString(formData.case.priority),
+          category: nullableString(formData.case.category),
+          caseOwner: cleanString(formData.case.caseOwner) ?? user?.displayName ?? null,
+          seOwner: nullableString(formData.case.seOwner),
+          account: created.account?.recordId ?? nullableString(formData.case.account),
+          project: created.project?.recordId ?? nullableString(formData.case.project),
+          product: created.product?.recordId ?? nullableString(formData.case.product),
+          nfrRecordId: created.nfr?.recordId ?? nullableString(formData.case.nfrRecordId),
+          knockRecordId: created.knock?.recordId ?? nullableString(formData.case.knockRecordId),
+          escalationNote: null,
+          escalationType: null,
+        });
+      }
+
+      await Promise.all([
+        linkCreatedEntityToCases([created.case?.recordId, formData.account.linkedCase], "account", created.account?.recordId),
+        linkCreatedEntityToCases([created.case?.recordId, formData.project.linkedCase], "project", created.project?.recordId),
+        linkCreatedEntityToCases([created.case?.recordId, formData.product.linkedCase], "product", created.product?.recordId),
+        linkCreatedEntityToCases([created.case?.recordId, formData.nfr.linkedCase], "nfr", created.nfr?.recordId),
+        linkCreatedEntityToCases([created.case?.recordId, formData.knock.linkedCase], "knock", created.knock?.recordId),
+      ]);
+
+      await initializeData();
+
+      const recordIds = Object.values(created)
+        .map((record) => record?.recordId)
+        .filter((recordId): recordId is string => Boolean(recordId));
+      setCreatedRecordIds(recordIds);
+
+      const createdEntities = selectedEntities.map(entity =>
+        entityOptions.find(e => e.type === entity)?.label
+      ).join(", ");
+      showToast(`Created ${createdEntities}.`, "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create records.";
+      setSubmitError(message);
+      showToast(message, "error");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const canProceed = () => {
     if (currentStep === 1) {
       return selectedEntities.length > 0;
+    }
+    if (currentStep > 1 && currentStep < totalSteps) {
+      const entityIndex = currentStep - 2;
+      return !getValidationError(selectedEntities[entityIndex]);
     }
     return true;
   };
@@ -455,32 +656,32 @@ export function CreateData() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">NFR (Mantis ID)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">NFR</label>
                       <select
-                        value={formData.case.mantisId}
-                        onChange={(e) => setFormData({ ...formData, case: { ...formData.case, mantisId: e.target.value } })}
+                        value={formData.case.nfrRecordId}
+                        onChange={(e) => setFormData({ ...formData, case: { ...formData.case, nfrRecordId: e.target.value } })}
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                       >
                         <option value="">None</option>
                         {nfrs.map((nfr) => (
-                          <option key={nfr.recordId} value={nfr.mantisId}>
-                            {nfr.mantisId} - {nfr.description.substring(0, 40)}...
+                          <option key={nfr.recordId} value={nfr.recordId}>
+                            {nfr.mantisId || nfr.recordId} - {nfr.description.substring(0, 40)}...
                           </option>
                         ))}
                       </select>
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Knock (Knock ID)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Knock</label>
                       <select
-                        value={formData.case.knockId}
-                        onChange={(e) => setFormData({ ...formData, case: { ...formData.case, knockId: e.target.value } })}
+                        value={formData.case.knockRecordId}
+                        onChange={(e) => setFormData({ ...formData, case: { ...formData.case, knockRecordId: e.target.value } })}
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                       >
                         <option value="">None</option>
                         {knocks.map((knock) => (
-                          <option key={knock.recordId} value={knock.knockId}>
-                            {knock.knockId} - {knock.description.substring(0, 40)}...
+                          <option key={knock.recordId} value={knock.recordId}>
+                            {knock.knockId || knock.recordId} - {knock.description.substring(0, 40)}...
                           </option>
                         ))}
                       </select>
@@ -921,11 +1122,11 @@ export function CreateData() {
                   {formData.case.product && (
                     <p><strong>Linked Product:</strong> {formData.case.product}</p>
                   )}
-                  {formData.case.mantisId && (
-                    <p><strong>Linked NFR:</strong> {formData.case.mantisId}</p>
+                  {formData.case.nfrRecordId && (
+                    <p><strong>Linked NFR:</strong> {formData.case.nfrRecordId}</p>
                   )}
-                  {formData.case.knockId && (
-                    <p><strong>Linked Knock:</strong> {formData.case.knockId}</p>
+                  {formData.case.knockRecordId && (
+                    <p><strong>Linked Knock:</strong> {formData.case.knockRecordId}</p>
                   )}
                 </div>
               </div>
@@ -1011,10 +1212,22 @@ export function CreateData() {
           </div>
         )}
 
+        {submitError && (
+          <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {submitError}
+          </div>
+        )}
+
+        {createdRecordIds.length > 0 && !submitError && (
+          <div className="mt-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            Created records: {createdRecordIds.join(", ")}
+          </div>
+        )}
+
         <div className="flex justify-between mt-8 pt-6 border-t border-gray-200">
           <button
             onClick={handleBack}
-            disabled={currentStep === 1}
+            disabled={currentStep === 1 || isSubmitting}
             className="px-6 py-2 border border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Back
@@ -1023,7 +1236,7 @@ export function CreateData() {
           {currentStep < totalSteps ? (
             <button
               onClick={handleNext}
-              disabled={!canProceed()}
+              disabled={!canProceed() || isSubmitting}
               className="px-6 py-2 bg-[#E31937] text-white rounded-lg font-medium hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               Next
@@ -1031,9 +1244,10 @@ export function CreateData() {
           ) : (
             <button
               onClick={handleSubmit}
-              className="px-6 py-2 bg-[#E31937] text-white rounded-lg font-medium hover:bg-[#c41230] transition-colors"
+              disabled={isSubmitting || Boolean(getFirstValidationError())}
+              className="px-6 py-2 bg-[#E31937] text-white rounded-lg font-medium hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              Create All
+              {isSubmitting ? "Creating..." : "Create All"}
             </button>
           )}
         </div>
