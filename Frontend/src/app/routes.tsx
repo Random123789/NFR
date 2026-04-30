@@ -1,23 +1,41 @@
+import { lazy, Suspense, type ComponentType, type ReactElement } from "react";
 import { createBrowserRouter } from "react-router";
 import { MainLayout } from "./components/MainLayout";
-import { Home } from "./pages/Home";
-import { Cases } from "./pages/Cases";
-import { Accounts } from "./pages/Accounts";
-import { Projects } from "./pages/Projects";
-import { NFR } from "./pages/NFR";
-import { Knock } from "./pages/Knock";
-import { Product } from "./pages/Product";
-import { Reports } from "./pages/Reports";
-import { CreateData } from "./pages/CreateData";
-import { Bookmarked } from "./pages/Bookmarked";
-import { Login } from "./pages/Login";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { Profile } from "./pages/Profile";
+
+const Home = lazy(() => import("./pages/Home").then((module) => ({ default: module.Home })));
+const Cases = lazy(() => import("./pages/Cases").then((module) => ({ default: module.Cases })));
+const Accounts = lazy(() => import("./pages/Accounts").then((module) => ({ default: module.Accounts })));
+const Projects = lazy(() => import("./pages/Projects").then((module) => ({ default: module.Projects })));
+const NFR = lazy(() => import("./pages/NFR").then((module) => ({ default: module.NFR })));
+const Knock = lazy(() => import("./pages/Knock").then((module) => ({ default: module.Knock })));
+const Product = lazy(() => import("./pages/Product").then((module) => ({ default: module.Product })));
+const Reports = lazy(() => import("./pages/Reports").then((module) => ({ default: module.Reports })));
+const CreateData = lazy(() => import("./pages/CreateData").then((module) => ({ default: module.CreateData })));
+const Bookmarked = lazy(() => import("./pages/Bookmarked").then((module) => ({ default: module.Bookmarked })));
+const Login = lazy(() => import("./pages/Login").then((module) => ({ default: module.Login })));
+const Profile = lazy(() => import("./pages/Profile").then((module) => ({ default: module.Profile })));
+
+function PageFallback() {
+  return (
+    <div className="flex min-h-[16rem] items-center justify-center" aria-label="Loading page">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#E31937]" />
+    </div>
+  );
+}
+
+function pageElement(Page: ComponentType): ReactElement {
+  return (
+    <Suspense fallback={<PageFallback />}>
+      <Page />
+    </Suspense>
+  );
+}
 
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: <Login />,
+    element: pageElement(Login),
   },
   {
     path: "/",
@@ -27,17 +45,17 @@ export const router = createBrowserRouter([
       </ProtectedRoute>
     ),
     children: [
-      { index: true, element: <Home /> },
-      { path: "cases", element: <Cases /> },
-      { path: "accounts", element: <Accounts /> },
-      { path: "projects", element: <Projects /> },
-      { path: "nfr", element: <NFR /> },
-      { path: "knock", element: <Knock /> },
-      { path: "product", element: <Product /> },
-      { path: "reports", element: <Reports /> },
-      { path: "bookmarked", element: <Bookmarked /> },
-      { path: "profile", element: <Profile /> },
-      { path: "create-data", element: <CreateData /> },
+      { index: true, element: pageElement(Home) },
+      { path: "cases", element: pageElement(Cases) },
+      { path: "accounts", element: pageElement(Accounts) },
+      { path: "projects", element: pageElement(Projects) },
+      { path: "nfr", element: pageElement(NFR) },
+      { path: "knock", element: pageElement(Knock) },
+      { path: "product", element: pageElement(Product) },
+      { path: "reports", element: pageElement(Reports) },
+      { path: "bookmarked", element: pageElement(Bookmarked) },
+      { path: "profile", element: pageElement(Profile) },
+      { path: "create-data", element: pageElement(CreateData) },
     ],
   },
 ]);

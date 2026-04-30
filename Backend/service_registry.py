@@ -59,5 +59,5 @@ async def startup_services() -> None:
         if service.startup:
             try:
                 await service.startup()
-            except Exception as exc:
-                logger.warning("Service bootstrap failed for %s: %s", service.name, exc)
+            except Exception:
+                logger.exception("Service bootstrap failed for %s", service.name)

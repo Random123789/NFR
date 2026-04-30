@@ -9,6 +9,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
 import { knockStatusColors } from "../data/recordStyles";
+import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 
 type KnockColumnKey = "recordId" | "description" | "knockId" | "status" | "requestDate" | "targetDate";
 type KnockSearchKey = "recordId" | "description" | "knockId";
@@ -32,29 +33,6 @@ const KNOCK_TABLE_COLUMNS: KnockTableColumn[] = [
 const DEFAULT_KNOCK_COLUMN_KEYS = KNOCK_TABLE_COLUMNS.map((column) => column.key);
 const KNOCK_COLUMN_STORAGE_KEY = "knock.visibleTableColumns";
 
-function getStoredKnockColumnKeys(): KnockColumnKey[] {
-  if (typeof window === "undefined") {
-    return DEFAULT_KNOCK_COLUMN_KEYS;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(KNOCK_COLUMN_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_KNOCK_COLUMN_KEYS;
-    }
-
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) {
-      return DEFAULT_KNOCK_COLUMN_KEYS;
-    }
-
-    const validKeys = DEFAULT_KNOCK_COLUMN_KEYS.filter((key) => parsed.includes(key));
-    return validKeys.length > 0 ? validKeys : DEFAULT_KNOCK_COLUMN_KEYS;
-  } catch {
-    return DEFAULT_KNOCK_COLUMN_KEYS;
-  }
-}
-
 export function Knock() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -70,7 +48,7 @@ export function Knock() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
-  const [visibleKnockColumnKeys, setVisibleKnockColumnKeys] = useState<KnockColumnKey[]>(getStoredKnockColumnKeys);
+  const [visibleKnockColumnKeys, setVisibleKnockColumnKeys] = useStoredColumnKeys<KnockColumnKey>(KNOCK_COLUMN_STORAGE_KEY, DEFAULT_KNOCK_COLUMN_KEYS);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -87,18 +65,14 @@ export function Knock() {
     knockId: "",
   });
 
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' | null }>({
+  const [sortConfig, setSortConfig] = useState<SortConfig<KnockColumnKey>>({
     key: "",
     direction: null,
   });
 
   useEffect(() => {
-    window.localStorage.setItem(KNOCK_COLUMN_STORAGE_KEY, JSON.stringify(visibleKnockColumnKeys));
-  }, [visibleKnockColumnKeys]);
-
-  useEffect(() => {
-    const handleOpenDetail = (event: any) => {
-      const knockId = event.detail;
+    const handleOpenDetail = (event: Event) => {
+      const knockId = (event as CustomEvent<string>).detail;
       const knock = getKnockById(knockId);
       if (knock) {
         setSelectedKnock(knock);
@@ -271,16 +245,8 @@ export function Knock() {
     }
   };
 
-  const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' | null = 'asc';
-    if (sortConfig.key === key) {
-      if (sortConfig.direction === 'asc') {
-        direction = 'desc';
-      } else if (sortConfig.direction === 'desc') {
-        direction = null;
-      }
-    }
-    setSortConfig({ key, direction });
+  const handleSort = (key: KnockColumnKey) => {
+    setSortConfig((current) => getNextSortConfig(current, key));
   };
 
   const handleToggleKnockColumn = (key: KnockColumnKey) => {
@@ -296,13 +262,7 @@ export function Knock() {
       setSortConfig({ key: "", direction: null });
     }
 
-    setVisibleKnockColumnKeys((current) => {
-      if (current.includes(key)) {
-        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
-      }
-
-      return DEFAULT_KNOCK_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
-    });
+    setVisibleKnockColumnKeys((current) => toggleColumnKey(current, key, DEFAULT_KNOCK_COLUMN_KEYS));
   };
 
   const handleResetKnockColumns = () => {
@@ -331,20 +291,14 @@ export function Knock() {
   });
 
   const sortedKnocks = [...filteredKnocks].sort((a, b) => {
-    if (!sortConfig.direction) return 0;
-
-    let aValue: any = a[sortConfig.key as keyof typeof a] || "";
-    let bValue: any = b[sortConfig.key as keyof typeof b] || "";
-
-    if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-    if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-    return 0;
+    if (!sortConfig.direction || !sortConfig.key) return 0;
+    return compareValues(a[sortConfig.key], b[sortConfig.key], sortConfig.direction);
   });
 
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
   const visibleKnockColumns = KNOCK_TABLE_COLUMNS.filter((column) => visibleKnockColumnKeys.includes(column.key));
 
-  const renderSortIcon = (key: string) => {
+  const renderSortIcon = (key: KnockColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
       return <ArrowUpDown className="w-4 h-4" />;
     }
@@ -389,7 +343,7 @@ export function Knock() {
         return (
           <td key={column.key} className="px-6 py-4">
             <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${knockStatusColors[knock.status ?? "Active"]}`}>
-              {knock.status ?? "â€”"}
+              {knock.status ?? "-"}
             </span>
           </td>
         );
@@ -427,7 +381,7 @@ export function Knock() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 w-12">
-                  <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
+                  <Bookmark className="h-4 w-4 text-gray-500" aria-label="Bookmark" />
                 </th>
                 {visibleKnockColumns.map(renderColumnHeader)}
               </tr>

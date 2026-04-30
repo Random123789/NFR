@@ -8,6 +8,7 @@ import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
+import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 
 type AccountColumnKey = "recordId" | "accountName" | "type" | "vertical" | "website" | "updatedAt";
 type AccountSearchKey = "recordId" | "accountName" | "type" | "vertical";
@@ -31,29 +32,6 @@ const ACCOUNT_TABLE_COLUMNS: AccountTableColumn[] = [
 const DEFAULT_ACCOUNT_COLUMN_KEYS = ACCOUNT_TABLE_COLUMNS.map((column) => column.key);
 const ACCOUNT_COLUMN_STORAGE_KEY = "accounts.visibleTableColumns";
 
-function getStoredAccountColumnKeys(): AccountColumnKey[] {
-  if (typeof window === "undefined") {
-    return DEFAULT_ACCOUNT_COLUMN_KEYS;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(ACCOUNT_COLUMN_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_ACCOUNT_COLUMN_KEYS;
-    }
-
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) {
-      return DEFAULT_ACCOUNT_COLUMN_KEYS;
-    }
-
-    const validKeys = DEFAULT_ACCOUNT_COLUMN_KEYS.filter((key) => parsed.includes(key));
-    return validKeys.length > 0 ? validKeys : DEFAULT_ACCOUNT_COLUMN_KEYS;
-  } catch {
-    return DEFAULT_ACCOUNT_COLUMN_KEYS;
-  }
-}
-
 export function Accounts() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -69,7 +47,7 @@ export function Accounts() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
-  const [visibleAccountColumnKeys, setVisibleAccountColumnKeys] = useState<AccountColumnKey[]>(getStoredAccountColumnKeys);
+  const [visibleAccountColumnKeys, setVisibleAccountColumnKeys] = useStoredColumnKeys<AccountColumnKey>(ACCOUNT_COLUMN_STORAGE_KEY, DEFAULT_ACCOUNT_COLUMN_KEYS);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -88,18 +66,14 @@ export function Accounts() {
     vertical: "",
   });
 
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' | null }>({
+  const [sortConfig, setSortConfig] = useState<SortConfig<AccountColumnKey>>({
     key: "",
     direction: null,
   });
 
   useEffect(() => {
-    window.localStorage.setItem(ACCOUNT_COLUMN_STORAGE_KEY, JSON.stringify(visibleAccountColumnKeys));
-  }, [visibleAccountColumnKeys]);
-
-  useEffect(() => {
-    const handleOpenDetail = (event: any) => {
-      const accountId = event.detail;
+    const handleOpenDetail = (event: Event) => {
+      const accountId = (event as CustomEvent<string>).detail;
       const account = accounts.find(a => a.recordId === accountId);
       if (account) {
         setSelectedAccount(account);
@@ -290,16 +264,8 @@ export function Accounts() {
     }
   };
 
-  const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' | null = 'asc';
-    if (sortConfig.key === key) {
-      if (sortConfig.direction === 'asc') {
-        direction = 'desc';
-      } else if (sortConfig.direction === 'desc') {
-        direction = null;
-      }
-    }
-    setSortConfig({ key, direction });
+  const handleSort = (key: AccountColumnKey) => {
+    setSortConfig((current) => getNextSortConfig(current, key));
   };
 
   const handleToggleAccountColumn = (key: AccountColumnKey) => {
@@ -315,13 +281,7 @@ export function Accounts() {
       setSortConfig({ key: "", direction: null });
     }
 
-    setVisibleAccountColumnKeys((current) => {
-      if (current.includes(key)) {
-        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
-      }
-
-      return DEFAULT_ACCOUNT_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
-    });
+    setVisibleAccountColumnKeys((current) => toggleColumnKey(current, key, DEFAULT_ACCOUNT_COLUMN_KEYS));
   };
 
   const handleResetAccountColumns = () => {
@@ -353,14 +313,8 @@ export function Accounts() {
   });
 
   const sortedAccounts = [...filteredAccounts].sort((a, b) => {
-    if (!sortConfig.direction) return 0;
-
-    let aValue: any = a[sortConfig.key as keyof typeof a] || "";
-    let bValue: any = b[sortConfig.key as keyof typeof b] || "";
-
-    if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-    if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-    return 0;
+    if (!sortConfig.direction || !sortConfig.key) return 0;
+    return compareValues(a[sortConfig.key], b[sortConfig.key], sortConfig.direction);
   });
 
   const relatedCases = linkedCases;
@@ -368,7 +322,7 @@ export function Accounts() {
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
   const visibleAccountColumns = ACCOUNT_TABLE_COLUMNS.filter((column) => visibleAccountColumnKeys.includes(column.key));
 
-  const renderSortIcon = (key: string) => {
+  const renderSortIcon = (key: AccountColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
       return <ArrowUpDown className="w-4 h-4" />;
     }
@@ -448,7 +402,7 @@ export function Accounts() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 w-12">
-                  <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
+                  <Bookmark className="h-4 w-4 text-gray-500" aria-label="Bookmark" />
                 </th>
                 {visibleAccountColumns.map(renderColumnHeader)}
               </tr>

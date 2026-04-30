@@ -9,6 +9,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
 import { projectStageColors } from "../data/recordStyles";
+import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 
 type ProjectColumnKey = "recordId" | "projectName" | "account" | "stage" | "sfdcValue" | "se" | "closeDate";
 type ProjectSearchKey = "recordId" | "projectName" | "account" | "se";
@@ -33,29 +34,6 @@ const PROJECT_TABLE_COLUMNS: ProjectTableColumn[] = [
 const DEFAULT_PROJECT_COLUMN_KEYS = PROJECT_TABLE_COLUMNS.map((column) => column.key);
 const PROJECT_COLUMN_STORAGE_KEY = "projects.visibleTableColumns";
 
-function getStoredProjectColumnKeys(): ProjectColumnKey[] {
-  if (typeof window === "undefined") {
-    return DEFAULT_PROJECT_COLUMN_KEYS;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(PROJECT_COLUMN_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_PROJECT_COLUMN_KEYS;
-    }
-
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) {
-      return DEFAULT_PROJECT_COLUMN_KEYS;
-    }
-
-    const validKeys = DEFAULT_PROJECT_COLUMN_KEYS.filter((key) => parsed.includes(key));
-    return validKeys.length > 0 ? validKeys : DEFAULT_PROJECT_COLUMN_KEYS;
-  } catch {
-    return DEFAULT_PROJECT_COLUMN_KEYS;
-  }
-}
-
 export function Projects() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -71,7 +49,7 @@ export function Projects() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
-  const [visibleProjectColumnKeys, setVisibleProjectColumnKeys] = useState<ProjectColumnKey[]>(getStoredProjectColumnKeys);
+  const [visibleProjectColumnKeys, setVisibleProjectColumnKeys] = useStoredColumnKeys<ProjectColumnKey>(PROJECT_COLUMN_STORAGE_KEY, DEFAULT_PROJECT_COLUMN_KEYS);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -89,18 +67,14 @@ export function Projects() {
     se: "",
   });
 
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' | null }>({
+  const [sortConfig, setSortConfig] = useState<SortConfig<ProjectColumnKey>>({
     key: "",
     direction: null,
   });
 
   useEffect(() => {
-    window.localStorage.setItem(PROJECT_COLUMN_STORAGE_KEY, JSON.stringify(visibleProjectColumnKeys));
-  }, [visibleProjectColumnKeys]);
-
-  useEffect(() => {
-    const handleOpenDetail = (event: any) => {
-      const projectId = event.detail;
+    const handleOpenDetail = (event: Event) => {
+      const projectId = (event as CustomEvent<string>).detail;
       const project = getProjectById(projectId);
       if (project) {
         setSelectedProject(project);
@@ -293,16 +267,8 @@ export function Projects() {
     }
   };
 
-  const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' | null = 'asc';
-    if (sortConfig.key === key) {
-      if (sortConfig.direction === 'asc') {
-        direction = 'desc';
-      } else if (sortConfig.direction === 'desc') {
-        direction = null;
-      }
-    }
-    setSortConfig({ key, direction });
+  const handleSort = (key: ProjectColumnKey) => {
+    setSortConfig((current) => getNextSortConfig(current, key));
   };
 
   const handleToggleProjectColumn = (key: ProjectColumnKey) => {
@@ -318,13 +284,7 @@ export function Projects() {
       setSortConfig({ key: "", direction: null });
     }
 
-    setVisibleProjectColumnKeys((current) => {
-      if (current.includes(key)) {
-        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
-      }
-
-      return DEFAULT_PROJECT_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
-    });
+    setVisibleProjectColumnKeys((current) => toggleColumnKey(current, key, DEFAULT_PROJECT_COLUMN_KEYS));
   };
 
   const handleResetProjectColumns = () => {
@@ -360,10 +320,10 @@ export function Projects() {
   });
 
   const sortedProjects = [...filteredProjects].sort((a, b) => {
-    if (!sortConfig.direction) return 0;
+    if (!sortConfig.direction || !sortConfig.key) return 0;
 
-    let aValue: any = "";
-    let bValue: any = "";
+    let aValue: unknown = "";
+    let bValue: unknown = "";
 
     switch (sortConfig.key) {
       case "account":
@@ -375,16 +335,14 @@ export function Projects() {
         bValue = b[sortConfig.key as keyof typeof b] || "";
     }
 
-    if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-    if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-    return 0;
+    return compareValues(aValue, bValue, sortConfig.direction);
   });
 
   const account = selectedProject ? getAccountById(selectedProject.accountId) : null;
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
   const visibleProjectColumns = PROJECT_TABLE_COLUMNS.filter((column) => visibleProjectColumnKeys.includes(column.key));
 
-  const renderSortIcon = (key: string) => {
+  const renderSortIcon = (key: ProjectColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
       return <ArrowUpDown className="w-4 h-4" />;
     }
@@ -420,7 +378,7 @@ export function Projects() {
       case "projectName":
         return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{project.projectName}</td>;
       case "account":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getAccountById(project.accountId)?.accountName || "â€”"}</td>;
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getAccountById(project.accountId)?.accountName || "-"}</td>;
       case "stage":
         return (
           <td key={column.key} className="px-6 py-4">
@@ -465,7 +423,7 @@ export function Projects() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 w-12">
-                  <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
+                  <Bookmark className="h-4 w-4 text-gray-500" aria-label="Bookmark" />
                 </th>
                 {visibleProjectColumns.map(renderColumnHeader)}
               </tr>

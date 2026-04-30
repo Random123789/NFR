@@ -26,7 +26,7 @@ try:
     )
     logger.info("Database connection pool created successfully")
 except Exception as e:
-    logger.error(f"Failed to create database connection pool: {e}")
+    logger.exception("Failed to create database connection pool")
     db_pool = None
 
 
@@ -47,8 +47,8 @@ async def ping_database() -> bool:
         cursor.close()
         conn.close()
         return True
-    except Exception as e:
-        logger.error(f"Database ping failed: {e}")
+    except Exception:
+        logger.exception("Database ping failed")
         return False
 
 
@@ -126,9 +126,9 @@ async def execute_mutation(
         
         conn.commit()
         return cursor.lastrowid or cursor.rowcount
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        logger.error(f"Mutation failed: {e}")
+        logger.exception("Mutation failed")
         raise
     finally:
         cursor.close()

@@ -8,6 +8,7 @@ import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
+import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 
 type ProductColumnKey = "recordId" | "productName" | "productFamily" | "productUrl" | "updatedAt";
 type ProductSearchKey = "recordId" | "productName" | "productFamily";
@@ -30,29 +31,6 @@ const PRODUCT_TABLE_COLUMNS: ProductTableColumn[] = [
 const DEFAULT_PRODUCT_COLUMN_KEYS = PRODUCT_TABLE_COLUMNS.map((column) => column.key);
 const PRODUCT_COLUMN_STORAGE_KEY = "product.visibleTableColumns";
 
-function getStoredProductColumnKeys(): ProductColumnKey[] {
-  if (typeof window === "undefined") {
-    return DEFAULT_PRODUCT_COLUMN_KEYS;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(PRODUCT_COLUMN_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_PRODUCT_COLUMN_KEYS;
-    }
-
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) {
-      return DEFAULT_PRODUCT_COLUMN_KEYS;
-    }
-
-    const validKeys = DEFAULT_PRODUCT_COLUMN_KEYS.filter((key) => parsed.includes(key));
-    return validKeys.length > 0 ? validKeys : DEFAULT_PRODUCT_COLUMN_KEYS;
-  } catch {
-    return DEFAULT_PRODUCT_COLUMN_KEYS;
-  }
-}
-
 export function Product() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -68,7 +46,7 @@ export function Product() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
-  const [visibleProductColumnKeys, setVisibleProductColumnKeys] = useState<ProductColumnKey[]>(getStoredProductColumnKeys);
+  const [visibleProductColumnKeys, setVisibleProductColumnKeys] = useStoredColumnKeys<ProductColumnKey>(PRODUCT_COLUMN_STORAGE_KEY, DEFAULT_PRODUCT_COLUMN_KEYS);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -85,18 +63,14 @@ export function Product() {
     productFamily: "",
   });
 
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' | null }>({
+  const [sortConfig, setSortConfig] = useState<SortConfig<ProductColumnKey>>({
     key: "",
     direction: null,
   });
 
   useEffect(() => {
-    window.localStorage.setItem(PRODUCT_COLUMN_STORAGE_KEY, JSON.stringify(visibleProductColumnKeys));
-  }, [visibleProductColumnKeys]);
-
-  useEffect(() => {
-    const handleOpenDetail = (event: any) => {
-      const productId = event.detail;
+    const handleOpenDetail = (event: Event) => {
+      const productId = (event as CustomEvent<string>).detail;
       const product = getProductById(productId);
       if (product) {
         setSelectedProduct(product);
@@ -266,16 +240,8 @@ export function Product() {
     }
   };
 
-  const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' | null = 'asc';
-    if (sortConfig.key === key) {
-      if (sortConfig.direction === 'asc') {
-        direction = 'desc';
-      } else if (sortConfig.direction === 'desc') {
-        direction = null;
-      }
-    }
-    setSortConfig({ key, direction });
+  const handleSort = (key: ProductColumnKey) => {
+    setSortConfig((current) => getNextSortConfig(current, key));
   };
 
   const handleToggleProductColumn = (key: ProductColumnKey) => {
@@ -291,13 +257,7 @@ export function Product() {
       setSortConfig({ key: "", direction: null });
     }
 
-    setVisibleProductColumnKeys((current) => {
-      if (current.includes(key)) {
-        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
-      }
-
-      return DEFAULT_PRODUCT_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
-    });
+    setVisibleProductColumnKeys((current) => toggleColumnKey(current, key, DEFAULT_PRODUCT_COLUMN_KEYS));
   };
 
   const handleResetProductColumns = () => {
@@ -325,20 +285,14 @@ export function Product() {
   });
 
   const sortedProducts = [...filteredProducts].sort((a, b) => {
-    if (!sortConfig.direction) return 0;
-
-    let aValue: any = a[sortConfig.key as keyof typeof a] || "";
-    let bValue: any = b[sortConfig.key as keyof typeof b] || "";
-
-    if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-    if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-    return 0;
+    if (!sortConfig.direction || !sortConfig.key) return 0;
+    return compareValues(a[sortConfig.key], b[sortConfig.key], sortConfig.direction);
   });
 
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
   const visibleProductColumns = PRODUCT_TABLE_COLUMNS.filter((column) => visibleProductColumnKeys.includes(column.key));
 
-  const renderSortIcon = (key: string) => {
+  const renderSortIcon = (key: ProductColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
       return <ArrowUpDown className="w-4 h-4" />;
     }
@@ -416,7 +370,7 @@ export function Product() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 w-12">
-                  <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
+                  <Bookmark className="h-4 w-4 text-gray-500" aria-label="Bookmark" />
                 </th>
                 {visibleProductColumns.map(renderColumnHeader)}
               </tr>

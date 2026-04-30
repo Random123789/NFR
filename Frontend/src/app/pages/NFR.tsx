@@ -9,6 +9,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
 import { nfrStatusColors } from "../data/recordStyles";
+import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 
 type NfrColumnKey = "recordId" | "description" | "mantisId" | "nfrStatus" | "nfrRequestDate" | "nfrTargetDate";
 type NfrSearchKey = "recordId" | "description" | "mantisId";
@@ -32,29 +33,6 @@ const NFR_TABLE_COLUMNS: NfrTableColumn[] = [
 const DEFAULT_NFR_COLUMN_KEYS = NFR_TABLE_COLUMNS.map((column) => column.key);
 const NFR_COLUMN_STORAGE_KEY = "nfr.visibleTableColumns";
 
-function getStoredNfrColumnKeys(): NfrColumnKey[] {
-  if (typeof window === "undefined") {
-    return DEFAULT_NFR_COLUMN_KEYS;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(NFR_COLUMN_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_NFR_COLUMN_KEYS;
-    }
-
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) {
-      return DEFAULT_NFR_COLUMN_KEYS;
-    }
-
-    const validKeys = DEFAULT_NFR_COLUMN_KEYS.filter((key) => parsed.includes(key));
-    return validKeys.length > 0 ? validKeys : DEFAULT_NFR_COLUMN_KEYS;
-  } catch {
-    return DEFAULT_NFR_COLUMN_KEYS;
-  }
-}
-
 export function NFR() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -70,7 +48,7 @@ export function NFR() {
   const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
   const [linkingCaseId, setLinkingCaseId] = useState("");
   const [isLinkingCase, setIsLinkingCase] = useState(false);
-  const [visibleNfrColumnKeys, setVisibleNfrColumnKeys] = useState<NfrColumnKey[]>(getStoredNfrColumnKeys);
+  const [visibleNfrColumnKeys, setVisibleNfrColumnKeys] = useStoredColumnKeys<NfrColumnKey>(NFR_COLUMN_STORAGE_KEY, DEFAULT_NFR_COLUMN_KEYS);
 
   type LinkedReturnState = {
     returnTo?: {
@@ -87,18 +65,14 @@ export function NFR() {
     mantisId: "",
   });
 
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' | null }>({
+  const [sortConfig, setSortConfig] = useState<SortConfig<NfrColumnKey>>({
     key: "",
     direction: null,
   });
 
   useEffect(() => {
-    window.localStorage.setItem(NFR_COLUMN_STORAGE_KEY, JSON.stringify(visibleNfrColumnKeys));
-  }, [visibleNfrColumnKeys]);
-
-  useEffect(() => {
-    const handleOpenDetail = (event: any) => {
-      const nfrId = event.detail;
+    const handleOpenDetail = (event: Event) => {
+      const nfrId = (event as CustomEvent<string>).detail;
       const nfr = getNfrById(nfrId);
       if (nfr) {
         setSelectedNfr(nfr);
@@ -271,16 +245,8 @@ export function NFR() {
     }
   };
 
-  const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' | null = 'asc';
-    if (sortConfig.key === key) {
-      if (sortConfig.direction === 'asc') {
-        direction = 'desc';
-      } else if (sortConfig.direction === 'desc') {
-        direction = null;
-      }
-    }
-    setSortConfig({ key, direction });
+  const handleSort = (key: NfrColumnKey) => {
+    setSortConfig((current) => getNextSortConfig(current, key));
   };
 
   const handleToggleNfrColumn = (key: NfrColumnKey) => {
@@ -296,13 +262,7 @@ export function NFR() {
       setSortConfig({ key: "", direction: null });
     }
 
-    setVisibleNfrColumnKeys((current) => {
-      if (current.includes(key)) {
-        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
-      }
-
-      return DEFAULT_NFR_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
-    });
+    setVisibleNfrColumnKeys((current) => toggleColumnKey(current, key, DEFAULT_NFR_COLUMN_KEYS));
   };
 
   const handleResetNfrColumns = () => {
@@ -331,20 +291,14 @@ export function NFR() {
   });
 
   const sortedNfrs = [...filteredNfrs].sort((a, b) => {
-    if (!sortConfig.direction) return 0;
-
-    let aValue: any = a[sortConfig.key as keyof typeof a] || "";
-    let bValue: any = b[sortConfig.key as keyof typeof b] || "";
-
-    if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-    if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-    return 0;
+    if (!sortConfig.direction || !sortConfig.key) return 0;
+    return compareValues(a[sortConfig.key], b[sortConfig.key], sortConfig.direction);
   });
 
   const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
   const visibleNfrColumns = NFR_TABLE_COLUMNS.filter((column) => visibleNfrColumnKeys.includes(column.key));
 
-  const renderSortIcon = (key: string) => {
+  const renderSortIcon = (key: NfrColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
       return <ArrowUpDown className="w-4 h-4" />;
     }
@@ -427,7 +381,7 @@ export function NFR() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 w-12">
-                  <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
+                  <Bookmark className="h-4 w-4 text-gray-500" aria-label="Bookmark" />
                 </th>
                 {visibleNfrColumns.map(renderColumnHeader)}
               </tr>

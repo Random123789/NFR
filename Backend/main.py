@@ -24,8 +24,8 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.cors_origin, "http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$" if settings.environment == "development" else None,
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,10 +65,10 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info(f"Backend PID: {os.getpid()}")
-    logger.info(f"Starting server on {settings.host}:{settings.port}")
-    logger.info(f"Database: {settings.db_host}:{settings.db_port}/{settings.db_name}")
-    logger.info(f"CORS Origin: {settings.cors_origin}")
+    logger.info("Backend PID: %s", os.getpid())
+    logger.info("Starting server on %s:%s", settings.host, settings.port)
+    logger.info("Database: %s:%s/%s", settings.db_host, settings.db_port, settings.db_name)
+    logger.info("CORS Origins: %s", ", ".join(settings.cors_origins))
     
     uvicorn.run(
         app,

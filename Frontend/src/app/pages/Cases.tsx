@@ -9,6 +9,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useToast } from "../context/ToastContext";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
+import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 
 type LinkDrafts = {
   account: string;
@@ -44,29 +45,6 @@ const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
 
 const DEFAULT_CASE_COLUMN_KEYS = CASE_TABLE_COLUMNS.map((column) => column.key);
 const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns.v2";
-
-function getStoredCaseColumnKeys(): CaseColumnKey[] {
-  if (typeof window === "undefined") {
-    return DEFAULT_CASE_COLUMN_KEYS;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(CASE_COLUMN_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_CASE_COLUMN_KEYS;
-    }
-
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) {
-      return DEFAULT_CASE_COLUMN_KEYS;
-    }
-
-    const validKeys = DEFAULT_CASE_COLUMN_KEYS.filter((key) => parsed.includes(key));
-    return validKeys.length > 0 ? validKeys : DEFAULT_CASE_COLUMN_KEYS;
-  } catch {
-    return DEFAULT_CASE_COLUMN_KEYS;
-  }
-}
 
 function assigneeLabel(user: AssignableUser) {
   return `${user.displayName} (${user.email})${user.isActive ? "" : " - inactive"}`;
@@ -104,7 +82,7 @@ export function Cases() {
   const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
   const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
   const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
-  const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useState<CaseColumnKey[]>(getStoredCaseColumnKeys);
+  const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useStoredColumnKeys<CaseColumnKey>(CASE_COLUMN_STORAGE_KEY, DEFAULT_CASE_COLUMN_KEYS);
   const [caseLinks, setCaseLinks] = useState<CaseLinksResponse | null>(null);
   const [linkDrafts, setLinkDrafts] = useState<LinkDrafts>({
     account: "",
@@ -134,14 +112,10 @@ export function Cases() {
     seOwner: "",
   });
 
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' | null }>({
+  const [sortConfig, setSortConfig] = useState<SortConfig<CaseColumnKey>>({
     key: "",
     direction: null,
   });
-
-  useEffect(() => {
-    window.localStorage.setItem(CASE_COLUMN_STORAGE_KEY, JSON.stringify(visibleCaseColumnKeys));
-  }, [visibleCaseColumnKeys]);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,8 +137,8 @@ export function Cases() {
   }, []);
 
   useEffect(() => {
-    const handleOpenDetail = (event: any) => {
-      const caseId = event.detail;
+    const handleOpenDetail = (event: Event) => {
+      const caseId = (event as CustomEvent<string>).detail;
       const caseData = getCaseById(caseId);
       if (caseData) {
         setSelectedCase(caseData);
@@ -208,16 +182,8 @@ export function Cases() {
     })();
   }, [selectedCase]);
 
-  const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' | null = 'asc';
-    if (sortConfig.key === key) {
-      if (sortConfig.direction === 'asc') {
-        direction = 'desc';
-      } else if (sortConfig.direction === 'desc') {
-        direction = null;
-      }
-    }
-    setSortConfig({ key, direction });
+  const handleSort = (key: CaseColumnKey) => {
+    setSortConfig((current) => getNextSortConfig(current, key));
   };
 
   const handleToggleCaseColumn = (key: CaseColumnKey) => {
@@ -233,13 +199,7 @@ export function Cases() {
       setSortConfig({ key: "", direction: null });
     }
 
-    setVisibleCaseColumnKeys((current) => {
-      if (current.includes(key)) {
-        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key);
-      }
-
-      return DEFAULT_CASE_COLUMN_KEYS.filter((columnKey) => current.includes(columnKey) || columnKey === key);
-    });
+    setVisibleCaseColumnKeys((current) => toggleColumnKey(current, key, DEFAULT_CASE_COLUMN_KEYS));
   };
 
   const handleResetCaseColumns = () => {
@@ -300,10 +260,10 @@ export function Cases() {
   });
 
   const sortedCases = [...filteredCases].sort((a, b) => {
-    if (!sortConfig.direction) return 0;
+    if (!sortConfig.direction || !sortConfig.key) return 0;
 
-    let aValue: any = "";
-    let bValue: any = "";
+    let aValue: unknown = "";
+    let bValue: unknown = "";
 
     switch (sortConfig.key) {
       case "account":
@@ -323,9 +283,7 @@ export function Cases() {
         bValue = b[sortConfig.key as keyof typeof b] || "";
     }
 
-    if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-    if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-    return 0;
+    return compareValues(aValue, bValue, sortConfig.direction);
   });
 
   const handleRecordClick = (recordId: string) => {
@@ -548,7 +506,7 @@ export function Cases() {
   const linkedKnocks = caseLinks?.knocks ?? (knock ? [knock] : []);
   const visibleCaseColumns = CASE_TABLE_COLUMNS.filter((column) => visibleCaseColumnKeys.includes(column.key));
 
-  const renderSortIcon = (key: string) => {
+  const renderSortIcon = (key: CaseColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
       return <ArrowUpDown className="w-4 h-4" />;
     }
@@ -681,7 +639,7 @@ export function Cases() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 w-12">
-                  <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">★</span>
+                  <Bookmark className="h-4 w-4 text-gray-500" aria-label="Bookmark" />
                 </th>
                 {visibleCaseColumns.map(renderColumnHeader)}
               </tr>
