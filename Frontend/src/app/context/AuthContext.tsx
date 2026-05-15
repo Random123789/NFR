@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { getCurrentUser, initializeData, login as loginApi, logout as logoutApi, setStoredToken, clearStoredAuth, getStoredToken, type AuthUser } from "../data/apiClient";
+import { getCurrentUser, login as loginApi, logout as logoutApi, setStoredToken, clearStoredAuth, getStoredToken, type AuthUser } from "../data/apiClient";
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -31,7 +31,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const current = await getCurrentUser();
-        await initializeData();
         if (mounted) {
           setUser(current);
         }
@@ -63,7 +62,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login: async (email: string, password: string) => {
       const result = await loginApi(email, password);
       setStoredToken(result.token);
-      await initializeData();
       setToken(result.token);
       setUser(result.user);
     },

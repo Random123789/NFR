@@ -25,7 +25,7 @@ class Settings:
     db_port: int = int(os.getenv("DB_PORT", "3306"))
     db_user: str = os.getenv("DB_USER", "root")
     db_password: str = os.getenv("DB_PASSWORD", "")
-    db_name: str = os.getenv("DB_NAME", "nfr")
+    db_name: str = os.getenv("DB_NAME", "mantis")
 
     port: int = int(os.getenv("PORT", "4000"))
     host: str = os.getenv("HOST", "0.0.0.0")

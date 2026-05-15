@@ -5,6 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Query, Request
 
 from authService import require_auth_user
+from database import execute_mutation, execute_query
 from entity_crud import (
     EntityCrudConfig,
     add_entity_history,
@@ -24,16 +25,58 @@ PRODUCT_CONFIG = EntityCrudConfig(
     record_prefix="PRD",
     module_id="MOD-PRODUCT",
     entity_label="Product",
-    data_fields=("productFamily", "productName", "productUrl"),
+    data_fields=("productFamily", "productName", "productUrl", "description"),
     field_labels={
         "productFamily": "Product Family",
         "productName": "Product Name",
         "productUrl": "Product URL",
+        "description": "Description",
         "metaData": "Metadata",
     },
-    search_fields=("recordId", "productName", "productFamily", "ownedBy"),
-    nullable_fields=("productFamily", "productUrl", "metaData"),
+    search_fields=("recordId", "productName", "productFamily", "description", "ownedBy"),
+    nullable_fields=("productFamily", "productUrl", "description", "metaData"),
 )
+
+
+async def _table_exists(table_name: str) -> bool:
+    result = await execute_query(
+        """
+        SELECT 1
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s
+        LIMIT 1
+        """,
+        [table_name],
+        fetch_one=True,
+    )
+    return bool(result)
+
+
+async def _column_exists(table_name: str, column_name: str) -> bool:
+    result = await execute_query(
+        """
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s
+          AND COLUMN_NAME = %s
+        LIMIT 1
+        """,
+        [table_name, column_name],
+        fetch_one=True,
+    )
+    return bool(result)
+
+
+async def ensure_product_schema() -> None:
+    """Ensure product-specific columns exist for existing deployments."""
+
+    if not await _table_exists("products"):
+        return
+
+    if not await _column_exists("products", "description"):
+        await execute_mutation("ALTER TABLE products ADD COLUMN description TEXT NULL AFTER productUrl")
 
 
 @router.get("", response_model=List[ProductRecord])
@@ -69,6 +112,11 @@ async def update_product(recordId: str, data: ProductCreate, request: Request) -
 @router.delete("/{recordId}")
 async def delete_product(recordId: str) -> dict[str, str]:
     """Delete a product."""
+    await execute_mutation("UPDATE cases SET product = NULL WHERE product = %s", [recordId])
+    await execute_mutation(
+        "DELETE FROM case_entity_links WHERE entityType = 'product' AND entityRecordId = %s",
+        [recordId],
+    )
     return await delete_entity(PRODUCT_CONFIG, recordId)
 
 

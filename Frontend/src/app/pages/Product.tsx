@@ -1,17 +1,31 @@
-import { useState, useEffect } from "react";
-import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { products, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getProductById, updateProduct, type HistoryEntry } from "../data/apiClient";
+import { useState } from "react";
+import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
+import { addProductHistory, updateProduct } from "../data/apiClient";
+import { DetailTabs } from "../components/DetailTabs";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
+import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useAuth } from "../context/AuthContext";
+import { useRecords } from "../context/RecordsContext";
 import { useToast } from "../context/ToastContext";
+import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
+import { useLinkedCases } from "../hooks/useLinkedCases";
+import { useRecordComments } from "../hooks/useRecordComments";
 import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
+import {
+  createDetailTarget,
+  createLinkedDetailState,
+  type DetailRouteState,
+} from "../navigation/detailNavigation";
+import { exportRowsToCsv } from "../utils/csvExport";
+import { formatTimestampMinute } from "../utils/dateTime";
 
-type ProductColumnKey = "recordId" | "productName" | "productFamily" | "productUrl" | "updatedAt";
-type ProductSearchKey = "recordId" | "productName" | "productFamily";
+type ProductColumnKey = "productName" | "productFamily" | "productUrl" | "updatedAt";
+type ProductSearchKey = "productName" | "productFamily";
 
 type ProductTableColumn = {
   key: ProductColumnKey;
@@ -21,7 +35,6 @@ type ProductTableColumn = {
 };
 
 const PRODUCT_TABLE_COLUMNS: ProductTableColumn[] = [
-  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
   { key: "productName", label: "Product Name", sortKey: "productName", searchKey: "productName" },
   { key: "productFamily", label: "Product Family", sortKey: "productFamily", searchKey: "productFamily" },
   { key: "productUrl", label: "Product URL", sortKey: "productUrl" },
@@ -30,35 +43,63 @@ const PRODUCT_TABLE_COLUMNS: ProductTableColumn[] = [
 
 const DEFAULT_PRODUCT_COLUMN_KEYS = PRODUCT_TABLE_COLUMNS.map((column) => column.key);
 const PRODUCT_COLUMN_STORAGE_KEY = "product.visibleTableColumns";
+const PRODUCT_DETAIL_TABS = [
+  { key: "details", label: "Details" },
+  { key: "linkedCases", label: "Linked Cases" },
+];
+const RELATED_CREATE_BUTTON_CLASS = "inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50";
 
 export function Product() {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast } = useToast();
+  const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { searchTerm } = useSearch();
-  const [selectedProduct, setSelectedProduct] = useState<typeof products[0] | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedProduct, setEditedProduct] = useState<typeof products[0] | null>(null);
-  const [newComment, setNewComment] = useState("");
-  const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
-  const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
-  const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
-  const [linkingCaseId, setLinkingCaseId] = useState("");
-  const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const { products, cases, getProductById, upsertProduct } = useRecords();
+  const {
+    selectedRecord: selectedProduct,
+    setSelectedRecord: setSelectedProduct,
+    isEditing,
+    editedRecord: editedProduct,
+    setEditedRecord: setEditedProduct,
+    activeDetailTab,
+    setActiveDetailTab,
+    handleBackFromDetail,
+    handleEdit,
+    handleCancelEdit,
+    applySavedRecord,
+  } = useRoutedEntityDetail({
+    entityType: "product",
+    getRecordById: getProductById,
+  });
+  const {
+    linkedCases,
+    linkingCaseId,
+    setLinkingCaseId,
+    isLinkingCase,
+    availableCases,
+    linkCase,
+    handleLinkCase,
+    handleUnlinkCase,
+  } = useLinkedCases({
+    entityType: "product",
+    entityRecordId: selectedProduct?.recordId,
+    cases,
+    entityLabel: "product",
+    showToast,
+  });
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+    selectedRecord: selectedProduct,
+    setSelectedRecord: setSelectedProduct,
+    addHistory: addProductHistory,
+    upsertRecord: upsertProduct,
+    userName: user?.displayName,
+    onError: (message) => showToast(message, "error"),
+  });
   const [visibleProductColumnKeys, setVisibleProductColumnKeys] = useStoredColumnKeys<ProductColumnKey>(PRODUCT_COLUMN_STORAGE_KEY, DEFAULT_PRODUCT_COLUMN_KEYS);
 
-  type LinkedReturnState = {
-    returnTo?: {
-      path: string;
-      eventName: string;
-      recordId: string;
-    };
-    previousState?: LinkedReturnState | null;
-  };
-
   const [searchFilters, setSearchFilters] = useState({
-    recordId: "",
     productName: "",
     productFamily: "",
   });
@@ -68,120 +109,17 @@ export function Product() {
     direction: null,
   });
 
-  useEffect(() => {
-    const handleOpenDetail = (event: Event) => {
-      const productId = (event as CustomEvent<string>).detail;
-      const product = getProductById(productId);
-      if (product) {
-        setSelectedProduct(product);
-        setActiveDetailTab("details");
-      }
-    };
-
-    window.addEventListener('openProductDetail', handleOpenDetail as EventListener);
-    return () => window.removeEventListener('openProductDetail', handleOpenDetail as EventListener);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadLinkedCases = async () => {
-      if (!selectedProduct) {
-        setLinkedCases([]);
-        setLinkingCaseId("");
-        return;
-      }
-
-      try {
-        const linked = await getLinkedCasesByEntity("product", selectedProduct.recordId);
-        if (!cancelled) {
-          setLinkedCases(linked);
-        }
-      } catch (error) {
-        console.error("Failed to load linked cases for product:", error);
-        if (!cancelled) {
-          setLinkedCases([]);
-        }
-      }
-    };
-
-    loadLinkedCases();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedProduct?.recordId]);
-
   const handleCaseClick = (caseId: string) => {
     if (!selectedProduct?.recordId) return;
 
-    const state: LinkedReturnState = {
-      returnTo: {
-        path: '/product',
-        eventName: 'openProductDetail',
-        recordId: selectedProduct.recordId,
-      },
-      previousState: (location.state as LinkedReturnState | null) ?? null,
-    };
-
-    navigate('/cases', { state });
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openCaseDetail', { detail: caseId }));
-    }, 100);
-  };
-
-  const handleLinkCase = async () => {
-    if (!selectedProduct || !linkingCaseId) return;
-
-    setIsLinkingCase(true);
-    try {
-      await addCaseLink(linkingCaseId, "product", selectedProduct.recordId);
-      const linked = await getLinkedCasesByEntity("product", selectedProduct.recordId);
-      setLinkedCases(linked);
-      setLinkingCaseId("");
-      showToast("Case linked successfully.", "success");
-    } catch (error) {
-      console.error("Failed to link case to product:", error);
-      showToast("Failed to link case.", "error");
-    } finally {
-      setIsLinkingCase(false);
-    }
-  };
-
-  const handleUnlinkCase = async (caseRecordId: string) => {
-    if (!selectedProduct) return;
-
-    setIsLinkingCase(true);
-    try {
-      await removeCaseLink(caseRecordId, "product", selectedProduct.recordId);
-      const linked = await getLinkedCasesByEntity("product", selectedProduct.recordId);
-      setLinkedCases(linked);
-      showToast("Case unlinked successfully.", "success");
-    } catch (error) {
-      console.error("Failed to unlink case from product:", error);
-      showToast("Failed to unlink case.", "error");
-    } finally {
-      setIsLinkingCase(false);
-    }
-  };
-
-  const handleBackFromDetail = () => {
-    const navState = (location.state as LinkedReturnState | null) ?? null;
-    if (navState?.returnTo) {
-      navigate(navState.returnTo.path, { state: navState.previousState ?? null });
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent(navState.returnTo!.eventName, { detail: navState.returnTo!.recordId }));
-      }, 100);
-      return;
-    }
-
-    setSelectedProduct(null);
-  };
-
-  const handleEdit = () => {
-    if (selectedProduct) {
-      setEditedProduct({ ...selectedProduct });
-      setIsEditing(true);
-    }
+    navigate('/cases', {
+      state: createLinkedDetailState(
+        "case",
+        caseId,
+        createDetailTarget("product", selectedProduct.recordId),
+        (location.state as DetailRouteState | null) ?? null,
+      ),
+    });
   };
 
   const handleSave = async () => {
@@ -192,51 +130,17 @@ export function Product() {
         productFamily: editedProduct.productFamily,
         productName: editedProduct.productName,
         productUrl: editedProduct.productUrl,
+        description: editedProduct.description,
         metaData: editedProduct.metaData,
       });
 
-      const index = products.findIndex((product) => product.recordId === saved.recordId);
-      if (index >= 0) {
-        products[index] = saved;
-      }
+      upsertProduct(saved);
 
-      setSelectedProduct(saved);
-      setEditedProduct(saved);
-      setIsEditing(false);
+      applySavedRecord(saved);
       showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save product:", error);
       showToast("Failed to save changes. Please try again.", "error");
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditedProduct(null);
-    setIsEditing(false);
-  };
-
-  const handleAddComment = () => {
-    if (selectedProduct && newComment.trim()) {
-      const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
-      const quoteText = selectedQuote
-        ? `[Quoted reply to ${selectedQuote.user} (${selectedQuote.timestamp})]\n${formatHistoryEntryText(selectedQuote)}`
-        : null;
-
-      const newHistoryEntry = {
-        timestamp,
-        user: "Current User",
-        action: "Comment",
-        changes: quoteText ? `${quoteText}\n\n${newComment.trim()}` : newComment.trim(),
-      };
-
-      const updatedProduct = {
-        ...selectedProduct,
-        history: [...(selectedProduct.history || []), newHistoryEntry],
-      };
-
-      setSelectedProduct(updatedProduct);
-      setNewComment("");
-      setSelectedQuote(null);
     }
   };
 
@@ -269,16 +173,15 @@ export function Product() {
   const filteredProducts = products.filter((product) => {
     if (normalizedSearchTerm) {
       const matchesGlobalSearch = [
-        product.recordId,
         product.productName,
         product.productFamily,
         product.productUrl,
+        product.description,
       ].some((value) => (value ?? "").toLowerCase().includes(normalizedSearchTerm));
 
       if (!matchesGlobalSearch) return false;
     }
 
-    if (searchFilters.recordId && !product.recordId.toLowerCase().includes(searchFilters.recordId.toLowerCase())) return false;
     if (searchFilters.productName && !product.productName.toLowerCase().includes(searchFilters.productName.toLowerCase())) return false;
     if (searchFilters.productFamily && !(product.productFamily ?? "").toLowerCase().includes(searchFilters.productFamily.toLowerCase())) return false;
     return true;
@@ -289,8 +192,27 @@ export function Product() {
     return compareValues(a[sortConfig.key], b[sortConfig.key], sortConfig.direction);
   });
 
-  const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
   const visibleProductColumns = PRODUCT_TABLE_COLUMNS.filter((column) => visibleProductColumnKeys.includes(column.key));
+  const detailGridClassName = activeDetailTab === "details"
+    ? `grid grid-cols-1 gap-3 sm:grid-cols-2 ${
+        isEditing
+          ? ""
+          : "[&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 [&>div]:gap-y-1 [&>div]:rounded-lg [&>div]:border [&>div]:border-gray-100 [&>div]:bg-gray-50 [&>div]:px-3 [&>div]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words [&_a]:min-w-0 [&_a]:break-all"
+      }`
+    : "hidden";
+
+  const handleExportCsv = () => {
+    exportRowsToCsv(
+      "products",
+      sortedProducts,
+      visibleProductColumns.map((column) => ({
+        label: column.label,
+        value: (product) => column.key === "updatedAt"
+          ? formatTimestampMinute(product.updatedAt)
+          : product[column.key] ?? "",
+      })),
+    );
+  };
 
   const renderSortIcon = (key: ProductColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
@@ -323,8 +245,6 @@ export function Product() {
 
   const renderColumnCell = (product: typeof products[0], column: ProductTableColumn) => {
     switch (column.key) {
-      case "recordId":
-        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{product.recordId}</td>;
       case "productName":
         return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{product.productName}</td>;
       case "productFamily":
@@ -339,7 +259,7 @@ export function Product() {
           </td>
         );
       case "updatedAt":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{product.updatedAt}</td>;
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{formatTimestampMinute(product.updatedAt)}</td>;
       default:
         return null;
     }
@@ -358,12 +278,30 @@ export function Product() {
             <h2 className="text-base font-semibold text-gray-900">Product Records</h2>
             <p className="text-sm text-gray-500">{visibleProductColumns.length} of {PRODUCT_TABLE_COLUMNS.length} fields shown</p>
           </div>
-          <TableFieldSelector
-            columns={PRODUCT_TABLE_COLUMNS}
-            visibleKeys={visibleProductColumnKeys}
-            onToggle={handleToggleProductColumn}
-            onReset={handleResetProductColumns}
-          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={sortedProducts.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+            <CreateEntityDialog
+              entityType="product"
+              onCreated={(product) => {
+                setSelectedProduct(product);
+                setActiveDetailTab("details");
+              }}
+            />
+            <TableFieldSelector
+              columns={PRODUCT_TABLE_COLUMNS}
+              visibleKeys={visibleProductColumnKeys}
+              onToggle={handleToggleProductColumn}
+              onReset={handleResetProductColumns}
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -469,37 +407,10 @@ export function Product() {
 
             <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="xl:col-span-2 space-y-6">
-              <div className="border-b border-gray-200 pb-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveDetailTab("details")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "details"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Details
-                  </button>
-                  <button
-                    onClick={() => setActiveDetailTab("linked")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "linked"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Linked Entities
-                  </button>
-                </div>
-              </div>
+              <DetailTabs tabs={PRODUCT_DETAIL_TABS} activeTab={activeDetailTab} onChange={setActiveDetailTab} />
 
-              <div className={activeDetailTab === "details" ? "grid grid-cols-2 gap-4" : "hidden"}>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Record ID</label>
-                  <p className="text-gray-900">{selectedProduct.recordId}</p>
-                </div>
-                <div>
+              <div className={detailGridClassName}>
+                <div className="order-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Product Family</label>
                   {isEditing && editedProduct ? (
                     <input
@@ -509,10 +420,10 @@ export function Product() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
-                    <p className="text-gray-900">{selectedProduct.productFamily}</p>
+                    <p className="text-gray-900">{selectedProduct.productFamily || "-"}</p>
                   )}
                 </div>
-                <div className="col-span-2">
+                <div className="order-1">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Product Name</label>
                   {isEditing && editedProduct ? (
                     <input
@@ -525,7 +436,7 @@ export function Product() {
                     <p className="text-gray-900 font-medium">{selectedProduct.productName}</p>
                   )}
                 </div>
-                <div className="col-span-2">
+                <div className="order-3 sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Product URL</label>
                   {isEditing && editedProduct ? (
                     <input
@@ -534,29 +445,32 @@ export function Product() {
                       onChange={(e) => setEditedProduct({ ...editedProduct, productUrl: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
+                  ) : selectedProduct.productUrl ? (
+                    <a href={selectedProduct.productUrl} target="_blank" rel="noopener noreferrer" className="break-all text-[#E31937] hover:underline inline-flex items-center gap-1">
+                      {selectedProduct.productUrl}
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                    </a>
                   ) : (
-                    selectedProduct.productUrl ? (
-                      <a href={selectedProduct.productUrl} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1">
-                        {selectedProduct.productUrl}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    ) : (
-                      <span className="text-gray-500">—</span>
-                    )
+                    <p className="text-gray-900">-</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Created At</label>
-                  <p className="text-gray-900">{selectedProduct.createdAt}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Updated At</label>
-                  <p className="text-gray-900">{selectedProduct.updatedAt}</p>
+                <div className="order-4 sm:col-span-2">
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Description</label>
+                  {isEditing && editedProduct ? (
+                    <textarea
+                      value={editedProduct.description ?? ""}
+                      onChange={(e) => setEditedProduct({ ...editedProduct, description: e.target.value })}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{selectedProduct.description || "-"}</p>
+                  )}
                 </div>
               </div>
 
-              <div className={activeDetailTab === "linked" ? "pt-1" : "hidden"}>
-                <h3 className="font-semibold text-lg text-gray-900 mb-4">Related Data</h3>
+              <div className={activeDetailTab === "linkedCases" ? "pt-1" : "hidden"}>
+                <h3 className="font-semibold text-lg text-gray-900 mb-4">Linked Cases</h3>
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3 mb-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-end">
                     <div className="flex-1">
@@ -569,11 +483,23 @@ export function Product() {
                         <option value="">Select a case</option>
                         {availableCases.map((caseItem) => (
                           <option key={caseItem.recordId} value={caseItem.recordId}>
-                            {caseItem.recordId} - {caseItem.description}
+                            {caseItem.description}
                           </option>
                         ))}
                       </select>
                     </div>
+                    <CreateEntityDialog
+                      entityType="case"
+                      triggerLabel="New"
+                      triggerTitle="Create case"
+                      initialValues={{
+                        product: selectedProduct.recordId,
+                      }}
+                      className={RELATED_CREATE_BUTTON_CLASS}
+                      onCreated={(created) => {
+                        void linkCase(created.recordId);
+                      }}
+                    />
                     <button
                       type="button"
                       onClick={handleLinkCase}
@@ -594,15 +520,14 @@ export function Product() {
                 <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
-                <RecordHistoryTimeline history={selectedProduct.history} onQuote={setSelectedQuote} />
 
-                <div className="border-t border-gray-200 pt-4">
+                <div className="mb-4 border-b border-gray-200 pb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Comment</label>
                   {selectedQuote && (
                     <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 border-l-4 border-l-[#6264A7]">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-xs text-gray-500 font-medium">
-                          Replying to {selectedQuote.user} - {selectedQuote.timestamp}
+                          Replying to {selectedQuote.user} - {formatTimestampMinute(selectedQuote.timestamp)}
                         </p>
                         <button
                           onClick={() => setSelectedQuote(null)}
@@ -626,13 +551,14 @@ export function Product() {
                   <div className="mt-2 flex justify-end">
                     <button
                       onClick={handleAddComment}
-                      disabled={!newComment.trim()}
+                      disabled={isAddingComment || !newComment.trim()}
                       className="px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      Add Comment
+                      {isAddingComment ? "Adding..." : "Add Comment"}
                     </button>
                   </div>
                 </div>
+                <RecordHistoryTimeline history={selectedProduct.history} onQuote={setSelectedQuote} />
               </div>
             </div>
           </div>

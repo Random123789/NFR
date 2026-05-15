@@ -1,28 +1,72 @@
-import { useState, useEffect } from "react";
-import { ChevronDown, ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark, UserRound } from "lucide-react";
-import { cases, accounts, products, projects, nfrs, knocks, getAccountById, getProductById, getProjectById, getNfrById, getNfrByMantisId, getKnockById, getKnockByKnockId, getCaseById, updateCase, getCase, getCaseLinks, addCaseLink, removeCaseLink, listAssignableUsers, type AssignableUser, type CaseLinkEntityType, type CaseLinksResponse, type HistoryEntry } from "../data/apiClient";
+import { useEffect, useState } from "react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, ChevronDown, Download, Edit2, Save, UserRound, Check } from "lucide-react";
+import {
+  addCaseLink,
+  addCaseHistory,
+  getCase,
+  getCaseLinks,
+  listAssignableUsers,
+  removeCaseLink,
+  updateCase,
+  type AssignableUser,
+  type CaseLinkEntityType,
+  type CaseLinksResponse,
+  type CaseRecord,
+} from "../data/apiClient";
+import { CreateEntityDialog } from "../components/CreateEntityDialog";
+import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { TableFieldSelector } from "../components/TableFieldSelector";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+import { Checkbox } from "../components/ui/checkbox";
 import { useLocation, useNavigate } from "react-router";
-import { useSearch } from "../context/SearchContext";
+import { useAuth } from "../context/AuthContext";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useRecords } from "../context/RecordsContext";
+import { useSearch } from "../context/SearchContext";
 import { useToast } from "../context/ToastContext";
+import { caseCategories, caseEscalationTypes, casePriorities, caseStatuses } from "../data/caseOptions";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
+import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
+import { useRecordComments } from "../hooks/useRecordComments";
 import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
+import {
+  createDetailTarget,
+  createLinkedDetailState,
+  type DetailEntityType,
+  type DetailRouteState,
+} from "../navigation/detailNavigation";
+import { exportRowsToCsv } from "../utils/csvExport";
+import { formatTimestampMinute } from "../utils/dateTime";
 
 type LinkDrafts = {
   account: string;
   product: string;
   project: string;
-  nfr: string;
-  knock: string;
+  mantis: string[];
+  knock: string[];
 };
 
 type LinkKey = keyof LinkDrafts;
 
-type CaseColumnKey = "recordId" | "description" | "status" | "priority" | "account" | "product" | "caseOwner" | "assignedTo" | "updatedAt";
-type CaseSearchKey = "recordId" | "description" | "account" | "product" | "caseOwner" | "assignedTo";
+type CaseColumnKey =
+  | "account"
+  | "project"
+  | "category"
+  | "escalationType"
+  | "escalationNote"
+  | "product"
+  | "closeDate"
+  | "description"
+  | "seOwner"
+  | "assignedTo"
+  | "priority"
+  | "status"
+  | "knockId"
+  | "mantisId";
+
+type CaseSearchKey = CaseColumnKey;
 
 type CaseTableColumn = {
   key: CaseColumnKey;
@@ -32,22 +76,36 @@ type CaseTableColumn = {
 };
 
 const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
-  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
   { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
-  { key: "status", label: "Status", sortKey: "status" },
-  { key: "priority", label: "Priority", sortKey: "priority" },
   { key: "account", label: "Account", sortKey: "account", searchKey: "account" },
+  { key: "project", label: "Project", sortKey: "project", searchKey: "project" },
+  { key: "category", label: "Category", sortKey: "category", searchKey: "category" },
+  { key: "escalationType", label: "Escalation Type", sortKey: "escalationType", searchKey: "escalationType" },
   { key: "product", label: "Product", sortKey: "product", searchKey: "product" },
-  { key: "caseOwner", label: "SC Owner", sortKey: "caseOwner", searchKey: "caseOwner" },
+  { key: "closeDate", label: "Close Date", sortKey: "closeDate", searchKey: "closeDate" },
+  { key: "seOwner", label: "SE Owner", sortKey: "seOwner", searchKey: "seOwner" },
   { key: "assignedTo", label: "Assigned To", sortKey: "assignedTo", searchKey: "assignedTo" },
-  { key: "updatedAt", label: "Updated", sortKey: "updatedAt" },
+  { key: "priority", label: "Priority", sortKey: "priority" },
+  { key: "status", label: "Status", sortKey: "status" },
+  { key: "knockId", label: "Knock ID", sortKey: "knockId", searchKey: "knockId" },
+  { key: "mantisId", label: "Mantis ID", sortKey: "mantisId", searchKey: "mantisId" },
+  { key: "escalationNote", label: "Escalation Note", sortKey: "escalationNote", searchKey: "escalationNote" },
 ];
 
 const DEFAULT_CASE_COLUMN_KEYS = CASE_TABLE_COLUMNS.map((column) => column.key);
-const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns.v2";
+const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns.v3";
+const RELATED_CREATE_BUTTON_CLASS = "inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50";
+const CASE_DETAIL_TABS = [
+  { key: "details", label: "Details" },
+  { key: "linkedAccounts", label: "Linked Accounts" },
+  { key: "linkedProjects", label: "Linked Projects" },
+  { key: "linkedProducts", label: "Linked Products" },
+  { key: "linkedMantisRecords", label: "Linked Mantis Records" },
+  { key: "linkedKnocks", label: "Linked Knocks" },
+];
 
 function assigneeLabel(user: AssignableUser) {
-  return `${user.displayName} (${user.email})${user.isActive ? "" : " - inactive"}`;
+  return `${user.displayName} (${user.email})${user.vertical ? ` - ${user.vertical}` : ""}${user.isActive ? "" : " - inactive"}`;
 }
 
 function AssignedToBadge({ value }: { value: string | null | undefined }) {
@@ -66,52 +124,158 @@ function AssignedToBadge({ value }: { value: string | null | undefined }) {
   );
 }
 
+function textValue(value: string | null | undefined) {
+  return value || "-";
+}
+
+function emptyLinkDrafts(): LinkDrafts {
+  return {
+    account: "",
+    product: "",
+    project: "",
+    mantis: [],
+    knock: [],
+  };
+}
+
+function uniqueNonEmptyValues(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function MultiSelectDropdown<T extends { recordId: string }>({
+  label,
+  values,
+  options,
+  getOptionLabel,
+  onChange,
+}: {
+  label: string;
+  values: string[];
+  options: T[];
+  getOptionLabel: (option: T) => string;
+  onChange: (nextValues: string[]) => void;
+}) {
+  const selectedLabels = options
+    .filter((option) => values.includes(option.recordId))
+    .map(getOptionLabel)
+    .filter(Boolean);
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="flex min-h-[42px] w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+        >
+          <span className="truncate">
+            {selectedLabels.length > 0 ? selectedLabels.join(", ") : `Select ${label}`}
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
+        <div className="max-h-72 space-y-1 overflow-auto">
+          {options.length === 0 ? (
+            <div className="px-2 py-2 text-sm text-gray-500">No records available</div>
+          ) : options.map((option) => {
+            const checked = values.includes(option.recordId);
+            return (
+              <button
+                key={option.recordId}
+                type="button"
+                className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-gray-50"
+                onClick={() => {
+                  const nextValues = checked
+                    ? values.filter((value) => value !== option.recordId)
+                    : [...values, option.recordId];
+                  onChange(nextValues);
+                }}
+              >
+                <Checkbox checked={checked} className="pointer-events-none" />
+                <span className="min-w-0 flex-1 truncate text-gray-900">{getOptionLabel(option)}</span>
+                {checked ? <Check className="h-4 w-4 text-[#E31937]" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function Cases() {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast } = useToast();
+  const { user } = useAuth();
   const { searchTerm } = useSearch();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
-  const [selectedCase, setSelectedCase] = useState<typeof cases[0] | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedCase, setEditedCase] = useState<typeof cases[0] | null>(null);
+  const {
+    cases,
+    accounts,
+    products,
+    projects,
+    mantisRecords,
+    knocks,
+    getAccountById,
+    getProductById,
+    getProjectById,
+    getMantisByMantisId,
+    getKnockByKnockId,
+    getCaseById,
+    upsertCase,
+  } = useRecords();
+  const {
+    selectedRecord: selectedCase,
+    setSelectedRecord: setSelectedCase,
+    selectRecord,
+    isEditing,
+    editedRecord: editedCase,
+    setEditedRecord: setEditedCase,
+    activeDetailTab,
+    setActiveDetailTab,
+    handleBackFromDetail,
+    handleEdit,
+    handleCancelEdit,
+    applySavedRecord,
+  } = useRoutedEntityDetail({
+    entityType: "case",
+    getRecordById: getCaseById,
+  });
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+    selectedRecord: selectedCase,
+    setSelectedRecord: setSelectedCase,
+    addHistory: addCaseHistory,
+    upsertRecord: upsertCase,
+    userName: user?.displayName,
+    onError: (message) => showToast(message, "error"),
+  });
+
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [priorityFilter, setPriorityFilter] = useState<string>("All");
-  const [newComment, setNewComment] = useState("");
-  const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
-  const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
   const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
   const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useStoredColumnKeys<CaseColumnKey>(CASE_COLUMN_STORAGE_KEY, DEFAULT_CASE_COLUMN_KEYS);
   const [caseLinks, setCaseLinks] = useState<CaseLinksResponse | null>(null);
-  const [linkDrafts, setLinkDrafts] = useState<LinkDrafts>({
+  const [editedMantisIds, setEditedMantisIds] = useState<string[]>([]);
+  const [editedKnockIds, setEditedKnockIds] = useState<string[]>([]);
+  const [linkDrafts, setLinkDrafts] = useState<LinkDrafts>(() => emptyLinkDrafts());
+  const [searchFilters, setSearchFilters] = useState<Record<CaseSearchKey, string>>({
     account: "",
-    product: "",
     project: "",
-    nfr: "",
-    knock: "",
-  });
-
-  type LinkedReturnState = {
-    returnTo?: {
-      path: string;
-      eventName: string;
-      recordId: string;
-    };
-    previousState?: LinkedReturnState | null;
-  };
-
-  const [searchFilters, setSearchFilters] = useState({
-    recordId: "",
-    moduleId: "",
-    description: "",
-    account: "",
+    category: "",
+    escalationType: "",
+    escalationNote: "",
     product: "",
-    caseOwner: "",
-    assignedTo: "",
+    closeDate: "",
+    description: "",
     seOwner: "",
+    assignedTo: "",
+    priority: "",
+    status: "",
+    knockId: "",
+    mantisId: "",
   });
-
   const [sortConfig, setSortConfig] = useState<SortConfig<CaseColumnKey>>({
     key: "",
     direction: null,
@@ -137,50 +301,70 @@ export function Cases() {
   }, []);
 
   useEffect(() => {
-    const handleOpenDetail = (event: Event) => {
-      const caseId = (event as CustomEvent<string>).detail;
-      const caseData = getCaseById(caseId);
-      if (caseData) {
-        setSelectedCase(caseData);
-        setActiveDetailTab("details");
-      }
-    };
-
-    window.addEventListener('openCaseDetail', handleOpenDetail as EventListener);
-    return () => window.removeEventListener('openCaseDetail', handleOpenDetail as EventListener);
-  }, []);
-
-  useEffect(() => {
     if (!selectedCase) {
       setCaseLinks(null);
-      setLinkDrafts({
-        account: "",
-        product: "",
-        project: "",
-        nfr: "",
-        knock: "",
-      });
+      setEditedMantisIds([]);
+      setEditedKnockIds([]);
+      setLinkDrafts(emptyLinkDrafts());
       return;
     }
 
-    setLinkDrafts({
-      account: "",
-      product: "",
-      project: "",
-      nfr: "",
-      knock: "",
-    });
+    setLinkDrafts(emptyLinkDrafts());
 
+    let cancelled = false;
     void (async () => {
       try {
         const links = await getCaseLinks(selectedCase.recordId);
-        setCaseLinks(links);
+        if (!cancelled) {
+          setCaseLinks(links);
+        }
       } catch (error) {
         console.error("Failed to load case links:", error);
-        setCaseLinks(null);
+        if (!cancelled) {
+          setCaseLinks(null);
+        }
       }
     })();
-  }, [selectedCase]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCase?.recordId]);
+
+  useEffect(() => {
+    if (!selectedCase || !isEditing) return;
+
+    const linkedMantisIds = uniqueNonEmptyValues(caseLinks?.mantis.map((item) => item.recordId) ?? []);
+    const linkedKnockIds = uniqueNonEmptyValues(caseLinks?.knocks.map((item) => item.recordId) ?? []);
+    const fallbackMantisId = selectedCase.mantisId ? mantisRecords.find((item) => item.mantisId === selectedCase.mantisId)?.recordId ?? selectedCase.mantisId : "";
+    const fallbackKnockId = selectedCase.knockId ? knocks.find((item) => item.knockId === selectedCase.knockId)?.recordId ?? selectedCase.knockId : "";
+
+    setEditedMantisIds(linkedMantisIds.length > 0 ? linkedMantisIds : fallbackMantisId ? [fallbackMantisId] : []);
+    setEditedKnockIds(linkedKnockIds.length > 0 ? linkedKnockIds : fallbackKnockId ? [fallbackKnockId] : []);
+  }, [caseLinks, isEditing, knocks, mantisRecords, selectedCase]);
+
+  const account = selectedCase ? getAccountById(selectedCase.account) : null;
+  const product = selectedCase ? getProductById(selectedCase.product) : null;
+  const project = selectedCase ? getProjectById(selectedCase.project) : null;
+  const mantis = selectedCase ? (getMantisByMantisId(selectedCase.mantisId) ?? null) : null;
+  const knock = selectedCase ? (getKnockByKnockId(selectedCase.knockId) ?? null) : null;
+
+  const linkedAccounts = caseLinks?.accounts ?? (account ? [account] : []);
+  const linkedProducts = caseLinks?.products ?? (product ? [product] : []);
+  const linkedProjects = caseLinks?.projects ?? (project ? [project] : []);
+  const linkedMantis = caseLinks?.mantis ?? (mantis ? [mantis] : []);
+  const linkedKnocks = caseLinks?.knocks ?? (knock ? [knock] : []);
+  const linkedAccountRecordIds = new Set(linkedAccounts.map((item) => item.recordId).filter(Boolean));
+  const linkedProductRecordIds = new Set(linkedProducts.map((item) => item.recordId).filter(Boolean));
+  const linkedProjectRecordIds = new Set(linkedProjects.map((item) => item.recordId).filter(Boolean));
+  const linkedMantisRecordIds = new Set(linkedMantis.map((item) => item.recordId).filter(Boolean));
+  const linkedKnockRecordIds = new Set(linkedKnocks.map((item) => item.recordId).filter(Boolean));
+  const availableAccountsForLink = accounts.filter((item) => !linkedAccountRecordIds.has(item.recordId));
+  const availableProductsForLink = products.filter((item) => !linkedProductRecordIds.has(item.recordId));
+  const availableProjectsForLink = projects.filter((item) => !linkedProjectRecordIds.has(item.recordId));
+  const availableMantisForLink = mantisRecords.filter((item) => !linkedMantisRecordIds.has(item.recordId));
+  const availableKnocksForLink = knocks.filter((item) => !linkedKnockRecordIds.has(item.recordId));
+  const visibleCaseColumns = CASE_TABLE_COLUMNS.filter((column) => visibleCaseColumnKeys.includes(column.key));
 
   const handleSort = (key: CaseColumnKey) => {
     setSortConfig((current) => getNextSortConfig(current, key));
@@ -206,135 +390,110 @@ export function Cases() {
     setVisibleCaseColumnKeys(DEFAULT_CASE_COLUMN_KEYS);
   };
 
+  const getCaseValue = (caseItem: CaseRecord, key: CaseColumnKey) => {
+    switch (key) {
+      case "account":
+        return getAccountById(caseItem.account)?.accountName || caseItem.account || "";
+      case "product":
+        return getProductById(caseItem.product)?.productName || caseItem.product || "";
+      case "project":
+        return getProjectById(caseItem.project)?.projectName || caseItem.project || "";
+      default:
+        return caseItem[key] || "";
+    }
+  };
+
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
-  const filteredCases = cases.filter((c) => {
-    if (statusFilter !== "All" && c.status !== statusFilter) return false;
-    if (priorityFilter !== "All" && c.priority !== priorityFilter) return false;
+  const filteredCases = cases.filter((caseItem) => {
+    if (statusFilter !== "All" && caseItem.status !== statusFilter) return false;
+    if (priorityFilter !== "All" && caseItem.priority !== priorityFilter) return false;
+
+    const mantisMatch = caseItem.mantisId ? getMantisByMantisId(caseItem.mantisId) : null;
+    const knockMatch = caseItem.knockId ? getKnockByKnockId(caseItem.knockId) : null;
 
     if (normalizedSearchTerm) {
-      const account = getAccountById(c.account);
-      const product = getProductById(c.product);
-      const project = getProjectById(c.project);
-      const nfr = c.mantisId ? getNfrByMantisId(c.mantisId) : null;
-      const knock = c.knockId ? getKnockByKnockId(c.knockId) : null;
+      const values = [
+        ...CASE_TABLE_COLUMNS.map((column) => getCaseValue(caseItem, column.key)),
+        mantisMatch?.description,
+        mantisMatch?.mantisId,
+        knockMatch?.description,
+        knockMatch?.knockId,
+      ];
 
-      const matchesGlobalSearch = [
-        c.recordId,
-        c.moduleId,
-        c.description,
-        c.status,
-        c.priority,
-        c.category,
-        c.caseOwner,
-        c.assignedTo,
-        c.seOwner,
-        account?.accountName,
-        product?.productName,
-        project?.projectName,
-        nfr?.description,
-        nfr?.mantisId,
-        knock?.description,
-        knock?.knockId,
-      ].some((value) => (value ?? "").toLowerCase().includes(normalizedSearchTerm));
-
-      if (!matchesGlobalSearch) return false;
+      if (!values.some((value) => (value ?? "").toLowerCase().includes(normalizedSearchTerm))) return false;
     }
 
-    if (searchFilters.recordId && !c.recordId.toLowerCase().includes(searchFilters.recordId.toLowerCase())) return false;
-    if (searchFilters.moduleId && !c.moduleId.toLowerCase().includes(searchFilters.moduleId.toLowerCase())) return false;
-    if (searchFilters.description && !c.description.toLowerCase().includes(searchFilters.description.toLowerCase())) return false;
-    if (searchFilters.account) {
-      const account = getAccountById(c.account);
-      if (!account?.accountName.toLowerCase().includes(searchFilters.account.toLowerCase())) return false;
-    }
-    if (searchFilters.product) {
-      const product = getProductById(c.product);
-      if (!product?.productName.toLowerCase().includes(searchFilters.product.toLowerCase())) return false;
-    }
-    if (searchFilters.caseOwner && !(c.caseOwner ?? "").toLowerCase().includes(searchFilters.caseOwner.toLowerCase())) return false;
-    if (searchFilters.assignedTo && !(c.assignedTo ?? "").toLowerCase().includes(searchFilters.assignedTo.toLowerCase())) return false;
-    if (searchFilters.seOwner && !(c.seOwner ?? "").toLowerCase().includes(searchFilters.seOwner.toLowerCase())) return false;
+    return CASE_TABLE_COLUMNS.every((column) => {
+      const filter = column.searchKey ? searchFilters[column.searchKey].trim().toLowerCase() : "";
+      if (!filter) return true;
 
-    return true;
+      return getCaseValue(caseItem, column.key).toLowerCase().includes(filter);
+    });
   });
 
   const sortedCases = [...filteredCases].sort((a, b) => {
     if (!sortConfig.direction || !sortConfig.key) return 0;
-
-    let aValue: unknown = "";
-    let bValue: unknown = "";
-
-    switch (sortConfig.key) {
-      case "account":
-        aValue = getAccountById(a.account)?.accountName || "";
-        bValue = getAccountById(b.account)?.accountName || "";
-        break;
-      case "product":
-        aValue = getProductById(a.product)?.productName || "";
-        bValue = getProductById(b.product)?.productName || "";
-        break;
-      case "project":
-        aValue = getProjectById(a.project)?.projectName || "";
-        bValue = getProjectById(b.project)?.projectName || "";
-        break;
-      default:
-        aValue = a[sortConfig.key as keyof typeof a] || "";
-        bValue = b[sortConfig.key as keyof typeof b] || "";
-    }
-
-    return compareValues(aValue, bValue, sortConfig.direction);
+    return compareValues(getCaseValue(a, sortConfig.key), getCaseValue(b, sortConfig.key), sortConfig.direction);
   });
 
-  const handleRecordClick = (recordId: string) => {
-    const caseData = getCaseById(recordId);
-    if (caseData) {
-      setSelectedCase(caseData);
-      setActiveDetailTab("details");
-      setIsEditing(false);
-      setEditedCase(null);
-    }
-  };
-
-  const handleEdit = () => {
-    if (selectedCase) {
-      setEditedCase({ ...selectedCase });
-      setIsEditing(true);
-    }
+  const handleExportCsv = () => {
+    exportRowsToCsv(
+      "cases",
+      sortedCases,
+      visibleCaseColumns.map((column) => ({
+        label: column.label,
+        value: (caseItem) => getCaseValue(caseItem, column.key),
+      })),
+    );
   };
 
   const handleSave = async () => {
     if (!editedCase) return;
 
     try {
+      const nextMantisIds = editedMantisIds.filter(Boolean);
+      const nextKnockIds = editedKnockIds.filter(Boolean);
+      const currentMantisIds = caseLinks?.mantis.map((item) => item.recordId).filter(Boolean) ?? [];
+      const currentKnockIds = caseLinks?.knocks.map((item) => item.recordId).filter(Boolean) ?? [];
+      const nextMantisValue = nextMantisIds.length > 0 ? mantisRecords.find((item) => item.recordId === nextMantisIds[0])?.mantisId ?? null : null;
+      const nextKnockValue = nextKnockIds.length > 0 ? knocks.find((item) => item.recordId === nextKnockIds[0])?.knockId ?? null : null;
+
       const saved = await updateCase(editedCase.recordId, {
-        description: editedCase.description,
-        previousStatus: editedCase.previousStatus,
-        closeDate: editedCase.closeDate,
-        status: editedCase.status,
-        priority: editedCase.priority,
-        category: editedCase.category,
-        caseOwner: editedCase.caseOwner,
-        assignedTo: editedCase.assignedTo,
-        seOwner: editedCase.seOwner,
-        product: editedCase.product,
         account: editedCase.account,
         project: editedCase.project,
-        knockId: editedCase.knockId,
-        mantisId: editedCase.mantisId,
-        escalationNote: editedCase.escalationNote,
+        category: editedCase.category,
         escalationType: editedCase.escalationType,
-        metaData: editedCase.metaData,
+        escalationNote: editedCase.escalationNote,
+        product: editedCase.product,
+        closeDate: editedCase.closeDate,
+        description: editedCase.description,
+        seOwner: editedCase.seOwner,
+        assignedTo: editedCase.assignedTo,
+        priority: editedCase.priority,
+        status: editedCase.status,
+        knockId: nextKnockValue,
+        mantisId: nextMantisValue,
       });
 
-      const index = cases.findIndex((c) => c.recordId === saved.recordId);
-      if (index >= 0) {
-        cases[index] = saved;
+      upsertCase(saved);
+      applySavedRecord(saved);
+
+      for (const recordId of currentMantisIds.filter((id) => !nextMantisIds.includes(id))) {
+        await removeCaseLink(saved.recordId, "mantis", recordId);
+      }
+      for (const recordId of currentKnockIds.filter((id) => !nextKnockIds.includes(id))) {
+        await removeCaseLink(saved.recordId, "knock", recordId);
+      }
+      for (const recordId of nextMantisIds.filter((id) => !currentMantisIds.includes(id))) {
+        await addCaseLink(saved.recordId, "mantis", recordId);
+      }
+      for (const recordId of nextKnockIds.filter((id) => !currentKnockIds.includes(id))) {
+        await addCaseLink(saved.recordId, "knock", recordId);
       }
 
-      setSelectedCase(saved);
-      setEditedCase(saved);
-      setIsEditing(false);
+      await refreshCaseLinks(saved.recordId);
+      await refreshSelectedCase(saved.recordId);
       showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save case:", error);
@@ -342,42 +501,9 @@ export function Cases() {
     }
   };
 
-  const handleCancelEdit = () => {
-    setEditedCase(null);
-    setIsEditing(false);
-  };
-
-  const handleAddComment = () => {
-    if (selectedCase && newComment.trim()) {
-      const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
-      const quoteText = selectedQuote
-        ? `[Quoted reply to ${selectedQuote.user} (${selectedQuote.timestamp})]\n${formatHistoryEntryText(selectedQuote)}`
-        : null;
-
-      const newHistoryEntry = {
-        timestamp,
-        user: "Current User",
-        action: "Comment",
-        changes: quoteText ? `${quoteText}\n\n${newComment.trim()}` : newComment.trim(),
-      };
-
-      const updatedCase = {
-        ...selectedCase,
-        history: [...(selectedCase.history || []), newHistoryEntry],
-      };
-
-      setSelectedCase(updatedCase);
-      setNewComment("");
-      setSelectedQuote(null);
-    }
-  };
-
   const refreshSelectedCase = async (recordId: string) => {
     const refreshed = await getCase(recordId);
-    const index = cases.findIndex((c) => c.recordId === refreshed.recordId);
-    if (index >= 0) {
-      cases[index] = refreshed;
-    }
+    upsertCase(refreshed);
     setSelectedCase(refreshed);
     if (editedCase && editedCase.recordId === refreshed.recordId) {
       setEditedCase(refreshed);
@@ -389,27 +515,41 @@ export function Cases() {
     setCaseLinks(links);
   };
 
+  const refreshCurrentCaseLinks = async () => {
+    if (!selectedCase) return;
+
+    await refreshSelectedCase(selectedCase.recordId);
+    await refreshCaseLinks(selectedCase.recordId);
+  };
+
   const handleLinkEntity = async (key: LinkKey) => {
     if (!selectedCase) return;
 
     setIsUpdatingLinks(true);
-
     try {
       const entityTypeMap: Record<LinkKey, CaseLinkEntityType> = {
         account: "account",
         product: "product",
         project: "project",
-        nfr: "nfr",
+        mantis: "mantis",
         knock: "knock",
       };
-      const entityRecordId = linkDrafts[key];
-      if (!entityRecordId) {
-        return;
-      }
+      const entityRecordIds = uniqueNonEmptyValues(Array.isArray(linkDrafts[key]) ? linkDrafts[key] : [linkDrafts[key]]);
+      if (entityRecordIds.length === 0) return;
 
-      await addCaseLink(selectedCase.recordId, entityTypeMap[key], entityRecordId);
+      let updatedLinks: CaseLinksResponse | null = null;
+      for (const entityRecordId of entityRecordIds) {
+        updatedLinks = await addCaseLink(selectedCase.recordId, entityTypeMap[key], entityRecordId);
+      }
+      if (updatedLinks) {
+        setCaseLinks(updatedLinks);
+      }
       await refreshSelectedCase(selectedCase.recordId);
       await refreshCaseLinks(selectedCase.recordId);
+      setLinkDrafts((current) => ({
+        ...current,
+        [key]: Array.isArray(current[key]) ? [] : "",
+      } as LinkDrafts));
       showToast("Linked entities updated.", "success");
     } catch (error) {
       console.error("Failed to update linked entities:", error);
@@ -436,88 +576,30 @@ export function Cases() {
     }
   };
 
-  const navigateToLinkedEntity = (
-    targetPath: string,
-    targetEventName: string,
-    targetRecordId: string,
-  ) => {
+  const navigateToLinkedEntity = (entityType: DetailEntityType, targetRecordId: string) => {
     if (!selectedCase?.recordId) return;
 
-    const state: LinkedReturnState = {
-      returnTo: {
-        path: '/cases',
-        eventName: 'openCaseDetail',
-        recordId: selectedCase.recordId,
-      },
-      previousState: (location.state as LinkedReturnState | null) ?? null,
-    };
-
-    navigate(targetPath, { state });
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent(targetEventName, { detail: targetRecordId }));
-    }, 100);
+    navigate(createDetailTarget(entityType, targetRecordId).path, {
+      state: createLinkedDetailState(
+        entityType,
+        targetRecordId,
+        createDetailTarget("case", selectedCase.recordId),
+        (location.state as DetailRouteState | null) ?? null,
+      ),
+    });
   };
-
-  const handleAccountClick = (accountId: string) => {
-    navigateToLinkedEntity('/accounts', 'openAccountDetail', accountId);
-  };
-
-  const handleProductClick = (productId: string) => {
-    navigateToLinkedEntity('/product', 'openProductDetail', productId);
-  };
-
-  const handleProjectClick = (projectId: string) => {
-    navigateToLinkedEntity('/projects', 'openProjectDetail', projectId);
-  };
-
-  const handleNfrClick = (nfrId: string) => {
-    navigateToLinkedEntity('/nfr', 'openNfrDetail', nfrId);
-  };
-
-  const handleKnockClick = (knockId: string) => {
-    navigateToLinkedEntity('/knock', 'openKnockDetail', knockId);
-  };
-
-  const handleBackFromDetail = () => {
-    const navState = (location.state as LinkedReturnState | null) ?? null;
-    if (navState?.returnTo) {
-      navigate(navState.returnTo.path, { state: navState.previousState ?? null });
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent(navState.returnTo!.eventName, { detail: navState.returnTo!.recordId }));
-      }, 100);
-      return;
-    }
-
-    setSelectedCase(null);
-    setIsEditing(false);
-    setEditedCase(null);
-  };
-
-  const account = selectedCase ? getAccountById(selectedCase.account) : null;
-  const product = selectedCase ? getProductById(selectedCase.product) : null;
-  const project = selectedCase ? getProjectById(selectedCase.project) : null;
-  const nfr = selectedCase ? (getNfrById(selectedCase.nfrRecordId) ?? getNfrByMantisId(selectedCase.mantisId) ?? null) : null;
-  const knock = selectedCase ? (getKnockById(selectedCase.knockRecordId) ?? getKnockByKnockId(selectedCase.knockId) ?? null) : null;
-
-  const linkedAccounts = caseLinks?.accounts ?? (account ? [account] : []);
-  const linkedProducts = caseLinks?.products ?? (product ? [product] : []);
-  const linkedProjects = caseLinks?.projects ?? (project ? [project] : []);
-  const linkedNfrs = caseLinks?.nfrs ?? (nfr ? [nfr] : []);
-  const linkedKnocks = caseLinks?.knocks ?? (knock ? [knock] : []);
-  const visibleCaseColumns = CASE_TABLE_COLUMNS.filter((column) => visibleCaseColumnKeys.includes(column.key));
 
   const renderSortIcon = (key: CaseColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
-      return <ArrowUpDown className="w-4 h-4" />;
+      return <ArrowUpDown className="h-4 w-4" />;
     }
-
-    return sortConfig.direction === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />;
+    return sortConfig.direction === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />;
   };
 
   const renderColumnHeader = (column: CaseTableColumn) => (
-    <th key={column.key} className="text-left px-6 py-3">
+    <th key={column.key} className="px-6 py-3 text-left">
       <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
-        <span className="text-xs font-medium text-gray-600 uppercase tracking-wider">{column.label}</span>
+        <span className="text-xs font-medium uppercase tracking-wider text-gray-600">{column.label}</span>
         <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
           {renderSortIcon(column.sortKey)}
         </button>
@@ -527,104 +609,122 @@ export function Cases() {
           type="text"
           placeholder="Search..."
           value={searchFilters[column.searchKey]}
-          onChange={(e) => setSearchFilters({ ...searchFilters, [column.searchKey!]: e.target.value })}
-          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#E31937]"
-          onClick={(e) => e.stopPropagation()}
+          onChange={(event) => setSearchFilters({ ...searchFilters, [column.searchKey!]: event.target.value })}
+          className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#E31937]"
+          onClick={(event) => event.stopPropagation()}
         />
       )}
     </th>
   );
 
-  const renderColumnCell = (caseItem: typeof cases[0], column: CaseTableColumn) => {
+  const renderColumnCell = (caseItem: CaseRecord, column: CaseTableColumn) => {
     switch (column.key) {
-      case "recordId":
-        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{caseItem.recordId}</td>;
       case "description":
+      case "escalationNote":
         return (
-          <td key={column.key} className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={caseItem.description}>
-            {caseItem.description}
+          <td key={column.key} className="max-w-md truncate whitespace-nowrap px-6 py-4 text-sm text-gray-900" title={textValue(caseItem[column.key])}>
+            {textValue(caseItem[column.key])}
           </td>
         );
       case "status":
         return (
           <td key={column.key} className="px-6 py-4">
-            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${caseStatusColors[caseItem.status]}`}>
-              {caseItem.status}
+            <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${caseStatusColors[caseItem.status || ""] ?? "bg-gray-100 text-gray-700"}`}>
+              {textValue(caseItem.status)}
             </span>
           </td>
         );
       case "priority":
         return (
           <td key={column.key} className="px-6 py-4">
-            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${casePriorityColors[caseItem.priority]}`}>
-              {caseItem.priority}
+            <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${casePriorityColors[caseItem.priority || ""] ?? "bg-gray-100 text-gray-700"}`}>
+              {textValue(caseItem.priority)}
             </span>
           </td>
         );
       case "account":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getAccountById(caseItem.account)?.accountName || "—"}</td>;
+        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getAccountById(caseItem.account)?.accountName || caseItem.account)}</td>;
       case "product":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getProductById(caseItem.product)?.productName || "—"}</td>;
-      case "caseOwner":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{caseItem.caseOwner || "—"}</td>;
+        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getProductById(caseItem.product)?.productName || caseItem.product)}</td>;
+      case "project":
+        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getProjectById(caseItem.project)?.projectName || caseItem.project)}</td>;
       case "assignedTo":
         return (
-          <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">
+          <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
             <AssignedToBadge value={caseItem.assignedTo} />
           </td>
         );
-      case "updatedAt":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{caseItem.updatedAt}</td>;
       default:
-        return null;
+        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(caseItem[column.key])}</td>;
     }
   };
+
+  const detailGridClassName = activeDetailTab === "details"
+    ? `grid grid-cols-1 gap-3 sm:grid-cols-2 ${
+        isEditing
+          ? ""
+          : "[&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 [&>div]:gap-y-1 [&>div]:rounded-lg [&>div]:border [&>div]:border-gray-100 [&>div]:bg-gray-50 [&>div]:px-3 [&>div]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words"
+      }`
+    : "hidden";
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Cases</h1>
-          <p className="text-gray-600 mt-1">Manage and track all customer cases</p>
+          <p className="mt-1 text-gray-600">Manage and track all customer cases</p>
         </div>
       </div>
 
-      <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedCase ? "hidden" : ""}`}>
+      <div className={`rounded-xl border border-gray-200 bg-white shadow-sm ${selectedCase ? "hidden" : ""}`}>
         <div className="flex flex-col gap-3 border-b border-gray-200 p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row">
             <div className="relative">
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="appearance-none px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
               >
                 <option value="All">All Status</option>
-                <option value="Open">Open</option>
-                <option value="In Progress">In Progress</option>
+                <option value="New">New</option>
+                <option value="Acknowledged">Acknowledged</option>
                 <option value="Escalated">Escalated</option>
-                <option value="Closed">Closed</option>
+                <option value="Monitoring">Monitoring</option>
+                <option value="Closed-Resolved">Closed-Resolved</option>
+                <option value="Closed-Dead">Closed-Dead</option>
               </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
             </div>
 
             <div className="relative">
               <select
                 value={priorityFilter}
-                onChange={(e) => setPriorityFilter(e.target.value)}
-                className="appearance-none px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+                onChange={(event) => setPriorityFilter(event.target.value)}
+                className="appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
               >
                 <option value="All">All Priority</option>
-                <option value="Critical">Critical</option>
-                <option value="High">High</option>
-                <option value="Medium">Medium</option>
+                <option value="Very Low">Very Low</option>
                 <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+                <option value="Very High">Very High</option>
               </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
             </div>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <p className="text-sm text-gray-500">{visibleCaseColumns.length} of {CASE_TABLE_COLUMNS.length} fields shown</p>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={sortedCases.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+            <CreateEntityDialog entityType="case" onCreated={selectRecord} />
             <TableFieldSelector
               columns={CASE_TABLE_COLUMNS}
               visibleKeys={visibleCaseColumnKeys}
@@ -638,7 +738,7 @@ export function Cases() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 w-12">
+                <th className="w-12 px-4 py-3 text-left">
                   <Bookmark className="h-4 w-4 text-gray-500" aria-label="Bookmark" />
                 </th>
                 {visibleCaseColumns.map(renderColumnHeader)}
@@ -652,28 +752,28 @@ export function Cases() {
                     setSelectedCase(caseItem);
                     setActiveDetailTab("details");
                   }}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className="cursor-pointer transition-colors hover:bg-gray-50"
                 >
-                  <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                  <td className="px-4 py-4 text-center" onClick={(event) => event.stopPropagation()}>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isBookmarked(caseItem.recordId, 'case')) {
-                          removeBookmark(caseItem.recordId, 'case');
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (isBookmarked(caseItem.recordId, "case")) {
+                          removeBookmark(caseItem.recordId, "case");
                         } else {
                           addBookmark({
                             id: caseItem.recordId,
-                            type: 'case',
+                            type: "case",
                             title: caseItem.description,
-                            subtitle: `${caseItem.status} - ${caseItem.priority}`,
+                            subtitle: `${textValue(caseItem.status)} - ${textValue(caseItem.priority)}`,
                             timestamp: Date.now(),
                           });
                         }
                       }}
-                      className="text-gray-400 hover:text-yellow-500 transition-colors"
+                      className="text-gray-400 transition-colors hover:text-yellow-500"
                       title="Bookmark"
                     >
-                      <Bookmark className={`w-5 h-5 ${isBookmarked(caseItem.recordId, 'case') ? 'fill-yellow-400 text-yellow-500' : ''}`} />
+                      <Bookmark className={`h-5 w-5 ${isBookmarked(caseItem.recordId, "case") ? "fill-yellow-400 text-yellow-500" : ""}`} />
                     </button>
                   </td>
                   {visibleCaseColumns.map((column) => renderColumnCell(caseItem, column))}
@@ -685,327 +785,124 @@ export function Cases() {
       </div>
 
       {selectedCase && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="w-full">
-            <div className="sticky top-[-1.5rem] z-10 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
+            <div className="sticky top-[-1.5rem] z-10 flex items-center justify-between border-b border-gray-200 bg-white p-6">
               <h2 className="text-xl font-semibold text-gray-900">Case Details</h2>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    if (isBookmarked(selectedCase!.recordId, 'case')) {
-                      removeBookmark(selectedCase!.recordId, 'case');
+                    if (isBookmarked(selectedCase.recordId, "case")) {
+                      removeBookmark(selectedCase.recordId, "case");
                     } else {
                       addBookmark({
-                        id: selectedCase!.recordId,
-                        type: 'case',
-                        title: selectedCase!.description,
-                        subtitle: `${selectedCase!.status} - ${selectedCase!.priority}`,
+                        id: selectedCase.recordId,
+                        type: "case",
+                        title: selectedCase.description,
+                        subtitle: `${textValue(selectedCase.status)} - ${textValue(selectedCase.priority)}`,
                         timestamp: Date.now(),
                       });
                     }
                   }}
-                  className={`p-2 rounded-lg transition-colors ${
-                    isBookmarked(selectedCase!.recordId, 'case')
-                      ? 'bg-yellow-100 text-yellow-600'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  className={`rounded-lg p-2 transition-colors ${
+                    isBookmarked(selectedCase.recordId, "case")
+                      ? "bg-yellow-100 text-yellow-600"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   }`}
                   title="Bookmark this case"
                 >
-                  <Bookmark className={`w-5 h-5 ${isBookmarked(selectedCase!.recordId, 'case') ? 'fill-current' : ''}`} />
+                  <Bookmark className={`h-5 w-5 ${isBookmarked(selectedCase.recordId, "case") ? "fill-current" : ""}`} />
                 </button>
                 {!isEditing ? (
                   <button
                     onClick={handleEdit}
-                    className="flex items-center gap-2 px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] transition-colors"
+                    className="flex items-center gap-2 rounded-lg bg-[#E31937] px-4 py-2 text-white transition-colors hover:bg-[#c41230]"
                   >
-                    <Edit2 className="w-4 h-4" />
+                    <Edit2 className="h-4 w-4" />
                     Edit
                   </button>
                 ) : (
                   <>
                     <button
                       onClick={handleCancelEdit}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                      className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 transition-colors hover:bg-gray-50"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSave}
-                      className="flex items-center gap-2 px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] transition-colors"
+                      className="flex items-center gap-2 rounded-lg bg-[#E31937] px-4 py-2 text-white transition-colors hover:bg-[#c41230]"
                     >
-                      <Save className="w-4 h-4" />
+                      <Save className="h-4 w-4" />
                       Save
                     </button>
                   </>
                 )}
                 <button
                   onClick={handleBackFromDetail}
-                  className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  className="flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-gray-700 transition-colors hover:bg-gray-50"
                 >
-                  <ArrowLeft className="w-4 h-4" />
+                  <ArrowLeft className="h-4 w-4" />
                   Back
                 </button>
               </div>
             </div>
 
-            <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
-              <div className="xl:col-span-2 space-y-6">
-              <div className="border-b border-gray-200 pb-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveDetailTab("details")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "details"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Details
-                  </button>
-                  <button
-                    onClick={() => setActiveDetailTab("linked")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "linked"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Linked Entities
-                  </button>
-                </div>
-              </div>
+            <div className="grid gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+              <div className="min-w-0 space-y-6">
+                <DetailTabs tabs={CASE_DETAIL_TABS} activeTab={activeDetailTab} onChange={setActiveDetailTab} />
 
-              <div className={activeDetailTab === "details" ? "grid grid-cols-2 gap-4" : "hidden"}>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Record ID</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.recordId}
-                      onChange={(e) => setEditedCase({ ...editedCase, recordId: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.recordId}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Module ID</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.moduleId}
-                      onChange={(e) => setEditedCase({ ...editedCase, moduleId: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.moduleId}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Record Revision</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.recordRevision}
-                      onChange={(e) => setEditedCase({ ...editedCase, recordRevision: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.recordRevision}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Owned By</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.ownedBy}
-                      onChange={(e) => setEditedCase({ ...editedCase, ownedBy: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.ownedBy}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Created At</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="date"
-                      value={editedCase.createdAt}
-                      onChange={(e) => setEditedCase({ ...editedCase, createdAt: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.createdAt}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Created By</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.createdBy}
-                      onChange={(e) => setEditedCase({ ...editedCase, createdBy: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.createdBy}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Updated At</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="date"
-                      value={editedCase.updatedAt}
-                      onChange={(e) => setEditedCase({ ...editedCase, updatedAt: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.updatedAt}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Updated By</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.updatedBy}
-                      onChange={(e) => setEditedCase({ ...editedCase, updatedBy: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.updatedBy}</p>
-                  )}
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Meta Data</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.metaData}
-                      onChange={(e) => setEditedCase({ ...editedCase, metaData: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.metaData}</p>
-                  )}
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Description</label>
-                  {isEditing && editedCase ? (
-                    <textarea
-                      value={editedCase.description}
-                      onChange={(e) => setEditedCase({ ...editedCase, description: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                      rows={3}
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.description}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
+              <div className={detailGridClassName}>
+                <div className="order-1">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Status</label>
                   {isEditing && editedCase ? (
                     <select
-                      value={editedCase.status}
-                      onChange={(e) => setEditedCase({ ...editedCase, status: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      value={editedCase.status || ""}
+                      onChange={(event) => setEditedCase({ ...editedCase, status: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
-                      <option value="Open">Open</option>
-                      <option value="In Progress">In Progress</option>
+                      <option value="">No status</option>
+                      <option value="New">New</option>
+                      <option value="Acknowledged">Acknowledged</option>
                       <option value="Escalated">Escalated</option>
-                      <option value="Closed">Closed</option>
+                      <option value="Monitoring">Monitoring</option>
+                      <option value="Closed-Resolved">Closed-Resolved</option>
+                      <option value="Closed-Dead">Closed-Dead</option>
                     </select>
                   ) : (
-                    <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${caseStatusColors[selectedCase.status]}`}>
-                      {selectedCase.status}
+                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${caseStatusColors[selectedCase.status || ""] ?? "bg-gray-100 text-gray-700"}`}>
+                      {textValue(selectedCase.status)}
                     </span>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Previous Status</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.previousStatus || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, previousStatus: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.previousStatus || "—"}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Priority</label>
+                <div className="order-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Priority</label>
                   {isEditing && editedCase ? (
                     <select
-                      value={editedCase.priority}
-                      onChange={(e) => setEditedCase({ ...editedCase, priority: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      value={editedCase.priority || ""}
+                      onChange={(event) => setEditedCase({ ...editedCase, priority: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
+                      <option value="">No priority</option>
+                      <option value="Very Low">Very Low</option>
                       <option value="Low">Low</option>
                       <option value="Medium">Medium</option>
                       <option value="High">High</option>
-                      <option value="Critical">Critical</option>
+                      <option value="Very High">Very High</option>
                     </select>
                   ) : (
-                    <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${casePriorityColors[selectedCase.priority]}`}>
-                      {selectedCase.priority}
+                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${casePriorityColors[selectedCase.priority || ""] ?? "bg-gray-100 text-gray-700"}`}>
+                      {textValue(selectedCase.priority)}
                     </span>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Category</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.category}
-                      onChange={(e) => setEditedCase({ ...editedCase, category: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.category}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Close Date</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="date"
-                      value={editedCase.closeDate || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, closeDate: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.closeDate || "—"}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Case Owner</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.caseOwner || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, caseOwner: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedCase.caseOwner || "—"}</p>
-                  )}
-                </div>
-                <div className="col-span-2 rounded-lg border-2 border-red-200 bg-red-50 p-3 shadow-sm">
-                  <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#B5122B]">
-                    <UserRound className="h-4 w-4" />
-                    Assigned To
-                  </label>
+                <div className="order-3">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Assigned To</label>
                   {isEditing && editedCase ? (
                     <select
                       value={editedCase.assignedTo || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, assignedTo: e.target.value })}
-                      className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      onChange={(event) => setEditedCase({ ...editedCase, assignedTo: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Unassigned</option>
                       {assignableUsers.map((assignableUser) => (
@@ -1018,311 +915,517 @@ export function Cases() {
                     <AssignedToBadge value={selectedCase.assignedTo} />
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">SE Owner</label>
+                <div className="order-4">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">SE Owner</label>
                   {isEditing && editedCase ? (
-                    <input
-                      type="text"
+                    <select
                       value={editedCase.seOwner || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, seOwner: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                      onChange={(event) => setEditedCase({ ...editedCase, seOwner: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">No SE owner</option>
+                      {assignableUsers.map((assignableUser) => (
+                        <option key={assignableUser.id} value={assignableUser.displayName}>
+                          {assigneeLabel(assignableUser)}
+                        </option>
+                      ))}
+                    </select>
                   ) : (
-                    <p className="text-gray-900">{selectedCase.seOwner || "—"}</p>
+                    <p className="text-gray-900">{textValue(selectedCase.seOwner)}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Product</label>
+                <div className="order-5">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Account</label>
                   {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.product}
-                      onChange={(e) => setEditedCase({ ...editedCase, product: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                    <div className="flex gap-2">
+                      <select
+                        value={editedCase.account || ""}
+                        onChange={(event) => setEditedCase({ ...editedCase, account: event.target.value })}
+                        className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      >
+                        <option value="">No account</option>
+                        {accounts.map((item) => (
+                          <option key={item.recordId} value={item.recordId}>
+                            {item.accountName}
+                          </option>
+                        ))}
+                      </select>
+                      <CreateEntityDialog
+                        entityType="account"
+                        triggerLabel="New"
+                        triggerTitle="Create account"
+                        hideLinkedCaseSelect
+                        className={RELATED_CREATE_BUTTON_CLASS}
+                        onCreated={(created) => {
+                          setEditedCase((current) => current ? { ...current, account: created.recordId } : current);
+                        }}
+                      />
+                    </div>
                   ) : (
-                    <p className="text-gray-900">{product?.productName || "—"}</p>
+                    <p className="text-gray-900">{textValue(account?.accountName || selectedCase.account)}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Account</label>
+                <div className="order-6">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Product</label>
                   {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.account}
-                      onChange={(e) => setEditedCase({ ...editedCase, account: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                    <div className="flex gap-2">
+                      <select
+                        value={editedCase.product || ""}
+                        onChange={(event) => setEditedCase({ ...editedCase, product: event.target.value })}
+                        className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      >
+                        <option value="">No product</option>
+                        {products.map((item) => (
+                          <option key={item.recordId} value={item.recordId}>
+                            {item.productName}
+                          </option>
+                        ))}
+                      </select>
+                      <CreateEntityDialog
+                        entityType="product"
+                        triggerLabel="New"
+                        triggerTitle="Create product"
+                        hideLinkedCaseSelect
+                        className={RELATED_CREATE_BUTTON_CLASS}
+                        onCreated={(created) => {
+                          setEditedCase((current) => current ? { ...current, product: created.recordId } : current);
+                        }}
+                      />
+                    </div>
                   ) : (
-                    <p className="text-gray-900">{account?.accountName || "—"}</p>
+                    <p className="text-gray-900">{textValue(product?.productName || selectedCase.product)}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Project</label>
+                <div className="order-7">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Project</label>
                   {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.project || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, project: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                    <div className="flex gap-2">
+                      <select
+                        value={editedCase.project || ""}
+                        onChange={(event) => setEditedCase({ ...editedCase, project: event.target.value })}
+                        className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      >
+                        <option value="">No project</option>
+                        {projects.map((item) => (
+                          <option key={item.recordId} value={item.recordId}>
+                            {item.projectName}
+                          </option>
+                        ))}
+                      </select>
+                      <CreateEntityDialog
+                        entityType="project"
+                        triggerLabel="New"
+                        triggerTitle="Create project"
+                        initialValues={editedCase.account ? { accountId: editedCase.account } : undefined}
+                        hideLinkedCaseSelect
+                        className={RELATED_CREATE_BUTTON_CLASS}
+                        onCreated={(created) => {
+                          setEditedCase((current) => current ? { ...current, project: created.recordId } : current);
+                        }}
+                      />
+                    </div>
                   ) : (
-                    <p className="text-gray-900">{project?.projectName || "—"}</p>
+                    <p className="text-gray-900">{textValue(project?.projectName || selectedCase.project)}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Knock ID</label>
+                <div className="order-8">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Knock IDs</label>
                   {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.knockId || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, knockId: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                    <div className="flex gap-2">
+                      <div className="min-w-0 flex-1">
+                        <MultiSelectDropdown
+                          label="Knock IDs"
+                          values={editedKnockIds}
+                          options={knocks}
+                          getOptionLabel={(item) => item.knockId || "No Knock ID"}
+                          onChange={setEditedKnockIds}
+                        />
+                      </div>
+                      <CreateEntityDialog
+                        entityType="knock"
+                        triggerLabel="New"
+                        triggerTitle="Create knock"
+                        initialValues={{ linkedCase: selectedCase.recordId }}
+                        hideLinkedCaseSelect
+                        className={RELATED_CREATE_BUTTON_CLASS}
+                        onCreated={(created) => {
+                          setEditedKnockIds((current) => (current.includes(created.recordId) ? current : [...current, created.recordId]));
+                        }}
+                      />
+                    </div>
                   ) : (
-                    <p className="text-gray-900">{selectedCase.knockId || "—"}</p>
+                    <p className="text-gray-900">{textValue(linkedKnocks.length > 0 ? linkedKnocks.map((item) => item.knockId).filter(Boolean).join(", ") : knock?.knockId || selectedCase.knockId)}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Mantis ID</label>
+                <div className="order-9">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Mantis IDs</label>
                   {isEditing && editedCase ? (
-                    <input
-                      type="text"
-                      value={editedCase.mantisId || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, mantisId: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                    <div className="flex gap-2">
+                      <div className="min-w-0 flex-1">
+                        <MultiSelectDropdown
+                          label="Mantis IDs"
+                          values={editedMantisIds}
+                          options={mantisRecords}
+                          getOptionLabel={(item) => item.mantisId || "No Mantis ID"}
+                          onChange={setEditedMantisIds}
+                        />
+                      </div>
+                      <CreateEntityDialog
+                        entityType="mantis"
+                        triggerLabel="New"
+                        triggerTitle="Create mantis"
+                        initialValues={{ linkedCase: selectedCase.recordId }}
+                        hideLinkedCaseSelect
+                        className={RELATED_CREATE_BUTTON_CLASS}
+                        onCreated={(created) => {
+                          setEditedMantisIds((current) => (current.includes(created.recordId) ? current : [...current, created.recordId]));
+                        }}
+                      />
+                    </div>
                   ) : (
-                    <p className="text-gray-900">{selectedCase.mantisId || "—"}</p>
+                    <p className="text-gray-900">{textValue(linkedMantis.length > 0 ? linkedMantis.map((item) => item.mantisId).filter(Boolean).join(", ") : mantis?.mantisId || selectedCase.mantisId)}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Escalation Type</label>
+                <div className="order-10">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Category</label>
+                  {isEditing && editedCase ? (
+                    <select
+                      value={editedCase.category || ""}
+                      onChange={(event) => setEditedCase({ ...editedCase, category: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Select category</option>
+                      {caseCategories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-gray-900">{textValue(selectedCase.category)}</p>
+                  )}
+                </div>
+                <div className="order-11">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Close Date</label>
                   {isEditing && editedCase ? (
                     <input
-                      type="text"
+                      type="date"
+                      value={editedCase.closeDate || ""}
+                      onChange={(event) => setEditedCase({ ...editedCase, closeDate: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{textValue(selectedCase.closeDate)}</p>
+                  )}
+                </div>
+                <div className="order-12">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Escalation Type</label>
+                  {isEditing && editedCase ? (
+                    <select
                       value={editedCase.escalationType || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, escalationType: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                      onChange={(event) => setEditedCase({ ...editedCase, escalationType: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    >
+                      <option value="">Select escalation type</option>
+                      {caseEscalationTypes.map((escalationType) => (
+                        <option key={escalationType} value={escalationType}>
+                          {escalationType}
+                        </option>
+                      ))}
+                    </select>
                   ) : (
-                    <p className="text-gray-900">{selectedCase.escalationType || "—"}</p>
+                    <p className="text-gray-900">{textValue(selectedCase.escalationType)}</p>
                   )}
                 </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Escalation Note</label>
+                <div className="order-[14] sm:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Description</label>
+                  {isEditing && editedCase ? (
+                    <textarea
+                      value={editedCase.description}
+                      onChange={(event) => setEditedCase({ ...editedCase, description: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      rows={3}
+                    />
+                  ) : (
+                    <p className="text-gray-900">{selectedCase.description}</p>
+                  )}
+                </div>
+                <div className="order-[15] sm:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Escalation Note</label>
                   {isEditing && editedCase ? (
                     <textarea
                       value={editedCase.escalationNote || ""}
-                      onChange={(e) => setEditedCase({ ...editedCase, escalationNote: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      onChange={(event) => setEditedCase({ ...editedCase, escalationNote: event.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                       rows={2}
                     />
                   ) : (
-                    <p className="text-gray-900">{selectedCase.escalationNote || "—"}</p>
+                    <p className="text-gray-900">{textValue(selectedCase.escalationNote)}</p>
                   )}
                 </div>
               </div>
 
-              <div className={activeDetailTab === "linked" ? "pt-1" : "hidden"}>
-                <h3 className="font-semibold text-lg text-gray-900 mb-4">Linked Entities</h3>
+              <div className={activeDetailTab.startsWith("linked") ? "pt-1" : "hidden"}>
+                <h3 className="mb-4 text-lg font-semibold text-gray-900">
+                  {CASE_DETAIL_TABS.find((tab) => tab.key === activeDetailTab)?.label}
+                </h3>
+                {(activeDetailTab === "linkedMantisRecords" || activeDetailTab === "linkedKnocks") && (
+                  <p className="mb-4 text-sm text-gray-500">
+                    Add multiple Mantis and Knock links here. The case editor above stays synced to the same linked records.
+                  </p>
+                )}
                 <div className="space-y-4">
-                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                  {activeDetailTab === "linkedAccounts" && (
+                  <>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
                     <select
                       value={linkDrafts.account}
-                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, account: e.target.value }))}
-                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      onChange={(event) => setLinkDrafts((prev) => ({ ...prev, account: event.target.value }))}
+                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select account</option>
-                      {accounts.map((item) => (
+                      {availableAccountsForLink.map((item) => (
                         <option key={item.recordId} value={item.recordId}>
-                          {item.recordId} - {item.accountName}
+                          {item.accountName}
                         </option>
                       ))}
                     </select>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => void handleLinkEntity("account")}
-                        disabled={isUpdatingLinks || !linkDrafts.account}
-                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
-                      >
-                        Link Account
-                      </button>
-                    </div>
+                    <CreateEntityDialog
+                      entityType="account"
+                      triggerLabel="New"
+                      triggerTitle="Create account"
+                      initialValues={{ linkedCase: selectedCase.recordId }}
+                      hideLinkedCaseSelect
+                      className={RELATED_CREATE_BUTTON_CLASS}
+                      onCreated={() => {
+                        void refreshCurrentCaseLinks();
+                      }}
+                    />
+                    <button
+                      onClick={() => void handleLinkEntity("account")}
+                      disabled={isUpdatingLinks || !linkDrafts.account}
+                      className="rounded-lg bg-[#E31937] px-3 py-2 text-white hover:bg-[#c41230] disabled:opacity-50"
+                    >
+                      Link Account
+                    </button>
                   </div>
                   <LinkedEntityList
                     title="Account"
                     entities={linkedAccounts}
                     fields={[
-                      { label: "ID", key: "recordId" },
                       { label: "Name", key: "accountName" },
                       { label: "Type", key: "type" },
                       { label: "Vertical", key: "vertical" },
                     ]}
-                    onEntityClick={handleAccountClick}
+                    onEntityClick={(recordId) => navigateToLinkedEntity("account", recordId)}
                     onRemoveEntity={(recordId) => void handleUnlinkEntity("account", recordId)}
                   />
+                  </>
+                  )}
 
-                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                  {activeDetailTab === "linkedProducts" && (
+                  <>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
                     <select
                       value={linkDrafts.product}
-                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, product: e.target.value }))}
-                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      onChange={(event) => setLinkDrafts((prev) => ({ ...prev, product: event.target.value }))}
+                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select product</option>
-                      {products.map((item) => (
+                      {availableProductsForLink.map((item) => (
                         <option key={item.recordId} value={item.recordId}>
-                          {item.recordId} - {item.productName}
+                          {item.productName}
                         </option>
                       ))}
                     </select>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => void handleLinkEntity("product")}
-                        disabled={isUpdatingLinks || !linkDrafts.product}
-                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
-                      >
-                        Link Product
-                      </button>
-                    </div>
+                    <CreateEntityDialog
+                      entityType="product"
+                      triggerLabel="New"
+                      triggerTitle="Create product"
+                      initialValues={{ linkedCase: selectedCase.recordId }}
+                      hideLinkedCaseSelect
+                      className={RELATED_CREATE_BUTTON_CLASS}
+                      onCreated={() => {
+                        void refreshCurrentCaseLinks();
+                      }}
+                    />
+                    <button
+                      onClick={() => void handleLinkEntity("product")}
+                      disabled={isUpdatingLinks || !linkDrafts.product}
+                      className="rounded-lg bg-[#E31937] px-3 py-2 text-white hover:bg-[#c41230] disabled:opacity-50"
+                    >
+                      Link Product
+                    </button>
                   </div>
                   <LinkedEntityList
                     title="Product"
                     entities={linkedProducts}
                     fields={[
-                      { label: "ID", key: "recordId" },
                       { label: "Name", key: "productName" },
                       { label: "Family", key: "productFamily" },
                     ]}
-                    onEntityClick={handleProductClick}
+                    onEntityClick={(recordId) => navigateToLinkedEntity("product", recordId)}
                     onRemoveEntity={(recordId) => void handleUnlinkEntity("product", recordId)}
                   />
+                  </>
+                  )}
 
-                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
+                  {activeDetailTab === "linkedProjects" && (
+                  <>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
                     <select
                       value={linkDrafts.project}
-                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, project: e.target.value }))}
-                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      onChange={(event) => setLinkDrafts((prev) => ({ ...prev, project: event.target.value }))}
+                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
                       <option value="">Select project</option>
-                      {projects.map((item) => (
+                      {availableProjectsForLink.map((item) => (
                         <option key={item.recordId} value={item.recordId}>
-                          {item.recordId} - {item.projectName}
+                          {item.projectName}
                         </option>
                       ))}
                     </select>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => void handleLinkEntity("project")}
-                        disabled={isUpdatingLinks || !linkDrafts.project}
-                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
-                      >
-                        Link Project
-                      </button>
-                    </div>
+                    <CreateEntityDialog
+                      entityType="project"
+                      triggerLabel="New"
+                      triggerTitle="Create project"
+                      initialValues={{
+                        accountId: selectedCase.account ?? "",
+                        linkedCase: selectedCase.recordId,
+                      }}
+                      hideLinkedCaseSelect
+                      className={RELATED_CREATE_BUTTON_CLASS}
+                      onCreated={() => {
+                        void refreshCurrentCaseLinks();
+                      }}
+                    />
+                    <button
+                      onClick={() => void handleLinkEntity("project")}
+                      disabled={isUpdatingLinks || !linkDrafts.project}
+                      className="rounded-lg bg-[#E31937] px-3 py-2 text-white hover:bg-[#c41230] disabled:opacity-50"
+                    >
+                      Link Project
+                    </button>
                   </div>
                   <LinkedEntityList
                     title="Project"
                     entities={linkedProjects}
                     fields={[
-                      { label: "ID", key: "recordId" },
                       { label: "Name", key: "projectName" },
                       { label: "Stage", key: "stage" },
                       { label: "Value", key: "sfdcValue" },
                     ]}
-                    onEntityClick={handleProjectClick}
+                    onEntityClick={(recordId) => navigateToLinkedEntity("project", recordId)}
                     onRemoveEntity={(recordId) => void handleUnlinkEntity("project", recordId)}
                   />
+                  </>
+                  )}
 
-                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
-                    <select
-                      value={linkDrafts.nfr}
-                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, nfr: e.target.value }))}
-                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">Select NFR</option>
-                      {nfrs.map((item) => (
-                        <option key={item.recordId} value={item.recordId}>
-                          {item.recordId} - {item.mantisId || "No Mantis ID"}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => void handleLinkEntity("nfr")}
-                        disabled={isUpdatingLinks || !linkDrafts.nfr}
-                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
-                      >
-                        Link NFR
-                      </button>
+                  {activeDetailTab === "linkedMantisRecords" && (
+                  <>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
+                    <div className="min-w-0 flex-1">
+                      <MultiSelectDropdown
+                        label="Mantis records"
+                        values={linkDrafts.mantis}
+                        options={availableMantisForLink}
+                        getOptionLabel={(item) => item.mantisId ? `${item.mantisId} - ${item.description}` : item.description}
+                        onChange={(values) => setLinkDrafts((prev) => ({ ...prev, mantis: values }))}
+                      />
                     </div>
+                    <CreateEntityDialog
+                      entityType="mantis"
+                      triggerLabel="New"
+                      triggerTitle="Create mantis"
+                      initialValues={{ linkedCase: selectedCase.recordId }}
+                      hideLinkedCaseSelect
+                      className={RELATED_CREATE_BUTTON_CLASS}
+                      onCreated={() => {
+                        void refreshCurrentCaseLinks();
+                      }}
+                    />
+                    <button
+                      onClick={() => void handleLinkEntity("mantis")}
+                      disabled={isUpdatingLinks || linkDrafts.mantis.length === 0}
+                      className="shrink-0 rounded-lg bg-[#E31937] px-3 py-2 text-white hover:bg-[#c41230] disabled:opacity-50"
+                    >
+                      Link Selected Mantis
+                    </button>
                   </div>
                   <LinkedEntityList
-                    title="NFR"
-                    entities={linkedNfrs}
+                    title="Mantis"
+                    entities={linkedMantis}
                     fields={[
-                      { label: "ID", key: "recordId" },
                       { label: "Mantis ID", key: "mantisId" },
-                      { label: "Status", key: "nfrStatus" },
-                      { label: "Target Date", key: "nfrTargetDate" },
+                      { label: "NFR Status", key: "mantisStatus" },
+                      { label: "Target Date", key: "mantisTargetDate" },
                     ]}
-                    onEntityClick={handleNfrClick}
-                    onRemoveEntity={(recordId) => void handleUnlinkEntity("nfr", recordId)}
+                    onEntityClick={(recordId) => navigateToLinkedEntity("mantis", recordId)}
+                    onRemoveEntity={(recordId) => void handleUnlinkEntity("mantis", recordId)}
                   />
+                  </>
+                  )}
 
-                  <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-col gap-2 md:flex-row md:items-center">
-                    <select
-                      value={linkDrafts.knock}
-                      onChange={(e) => setLinkDrafts((prev) => ({ ...prev, knock: e.target.value }))}
-                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">Select Knock</option>
-                      {knocks.map((item) => (
-                        <option key={item.recordId} value={item.recordId}>
-                          {item.recordId} - {item.knockId || "No Knock ID"}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => void handleLinkEntity("knock")}
-                        disabled={isUpdatingLinks || !linkDrafts.knock}
-                        className="px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50"
-                      >
-                        Link Knock
-                      </button>
+                  {activeDetailTab === "linkedKnocks" && (
+                  <>
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
+                    <div className="min-w-0 flex-1">
+                      <MultiSelectDropdown
+                        label="Knock records"
+                        values={linkDrafts.knock}
+                        options={availableKnocksForLink}
+                        getOptionLabel={(item) => item.knockId ? `${item.knockId} - ${item.description}` : item.description}
+                        onChange={(values) => setLinkDrafts((prev) => ({ ...prev, knock: values }))}
+                      />
                     </div>
+                    <CreateEntityDialog
+                      entityType="knock"
+                      triggerLabel="New"
+                      triggerTitle="Create knock"
+                      initialValues={{ linkedCase: selectedCase.recordId }}
+                      hideLinkedCaseSelect
+                      className={RELATED_CREATE_BUTTON_CLASS}
+                      onCreated={() => {
+                        void refreshCurrentCaseLinks();
+                      }}
+                    />
+                    <button
+                      onClick={() => void handleLinkEntity("knock")}
+                      disabled={isUpdatingLinks || linkDrafts.knock.length === 0}
+                      className="shrink-0 rounded-lg bg-[#E31937] px-3 py-2 text-white hover:bg-[#c41230] disabled:opacity-50"
+                    >
+                      Link Selected Knocks
+                    </button>
                   </div>
                   <LinkedEntityList
                     title="Knock"
                     entities={linkedKnocks}
                     fields={[
-                      { label: "ID", key: "recordId" },
                       { label: "Knock ID", key: "knockId" },
                       { label: "Status", key: "status" },
                       { label: "Target Date", key: "targetDate" },
                     ]}
-                    onEntityClick={handleKnockClick}
+                    onEntityClick={(recordId) => navigateToLinkedEntity("knock", recordId)}
                     onRemoveEntity={(recordId) => void handleUnlinkEntity("knock", recordId)}
                   />
+                  </>
+                  )}
                 </div>
-              </div>
 
               </div>
 
-              <div className="xl:col-span-1">
-                <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
-              <div className="pt-0">
-                <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
-                <RecordHistoryTimeline history={selectedCase.history} onQuote={setSelectedQuote} />
+              </div>
 
-                <div className="border-t border-gray-200 pt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Add Comment</label>
+              <div className="min-w-0 self-start rounded-lg border border-gray-200 bg-white p-4 xl:sticky xl:top-24 xl:max-h-[calc(100vh-8rem)] xl:overflow-x-hidden xl:overflow-y-auto">
+                <h3 className="mb-4 text-lg font-semibold text-gray-900">History</h3>
+
+                <div className="mb-4 border-b border-gray-200 pb-4">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">Add Comment</label>
                   {selectedQuote && (
-                    <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 border-l-4 border-l-[#6264A7]">
+                    <div className="mb-3 rounded-lg border border-gray-200 border-l-4 border-l-[#6264A7] bg-gray-50 p-3">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs text-gray-500 font-medium">
-                          Replying to {selectedQuote.user} - {selectedQuote.timestamp}
+                        <p className="text-xs font-medium text-gray-500">
+                          Replying to {selectedQuote.user} - {formatTimestampMinute(selectedQuote.timestamp)}
                         </p>
                         <button
                           onClick={() => setSelectedQuote(null)}
@@ -1331,32 +1434,32 @@ export function Cases() {
                           Clear quote
                         </button>
                       </div>
-                      <p className="text-sm text-gray-700 mt-1 line-clamp-3 break-words [overflow-wrap:anywhere]">{formatHistoryEntryText(selectedQuote)}</p>
+                      <p className="mt-1 line-clamp-3 break-words text-sm text-gray-700 [overflow-wrap:anywhere]">
+                        {formatHistoryEntryText(selectedQuote)}
+                      </p>
                     </div>
                   )}
-                  <div className="flex gap-2">
-                    <textarea
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      placeholder="Enter your comment..."
-                      rows={3}
-                      className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  </div>
+                  <textarea
+                    value={newComment}
+                    onChange={(event) => setNewComment(event.target.value)}
+                    placeholder="Enter your comment..."
+                    rows={3}
+                    className="min-w-0 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                  />
                   <div className="mt-2 flex justify-end">
                     <button
                       onClick={handleAddComment}
-                      disabled={!newComment.trim()}
-                      className="px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      disabled={isAddingComment || !newComment.trim()}
+                      className="rounded-lg bg-[#E31937] px-4 py-2 text-white transition-colors hover:bg-[#c41230] disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Add Comment
+                      {isAddingComment ? "Adding..." : "Add Comment"}
                     </button>
                   </div>
                 </div>
+
+                <RecordHistoryTimeline history={selectedCase.history} onQuote={setSelectedQuote} />
               </div>
             </div>
-          </div>
-        </div>
           </div>
         </div>
       )}

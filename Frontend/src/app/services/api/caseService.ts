@@ -1,13 +1,13 @@
 import { fetchJson } from './http';
-import type { BaseRecord, CaseLinkEntityType, CaseLinksResponse, CaseRecord, HistoryEntry } from './types';
+import type { CaseLinkEntityType, CaseLinksResponse, CaseRecord, HistoryEntry } from './types';
 
-type CaseCreateInput = Pick<CaseRecord, 'description'> & Partial<Omit<CaseRecord, keyof BaseRecord>>;
+type CaseCreateInput = Pick<CaseRecord, 'description'> & Partial<Omit<CaseRecord, 'recordId'>>;
 
 export async function listCases() {
-  return fetchJson<CaseRecord[]>('/cases');
+  return fetchJson<CaseRecord[]>('/cases?limit=10000');
 }
 
-export async function createCase(data: CaseCreateInput & Partial<BaseRecord>) {
+export async function createCase(data: CaseCreateInput) {
   return fetchJson<CaseRecord>('/cases', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -23,13 +23,6 @@ export async function updateCase(id: string, data: Partial<CaseRecord>) {
 
 export async function deleteCase(id: string) {
   await fetchJson<void>(`/cases/${id}`, { method: 'DELETE' });
-}
-
-export async function addCaseHistory(id: string, entry: Partial<HistoryEntry>) {
-  return fetchJson<CaseRecord>(`/cases/${id}/history`, {
-    method: 'POST',
-    body: JSON.stringify(entry),
-  });
 }
 
 export async function getCase(id: string) {
@@ -57,4 +50,11 @@ export async function removeCaseLink(id: string, entityType: CaseLinkEntityType,
     `/cases/${id}/links/${encodeURIComponent(entityType)}/${encodeURIComponent(entityRecordId)}`,
     { method: 'DELETE' },
   );
+}
+
+export async function addCaseHistory(id: string, entry: Partial<HistoryEntry>) {
+  return fetchJson<CaseRecord>(`/cases/${id}/history`, {
+    method: 'POST',
+    body: JSON.stringify(entry),
+  });
 }

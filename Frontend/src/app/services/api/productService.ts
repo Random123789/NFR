@@ -2,7 +2,7 @@ import { fetchJson } from './http';
 import type { BaseRecord, HistoryEntry, ProductRecord } from './types';
 
 export async function listProducts() {
-  return fetchJson<ProductRecord[]>('/products');
+  return fetchJson<ProductRecord[]>('/products?limit=10000');
 }
 
 export async function createProduct(data: Omit<ProductRecord, keyof BaseRecord> & Partial<BaseRecord>) {

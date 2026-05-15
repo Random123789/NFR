@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from database import execute_query
 from schemas import ReportJoinSpec, ReportQuerySpec, ReportRunResult
+from utils import normalize_temporal_values, trim_timestamp_seconds
 
 
 @dataclass(frozen=True)
@@ -61,26 +62,23 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("cases", "c", "status", "Case Status"),
             _field("cases", "c", "priority", "Priority"),
             _field("cases", "c", "category", "Category"),
-            _field("cases", "c", "caseOwner", "Case Owner"),
             _field("cases", "c", "assignedTo", "Assigned To"),
             _field("cases", "c", "seOwner", "SE Owner"),
-            _field("cases", "c", "createdAt", "Case Created", "date"),
-            _field("cases", "c", "updatedAt", "Case Updated", "date"),
             _field("cases", "c", "closeDate", "Case Close Date", "date"),
             _field("cases", "c", "account", "Account ID"),
             _field("cases", "c", "project", "Project ID"),
             _field("cases", "c", "product", "Product ID"),
-            _field("cases", "c", "nfrRecordId", "NFR Record ID"),
-            _field("cases", "c", "knockRecordId", "Knock Record ID"),
             _field("cases", "c", "mantisId", "Mantis ID"),
             _field("cases", "c", "knockId", "Knock ID"),
+            _field("cases", "c", "escalationType", "Escalation Type"),
+            _field("cases", "c", "escalationNote", "Escalation Note"),
         ),
         joins=(
             ReportJoin("accounts", "Accounts", "JOIN accounts a ON c.account = a.recordId"),
             ReportJoin("projects", "Projects", "JOIN projects p ON c.project = p.recordId"),
             ReportJoin("products", "Products", "JOIN products prd ON c.product = prd.recordId"),
-            ReportJoin("nfrs", "NFRs", "JOIN nfrs n ON c.nfrRecordId = n.recordId"),
-            ReportJoin("knocks", "Knocks", "JOIN knocks k ON c.knockRecordId = k.recordId"),
+            ReportJoin("mantis", "Mantis", "JOIN mantis m ON c.mantisId = m.mantisId"),
+            ReportJoin("knocks", "Knocks", "JOIN knocks k ON c.knockId = k.knockId"),
         ),
     ),
     "accounts": ReportSource(
@@ -90,14 +88,10 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
         alias="a",
         primary_field="a.recordId",
         fields=(
-            _field("accounts", "a", "recordId", "Account ID"),
             _field("accounts", "a", "accountName", "Account Name"),
             _field("accounts", "a", "type", "Account Type"),
             _field("accounts", "a", "vertical", "Vertical"),
             _field("accounts", "a", "website", "Website"),
-            _field("accounts", "a", "ownedBy", "Account Owner"),
-            _field("accounts", "a", "createdAt", "Account Created", "date"),
-            _field("accounts", "a", "updatedAt", "Account Updated", "date"),
         ),
         joins=(
             ReportJoin("cases", "Cases", "JOIN cases c ON c.account = a.recordId"),
@@ -114,12 +108,13 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("projects", "p", "recordId", "Project ID"),
             _field("projects", "p", "projectName", "Project Name"),
             _field("projects", "p", "accountId", "Project Account ID"),
-            _field("projects", "p", "stage", "Project Stage"),
-            _field("projects", "p", "sfdc", "SFDC"),
-            _field("projects", "p", "sfdcValue", "SFDC Value"),
-            _field("projects", "p", "se", "Project SE"),
             _field("projects", "p", "startDate", "Project Start", "date"),
             _field("projects", "p", "closeDate", "Project Close", "date"),
+            _field("projects", "p", "seOwner", "Project SE Owner"),
+            _field("projects", "p", "isClosed", "Project Is Closed"),
+            _field("projects", "p", "stage", "Project Stage"),
+            _field("projects", "p", "sfdc", "SFDC"),
+            _field("projects", "p", "sfdcValue", "SFDC Value", "number"),
             _field("projects", "p", "createdAt", "Project Created", "date"),
             _field("projects", "p", "updatedAt", "Project Updated", "date"),
         ),
@@ -139,28 +134,31 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("products", "prd", "productFamily", "Product Family"),
             _field("products", "prd", "productName", "Product Name"),
             _field("products", "prd", "productUrl", "Product URL"),
+            _field("products", "prd", "description", "Product Description"),
             _field("products", "prd", "createdAt", "Product Created", "date"),
             _field("products", "prd", "updatedAt", "Product Updated", "date"),
         ),
         joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.product = prd.recordId"),),
     ),
-    "nfrs": ReportSource(
-        key="nfrs",
-        label="NFRs",
-        table="nfrs",
-        alias="n",
-        primary_field="n.recordId",
+    "mantis": ReportSource(
+        key="mantis",
+        label="Mantis",
+        table="mantis",
+        alias="m",
+        primary_field="m.recordId",
         fields=(
-            _field("nfrs", "n", "recordId", "NFR ID"),
-            _field("nfrs", "n", "description", "NFR Description"),
-            _field("nfrs", "n", "mantisId", "Mantis ID"),
-            _field("nfrs", "n", "nfrStatus", "NFR Status"),
-            _field("nfrs", "n", "nfrRequestDate", "NFR Request Date", "date"),
-            _field("nfrs", "n", "nfrTargetDate", "NFR Target Date", "date"),
-            _field("nfrs", "n", "createdAt", "NFR Created", "date"),
-            _field("nfrs", "n", "updatedAt", "NFR Updated", "date"),
+            _field("mantis", "m", "recordId", "Mantis Record ID"),
+            _field("mantis", "m", "description", "Mantis Description"),
+            _field("mantis", "m", "mantisId", "Mantis ID"),
+            _field("mantis", "m", "mantisUrl", "Mantis URL"),
+            _field("mantis", "m", "category", "Mantis Category"),
+            _field("mantis", "m", "mantisStatus", "Mantis NFR Status"),
+            _field("mantis", "m", "mantisRequestDate", "Mantis NFR Request Date", "date"),
+            _field("mantis", "m", "mantisTargetDate", "Mantis NFR Target Date", "date"),
+            _field("mantis", "m", "createdAt", "Mantis Created", "date"),
+            _field("mantis", "m", "updatedAt", "Mantis Updated", "date"),
         ),
-        joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.nfrRecordId = n.recordId"),),
+        joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.mantisId = m.mantisId"),),
     ),
     "knocks": ReportSource(
         key="knocks",
@@ -178,7 +176,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("knocks", "k", "createdAt", "Knock Created", "date"),
             _field("knocks", "k", "updatedAt", "Knock Updated", "date"),
         ),
-        joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.knockRecordId = k.recordId"),),
+        joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.knockId = k.knockId"),),
     ),
 }
 
@@ -254,16 +252,16 @@ def build_legacy_query_spec(metric: str, filters: dict) -> dict:
         "status": "cases.status",
         "priority": "cases.priority",
         "product": "products.productName",
-        "owner": "cases.caseOwner",
+        "owner": "cases.assignedTo",
         "category": "cases.category",
-        "monthCreated": "cases.createdAt",
+        "monthCreated": "cases.closeDate",
     }
     joins = [{"source": "products", "joinType": "left"}] if metric == "product" else []
     field = group_map.get(metric, "cases.status")
 
     rules = []
     for legacy_key, field_key in (
-        ("owner", "cases.caseOwner"),
+        ("owner", "cases.assignedTo"),
         ("status", "cases.status"),
         ("priority", "cases.priority"),
         ("category", "cases.category"),
@@ -396,10 +394,51 @@ def _apply_case_visibility(where_parts: List[str], params: List[Any], active_sou
     if not actor or actor.get("role") == "admin" or "cases" not in active_sources:
         return
 
-    where_parts.append(
-        "(c.assignedTo = %s OR c.seOwner = %s OR c.caseOwner = %s OR c.ownedBy = %s OR c.createdBy = %s OR c.updatedBy = %s)"
-    )
-    params.extend([actor["displayName"]] * 6)
+    conditions: List[str] = []
+    actor_name = (actor.get("displayName") or "").strip().lower()
+    actor_vertical = (actor.get("vertical") or "").strip()
+
+    if actor_name:
+        conditions.append("(LOWER(TRIM(c.assignedTo)) = %s OR LOWER(TRIM(c.seOwner)) = %s)")
+        params.extend([actor_name, actor_name])
+
+    if actor_vertical:
+        conditions.append(
+            """
+            (
+              EXISTS (
+                SELECT 1
+                FROM accounts visible_account
+                WHERE visible_account.recordId = c.account
+                  AND visible_account.vertical = %s
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM case_entity_links visible_link
+                INNER JOIN accounts linked_account ON linked_account.recordId = visible_link.entityRecordId
+                WHERE visible_link.caseRecordId = c.recordId
+                  AND visible_link.entityType = 'account'
+                  AND linked_account.vertical = %s
+              )
+            )
+            """
+        )
+        params.extend([actor_vertical, actor_vertical])
+
+    where_parts.append(f"({' OR '.join(conditions)})" if conditions else "1=0")
+
+
+def _apply_account_visibility(where_parts: List[str], params: List[Any], active_sources: Set[str], actor: Optional[dict]) -> None:
+    if not actor or actor.get("role") == "admin" or "accounts" not in active_sources or "cases" in active_sources:
+        return
+
+    actor_vertical = (actor.get("vertical") or "").strip()
+    if not actor_vertical:
+        where_parts.append("1=0")
+        return
+
+    where_parts.append("a.vertical = %s")
+    params.append(actor_vertical)
 
 
 def _limit(value: int) -> int:
@@ -427,6 +466,7 @@ async def execute_report_query(spec: ReportQuerySpec, actor: Optional[dict] = No
 
     where_parts, params = _build_filter_sql(spec, active_sources)
     _apply_case_visibility(where_parts, params, active_sources, actor)
+    _apply_account_visibility(where_parts, params, active_sources, actor)
     where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     joins_clause = "\n".join(join_sql)
     limit = _limit(spec.limit)
@@ -454,6 +494,7 @@ async def execute_report_query(spec: ReportQuerySpec, actor: Optional[dict] = No
             """,
             [*params, limit],
         )
+        rows = [normalize_temporal_values(row) for row in rows]
         return ReportRunResult(mode="table", columns=columns, rows=rows)
 
     if not group_field:
@@ -480,6 +521,10 @@ async def execute_report_query(spec: ReportQuerySpec, actor: Optional[dict] = No
         """,
         [*params, limit],
     )
+    rows = [
+        {**row, "label": trim_timestamp_seconds(row.get("label"))}
+        for row in rows
+    ]
     return ReportRunResult(
         mode="aggregate",
         columns=[

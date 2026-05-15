@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 
 export function Login() {
   const { user, login } = useAuth();
-  const [email, setEmail] = useState("admin@nfr.local");
+  const [email, setEmail] = useState("admin@local");
   const [password, setPassword] = useState("Admin123!");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -31,7 +31,7 @@ export function Login() {
     <div className="min-h-screen bg-gradient-to-br from-gray-100 via-white to-red-50 flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">NFR Login</h1>
+          <h1 className="text-2xl font-bold text-gray-900">CRM Login</h1>
           <p className="text-sm text-gray-600 mt-1">Sign in to load your bookmarks and track your actions.</p>
         </div>
 
@@ -72,7 +72,7 @@ export function Login() {
         </form>
 
         <p className="text-xs text-gray-500 mt-6">
-          First run default account: admin@nfr.local / Admin123!
+          First run default account: admin@local / Admin123!
         </p>
       </div>
     </div>

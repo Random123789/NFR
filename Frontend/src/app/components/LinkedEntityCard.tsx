@@ -1,5 +1,14 @@
 import { ExternalLink } from "lucide-react";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
+import { formatUsdInteger } from "../utils/currency";
+
+function formatFieldValue(key: string, value: unknown) {
+  if (key === "sfdcValue") {
+    return formatUsdInteger(value as number | string | null | undefined);
+  }
+
+  return value === null || value === undefined || value === "" ? "-" : String(value);
+}
 
 interface LinkedEntityCardProps {
   title: string;
@@ -63,15 +72,15 @@ export function LinkedCasesList({ cases, onCaseClick, onRemoveCase }: LinkedCase
   if (cases.length === 0) {
     return (
       <div className="bg-gray-50 rounded-lg p-4">
-        <h3 className="font-medium text-gray-900 mb-2">Related Cases</h3>
-        <p className="text-sm text-gray-500">No related cases</p>
+        <h3 className="font-medium text-gray-900 mb-2">Linked Cases</h3>
+        <p className="text-sm text-gray-500">No linked cases</p>
       </div>
     );
   }
 
   return (
     <div className="bg-gray-50 rounded-lg p-4">
-      <h3 className="font-medium text-gray-900 mb-3">Related Cases ({cases.length})</h3>
+      <h3 className="font-medium text-gray-900 mb-3">Linked Cases ({cases.length})</h3>
       <div className="space-y-2">
         {cases.map((caseItem) => (
           <div
@@ -81,10 +90,7 @@ export function LinkedCasesList({ cases, onCaseClick, onRemoveCase }: LinkedCase
           >
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-[#E31937] mb-1">
-                  {caseItem.recordId}
-                </div>
-                <div className="text-sm text-gray-900 truncate whitespace-nowrap mb-2" title={caseItem.description}>
+                <div className="text-sm font-medium text-[#E31937] truncate whitespace-nowrap mb-2" title={caseItem.description}>
                   {caseItem.description}
                 </div>
                 <div className="flex gap-2">
@@ -156,7 +162,7 @@ export function LinkedEntityList({ title, entities, fields, onEntityClick, onRem
                   {field.key === "recordId" && onEntityClick && entity[field.key] ? (
                     <span className="font-medium text-[#E31937]">{entity[field.key]}</span>
                   ) : (
-                    <span className="text-gray-900">{entity[field.key] || "-"}</span>
+                    <span className="text-gray-900">{formatFieldValue(field.key, entity[field.key])}</span>
                   )}
                 </div>
               ))}

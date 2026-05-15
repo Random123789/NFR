@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from authService import ensure_auth_tables, require_auth_user
 from database import execute_query
 from database import execute_mutation
+from utils import current_timestamp, format_datetime_minute
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -51,18 +52,18 @@ async def ensure_notification_tables() -> None:
 
 def _normalize_timestamp(value: Any) -> str:
     if isinstance(value, datetime):
-        return value.isoformat()
+        return format_datetime_minute(value)
     if isinstance(value, str):
         text = value.strip()
         if not text:
-            return datetime.now().isoformat()
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S.%f"):
+            return current_timestamp()
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S.%f"):
             try:
-                return datetime.strptime(text, fmt).isoformat()
+                return format_datetime_minute(datetime.strptime(text, fmt))
             except ValueError:
                 continue
         return text
-    return datetime.now().isoformat()
+    return current_timestamp()
 
 
 def _to_datetime(value: Any) -> datetime:
@@ -74,7 +75,7 @@ def _to_datetime(value: Any) -> datetime:
             return datetime.fromisoformat(text)
         except ValueError:
             pass
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S.%f"):
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S.%f"):
             try:
                 return datetime.strptime(text, fmt)
             except ValueError:
@@ -99,26 +100,9 @@ async def get_recent_notifications(request: Request, hours: int = Query(24, ge=1
     await ensure_notification_tables()
 
     cutoff = datetime.now() - timedelta(hours=hours)
-    cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_str = current_timestamp(cutoff)
 
     notifications: List[Dict[str, Any]] = []
-
-    case_rows = await execute_query(
-        """
-        SELECT recordId, status, updatedAt
-        FROM cases
-        WHERE updatedAt >= %s
-        ORDER BY updatedAt DESC
-        LIMIT 10
-        """,
-        [cutoff_str],
-    )
-    for row in case_rows:
-        record_id = row.get("recordId", "")
-        status = row.get("status") or "Updated"
-        notifications.append(
-            _build_notification("case", record_id, f"Case {record_id}: {status}", status, row.get("updatedAt"))
-        )
 
     project_rows = await execute_query(
         """
@@ -138,21 +122,21 @@ async def get_recent_notifications(request: Request, hours: int = Query(24, ge=1
             _build_notification("project", record_id, f"Project {record_id} ({name}): {stage}", stage, row.get("updatedAt"))
         )
 
-    nfr_rows = await execute_query(
+    mantis_rows = await execute_query(
         """
-        SELECT recordId, nfrStatus, updatedAt
-        FROM nfrs
+        SELECT recordId, mantisStatus, updatedAt
+        FROM mantis
         WHERE updatedAt >= %s
         ORDER BY updatedAt DESC
         LIMIT 10
         """,
         [cutoff_str],
     )
-    for row in nfr_rows:
+    for row in mantis_rows:
         record_id = row.get("recordId", "")
-        status = row.get("nfrStatus") or "Updated"
+        status = row.get("mantisStatus") or "Updated"
         notifications.append(
-            _build_notification("nfr", record_id, f"NFR {record_id}: {status}", status, row.get("updatedAt"))
+            _build_notification("mantis", record_id, f"Mantis {record_id}: {status}", status, row.get("updatedAt"))
         )
 
     knock_rows = await execute_query(
@@ -255,10 +239,10 @@ async def dismiss_notification(request: Request, payload: DismissNotificationReq
     await execute_mutation(
         """
         INSERT INTO user_notification_dismissals (userId, notificationId, dismissedAt)
-        VALUES (%s, %s, NOW())
+        VALUES (%s, %s, %s)
         ON DUPLICATE KEY UPDATE dismissedAt = VALUES(dismissedAt)
         """,
-        [user["id"], payload.notificationId],
+        [user["id"], payload.notificationId, current_timestamp()],
     )
 
     return {"success": True}
@@ -269,13 +253,14 @@ async def clear_all_notifications(request: Request) -> Dict[str, bool]:
     user = await require_auth_user(request)
     await ensure_notification_tables()
 
+    now = current_timestamp()
     await execute_mutation(
         """
         INSERT INTO user_notification_state (userId, lastClearedAt, updatedAt)
-        VALUES (%s, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE lastClearedAt = NOW(), updatedAt = NOW()
+        VALUES (%s, %s, %s)
+        ON DUPLICATE KEY UPDATE lastClearedAt = VALUES(lastClearedAt), updatedAt = VALUES(updatedAt)
         """,
-        [user["id"]],
+        [user["id"], now, now],
     )
 
     return {"success": True}

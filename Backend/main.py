@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
-    title="NFR Backend API",
-    description="REST API for NFR (Non-Functional Requirements) management",
+    title="Mantis Backend API",
+    description="REST API for Mantis record management",
     version="1.0.0",
 )
 
@@ -55,7 +55,7 @@ async def health_check():
 async def root():
     """Root endpoint."""
     return {
-        "message": "NFR Backend API",
+        "message": "Mantis Backend API",
         "docs": "/docs",
         "version": "1.0.0",
         "services": [service.name for service in SERVICES],

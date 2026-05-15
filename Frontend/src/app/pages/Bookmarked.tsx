@@ -2,12 +2,14 @@ import { Bookmark, ExternalLink } from "lucide-react";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useNavigate } from "react-router";
 import { casePriorityColors, caseStatusColors, projectStageColors } from "../data/recordStyles";
+import { createOpenDetailState, getDetailRoute, type DetailEntityType } from "../navigation/detailNavigation";
+import { formatTimestampMinute } from "../utils/dateTime";
 
 const typeIcons: Record<string, string> = {
   'case': '📋',
   'project': '📁',
   'account': '🏢',
-  'nfr': '⭐',
+  'mantis': '⭐',
   'knock': '🔨',
   'product': '📦',
 };
@@ -16,7 +18,7 @@ const typeColors: Record<string, string> = {
   'case': 'bg-red-50 border-red-200',
   'project': 'bg-blue-50 border-blue-200',
   'account': 'bg-green-50 border-green-200',
-  'nfr': 'bg-yellow-50 border-yellow-200',
+  'mantis': 'bg-yellow-50 border-yellow-200',
   'knock': 'bg-purple-50 border-purple-200',
   'product': 'bg-orange-50 border-orange-200',
 };
@@ -26,32 +28,11 @@ export function Bookmarked() {
   const navigate = useNavigate();
 
   const handleItemClick = (item: any) => {
-    const typeMap: Record<string, string> = {
-      'case': '/cases',
-      'project': '/projects',
-      'account': '/accounts',
-      'nfr': '/nfr',
-      'knock': '/knock',
-      'product': '/product',
-    };
+    const entityType = item.type as DetailEntityType;
+    const path = getDetailRoute(entityType);
 
-    const eventMap: Record<string, string> = {
-      'case': 'openCaseDetail',
-      'project': 'openProjectDetail',
-      'account': 'openAccountDetail',
-      'nfr': 'openNfrDetail',
-      'knock': 'openKnockDetail',
-      'product': 'openProductDetail',
-    };
-
-    const path = typeMap[item.type];
-    const eventName = eventMap[item.type];
-
-    if (path && eventName) {
-      navigate(path);
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent(eventName, { detail: item.id }));
-      }, 100);
+    if (path) {
+      navigate(path, { state: createOpenDetailState(entityType, item.id) });
     }
   };
 
@@ -67,7 +48,7 @@ export function Bookmarked() {
     'case': 'Cases',
     'project': 'Projects',
     'account': 'Accounts',
-    'nfr': 'NFRs',
+    'mantis': 'Mantis',
     'knock': 'Knocks',
     'product': 'Products',
   };
@@ -108,7 +89,7 @@ export function Bookmarked() {
                           <p className="text-xs text-gray-600 mt-1">{item.subtitle}</p>
                         )}
                         <p className="text-xs text-gray-500 mt-2">
-                          {new Date(item.timestamp).toLocaleDateString()}
+                          {formatTimestampMinute(item.timestamp)}
                         </p>
                       </div>
                       <button
@@ -132,3 +113,4 @@ export function Bookmarked() {
     </div>
   );
 }
+

@@ -2,7 +2,7 @@ import { fetchJson } from './http';
 import type { BaseRecord, HistoryEntry, KnockRecord } from './types';
 
 export async function listKnocks() {
-  return fetchJson<KnockRecord[]>('/knocks');
+  return fetchJson<KnockRecord[]>('/knocks?limit=10000');
 }
 
 export async function createKnock(data: Omit<KnockRecord, keyof BaseRecord> & Partial<BaseRecord>) {

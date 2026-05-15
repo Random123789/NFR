@@ -5,6 +5,67 @@ from typing import Any, Dict, Iterable, List, Optional
 import json
 from database import deserialize_history
 
+DATETIME_MINUTE_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def current_timestamp(value: Any = None) -> str:
+    """Return the current local timestamp at minute precision."""
+    dt = value if isinstance(value, datetime) else datetime.now()
+    return dt.replace(second=0, microsecond=0).strftime(DATETIME_MINUTE_FORMAT)
+
+
+def format_datetime_minute(value: Any) -> str:
+    """Format datetime-like values without seconds."""
+    if isinstance(value, datetime):
+        return value.replace(second=0, microsecond=0).strftime(DATETIME_MINUTE_FORMAT)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return current_timestamp()
+
+        normalized = text.replace("T", " ")
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d",
+        ):
+            try:
+                parsed = datetime.strptime(normalized, fmt)
+                return parsed.replace(second=0, microsecond=0).strftime(DATETIME_MINUTE_FORMAT)
+            except ValueError:
+                continue
+
+        return text
+
+    return current_timestamp()
+
+
+def trim_timestamp_seconds(value: Any) -> Any:
+    """Trim seconds from datetime values while leaving non-timestamps alone."""
+    if isinstance(value, datetime):
+        return format_datetime_minute(value)
+
+    if isinstance(value, str):
+        text = value.strip()
+        normalized = text.replace("T", " ")
+
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(normalized, fmt).strftime(DATETIME_MINUTE_FORMAT)
+            except ValueError:
+                continue
+
+        return text
+
+    return value
+
+
+def normalize_temporal_values(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize datetime values in a response record without mutating the caller's object."""
+    return {key: trim_timestamp_seconds(value) for key, value in record.items()}
+
 
 def build_history_entry(
     action: str,
@@ -16,7 +77,7 @@ def build_history_entry(
 ) -> Dict[str, Any]:
     """Build a single history entry."""
     entry: Dict[str, Any] = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": current_timestamp(),
         "user": user,
         "action": action,
         "changes": changes,
@@ -100,13 +161,18 @@ def normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:
 
     for key, value in list(record.items()):
         if isinstance(value, datetime):
-            record[key] = value.strftime("%Y-%m-%d %H:%M:%S")
+            record[key] = format_datetime_minute(value)
     
     # Ensure history is always a list for response model validation.
     if "history" not in record or record["history"] is None:
         record["history"] = []
     elif isinstance(record["history"], str):
         record["history"] = deserialize_history(record["history"])
+
+    if isinstance(record.get("history"), list):
+        for entry in record["history"]:
+            if isinstance(entry, dict) and "timestamp" in entry:
+                entry["timestamp"] = trim_timestamp_seconds(entry["timestamp"])
     
     return record
 

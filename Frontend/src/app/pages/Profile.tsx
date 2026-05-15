@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 import { AlertTriangle, ArrowLeft, Check, Save, Trash2 } from "lucide-react";
 import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUserRole, type ManagedUser } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
+import { accountVerticals, type AccountVertical } from "../data/accountOptions";
 import { formatRoleLabel, managedRoleOptions } from "../data/roleLabels";
+import { formatTimestampMinute } from "../utils/dateTime";
 
 export function Profile() {
   const { user, logout, setSessionUser } = useAuth();
@@ -23,9 +25,11 @@ export function Profile() {
   const [newUserDisplayName, setNewUserDisplayName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
+  const [newUserVertical, setNewUserVertical] = useState<AccountVertical | "">("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [roleDrafts, setRoleDrafts] = useState<Record<number, "admin" | "user">>({});
+  const [verticalDrafts, setVerticalDrafts] = useState<Record<number, AccountVertical | "">>({});
   const [savingRoleUserId, setSavingRoleUserId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -121,20 +125,29 @@ export function Profile() {
       if (!newUserDisplayName.trim() || !newUserEmail.trim() || !newUserPassword.trim()) {
         throw new Error("Display name, email, and password are required");
       }
+      if (newUserRole === "user" && !newUserVertical) {
+        throw new Error("Vertical is required for SE users");
+      }
 
       const result = await createManagedUser({
         displayName: newUserDisplayName.trim(),
         email: newUserEmail.trim().toLowerCase(),
         role: newUserRole,
+        vertical: newUserRole === "user" ? newUserVertical : null,
         password: newUserPassword,
       });
 
-      setManagedUsers((prev) => [result.user, ...prev]);
+      const createdUser = {
+        ...result.user,
+        vertical: result.user.vertical ?? (newUserRole === "user" ? newUserVertical : null),
+      };
+      setManagedUsers((prev) => [createdUser, ...prev]);
       setNewUserDisplayName("");
       setNewUserEmail("");
       setNewUserPassword("");
       setNewUserRole("user");
-      setAdminMessage(`User ${result.user.email} created successfully.`);
+      setNewUserVertical("");
+      setAdminMessage(`User ${createdUser.email} created successfully.`);
     } catch (err) {
       setAdminError(err instanceof Error ? err.message : "Failed to create user account");
     } finally {
@@ -149,20 +162,38 @@ export function Profile() {
 
     try {
       const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as "admin" | "user");
-      if (selectedRole === managedUser.role) {
-        setAdminMessage(`Role for ${managedUser.email} is already ${formatRoleLabel(managedUser.role)}.`);
+      const selectedVertical = selectedRole === "user"
+        ? verticalDrafts[managedUser.id] ?? managedUser.vertical ?? ""
+        : "";
+      const nextVertical = selectedRole === "user" ? selectedVertical || null : null;
+      const currentVertical = managedUser.role === "user" ? managedUser.vertical ?? null : null;
+
+      if (selectedRole === "user" && !nextVertical) {
+        throw new Error("Vertical is required for SE users");
+      }
+      if (selectedRole === managedUser.role && nextVertical === currentVertical) {
+        setAdminMessage(`User settings for ${managedUser.email} are already up to date.`);
         return;
       }
 
-      const result = await updateManagedUserRole(managedUser.id, { role: selectedRole });
-      setManagedUsers((prev) => prev.map((userItem) => (userItem.id === managedUser.id ? result.user : userItem)));
-      setRoleDrafts((prev) => ({ ...prev, [managedUser.id]: result.user.role as "admin" | "user" }));
+      const result = await updateManagedUserRole(managedUser.id, {
+        role: selectedRole,
+        vertical: nextVertical,
+      });
+      const updatedUser = {
+        ...result.user,
+        role: result.user.role || selectedRole,
+        vertical: "vertical" in result.user ? result.user.vertical : nextVertical,
+      };
+      setManagedUsers((prev) => prev.map((userItem) => (userItem.id === managedUser.id ? updatedUser : userItem)));
+      setRoleDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.role as "admin" | "user" }));
+      setVerticalDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.vertical ?? "" }));
 
       if (user.id === managedUser.id) {
-        setSessionUser(result.user);
+        setSessionUser(updatedUser);
       }
 
-      setAdminMessage(`Updated ${result.user.displayName} to ${formatRoleLabel(result.user.role)}.`);
+      setAdminMessage(`Updated ${updatedUser.displayName}.`);
     } catch (err) {
       setAdminError(err instanceof Error ? err.message : "Failed to update user role");
     } finally {
@@ -293,6 +324,12 @@ export function Profile() {
               <div className="text-gray-500">Role</div>
               <div className="font-medium text-gray-900">{formatRoleLabel(user.role)}</div>
             </div>
+            {user.role !== "admin" && (
+              <div>
+                <div className="text-gray-500">Vertical</div>
+                <div className="font-medium text-gray-900">{user.vertical || "-"}</div>
+              </div>
+            )}
           </div>
 
           <div className="border-t border-gray-200 pt-5">
@@ -317,7 +354,7 @@ export function Profile() {
             <p className="text-sm text-gray-600 mt-1">Create accounts for other users.</p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
               <input
@@ -339,12 +376,34 @@ export function Profile() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
               <select
                 value={newUserRole}
-                onChange={(e) => setNewUserRole(e.target.value as "admin" | "user")}
+                onChange={(e) => {
+                  const nextRole = e.target.value as "admin" | "user";
+                  setNewUserRole(nextRole);
+                  if (nextRole === "admin") {
+                    setNewUserVertical("");
+                  }
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
               >
                 {managedRoleOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Vertical</label>
+              <select
+                value={newUserVertical}
+                onChange={(e) => setNewUserVertical(e.target.value as AccountVertical | "")}
+                disabled={newUserRole !== "user"}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white disabled:bg-gray-100 disabled:text-gray-500"
+              >
+                <option value="">{newUserRole === "user" ? "Select vertical" : "Not applicable"}</option>
+                {accountVerticals.map((vertical) => (
+                  <option key={vertical} value={vertical}>
+                    {vertical}
                   </option>
                 ))}
               </select>
@@ -390,46 +449,77 @@ export function Profile() {
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Name</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Email</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Role</th>
+                  <th className="text-left px-4 py-2 font-semibold text-gray-700">Vertical</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Last Login</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {managedUsers.map((managedUser) => (
-                  <tr key={managedUser.id} className="border-b border-gray-100 last:border-0">
-                    <td className="px-4 py-2 text-gray-900 whitespace-nowrap">{managedUser.displayName}</td>
-                    <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.email}</td>
-                    <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
-                      <select
-                        value={roleDrafts[managedUser.id] ?? (managedUser.role as "admin" | "user")}
-                        onChange={(e) =>
-                          setRoleDrafts((prev) => ({
-                            ...prev,
-                            [managedUser.id]: e.target.value as "admin" | "user",
-                          }))
-                        }
-                        className="w-full min-w-40 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
-                      >
-                        {managedRoleOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.lastLoginAt || "Never"}</td>
-                    <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
-                      <button
-                        onClick={() => handleUpdateUserRole(managedUser)}
-                        disabled={savingRoleUserId === managedUser.id || (roleDrafts[managedUser.id] ?? managedUser.role) === managedUser.role}
-                        className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <Save className="w-4 h-4" />
-                        {savingRoleUserId === managedUser.id ? "Saving..." : "Save Role"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {managedUsers.map((managedUser) => {
+                  const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as "admin" | "user");
+                  const selectedVertical = selectedRole === "user"
+                    ? verticalDrafts[managedUser.id] ?? managedUser.vertical ?? ""
+                    : "";
+                  const nextVertical = selectedRole === "user" ? selectedVertical || null : null;
+                  const currentVertical = managedUser.role === "user" ? managedUser.vertical ?? null : null;
+                  const hasUserDraftChanges = selectedRole !== managedUser.role || nextVertical !== currentVertical;
+
+                  return (
+                    <tr key={managedUser.id} className="border-b border-gray-100 last:border-0">
+                      <td className="px-4 py-2 text-gray-900 whitespace-nowrap">{managedUser.displayName}</td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.email}</td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                        <select
+                          value={selectedRole}
+                          onChange={(e) =>
+                            setRoleDrafts((prev) => ({
+                              ...prev,
+                              [managedUser.id]: e.target.value as "admin" | "user",
+                            }))
+                          }
+                          className="w-full min-w-40 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+                        >
+                          {managedRoleOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                        <select
+                          value={selectedVertical}
+                          onChange={(e) =>
+                            setVerticalDrafts((prev) => ({
+                              ...prev,
+                              [managedUser.id]: e.target.value as AccountVertical | "",
+                            }))
+                          }
+                          disabled={selectedRole !== "user"}
+                          className="w-full min-w-40 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white disabled:bg-gray-100 disabled:text-gray-500"
+                        >
+                          <option value="">{selectedRole === "user" ? "Select vertical" : "Not applicable"}</option>
+                          {accountVerticals.map((vertical) => (
+                            <option key={vertical} value={vertical}>
+                              {vertical}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.lastLoginAt ? formatTimestampMinute(managedUser.lastLoginAt) : "Never"}</td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                        <button
+                          onClick={() => handleUpdateUserRole(managedUser)}
+                          disabled={savingRoleUserId === managedUser.id || !hasUserDraftChanges}
+                          className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <Save className="w-4 h-4" />
+                          {savingRoleUserId === managedUser.id ? "Saving..." : "Save"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

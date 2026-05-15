@@ -1,5 +1,5 @@
 """Account service package."""
 
-from .router import router
+from .router import ensure_account_schema, router
 
-__all__ = ["router"]
+__all__ = ["ensure_account_schema", "router"]

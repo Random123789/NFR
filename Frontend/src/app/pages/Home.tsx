@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { Briefcase, Building2, FolderKanban, AlertCircle, Clock3 } from "lucide-react";
-import { cases, accounts, projects } from "../data/apiClient";
+import { Briefcase, FolderKanban, AlertCircle, Clock3 } from "lucide-react";
+import { useRecords } from "../context/RecordsContext";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
+import type { AccountRecord, CaseRecord, ProjectRecord } from "../data/apiClient";
 
-type CaseItem = (typeof cases)[number];
+type CaseItem = CaseRecord;
 
 function getMonthKey(dateString: string | null | undefined) {
   if (!dateString) return null;
@@ -22,41 +23,22 @@ function getMonthLabel(monthKey: string) {
   return new Date(year, month, 1).toLocaleString("en-US", { month: "short" });
 }
 
-function getCaseOwnerLabel(caseOwner: string | null | undefined) {
-  return caseOwner?.trim() || "Unassigned";
+function getCasePeople(caseItem: CaseItem) {
+  return [caseItem.assignedTo?.trim(), caseItem.seOwner?.trim()].filter(Boolean) as string[];
 }
 
-function getCaseAgeInDays(caseItem: CaseItem) {
-  const createdAt = new Date(caseItem.createdAt).getTime();
-  if (Number.isNaN(createdAt)) return null;
+function caseMatchesOwnerFilter(caseItem: CaseItem, selectedOwner: string) {
+  if (selectedOwner === "All Owners") return true;
 
-  return Math.max(0, (Date.now() - createdAt) / (1000 * 60 * 60 * 24));
+  const people = getCasePeople(caseItem);
+  return selectedOwner === "Unassigned" ? people.length === 0 : people.includes(selectedOwner);
 }
 
-function getAverageCaseAge(casesList: CaseItem[]) {
-  const ages = casesList
-    .map(getCaseAgeInDays)
-    .filter((age): age is number => age !== null);
-
-  if (ages.length === 0) return 0;
-
-  return ages.reduce((sum, age) => sum + age, 0) / ages.length;
-}
-
-function isWithinDays(dateString: string | null | undefined, days: number) {
-  if (!dateString) return false;
-
-  const parsed = new Date(dateString).getTime();
-  if (Number.isNaN(parsed)) return false;
-
-  return Date.now() - parsed <= days * 24 * 60 * 60 * 1000;
-}
-
-function buildActivityTrend() {
+function buildActivityTrend(cases: CaseRecord[], accounts: AccountRecord[], projects: ProjectRecord[]) {
   const monthMap = new Map<string, { month: string; cases: number; accounts: number; projects: number }>();
 
   for (const caseItem of cases) {
-    const monthKey = getMonthKey(caseItem.createdAt);
+    const monthKey = getMonthKey(caseItem.closeDate);
     if (!monthKey) continue;
 
     const bucket = monthMap.get(monthKey) ?? { month: getMonthLabel(monthKey), cases: 0, accounts: 0, projects: 0 };
@@ -92,38 +74,38 @@ function buildActivityTrend() {
 }
 
 export function Home() {
+  const { cases, accounts, projects } = useRecords();
   const [selectedOwner, setSelectedOwner] = useState("All Owners");
 
   const casesByStatus = [
-    { id: "home-status-open", name: "Open", value: cases.filter(c => c.status === "Open").length },
-    { id: "home-status-progress", name: "In Progress", value: cases.filter(c => c.status === "In Progress").length },
+    { id: "home-status-new", name: "New", value: cases.filter(c => c.status === "New").length },
+    { id: "home-status-ack", name: "Acknowledged", value: cases.filter(c => c.status === "Acknowledged").length },
     { id: "home-status-escalated", name: "Escalated", value: cases.filter(c => c.status === "Escalated").length },
-    { id: "home-status-closed", name: "Closed", value: cases.filter(c => c.status === "Closed").length },
+    { id: "home-status-monitoring", name: "Monitoring", value: cases.filter(c => c.status === "Monitoring").length },
+    { id: "home-status-closed-resolved", name: "Closed-Resolved", value: cases.filter(c => c.status === "Closed-Resolved").length },
+    { id: "home-status-closed-dead", name: "Closed-Dead", value: cases.filter(c => c.status === "Closed-Dead").length },
   ].filter(item => item.value > 0);
 
-  const activityData = buildActivityTrend();
+  const activityData = buildActivityTrend(cases, accounts, projects);
 
-  const sortedCases = [...cases].sort((left, right) => {
-    const leftDate = new Date(left.updatedAt || left.createdAt).getTime();
-    const rightDate = new Date(right.updatedAt || right.createdAt).getTime();
-    return rightDate - leftDate;
-  });
+  const sortedCases = [...cases].sort((left, right) => right.recordId.localeCompare(left.recordId));
 
   const recentCases = sortedCases.slice(0, 8);
-  const ownerFilters = ["All Owners", ...new Set(recentCases.map((caseItem) => getCaseOwnerLabel(caseItem.caseOwner)))];
-  const filteredRecentCases = selectedOwner === "All Owners"
-    ? recentCases
-    : recentCases.filter((caseItem) => getCaseOwnerLabel(caseItem.caseOwner) === selectedOwner);
+  const ownerFilters = ["All Owners", ...new Set(recentCases.flatMap((caseItem) => {
+    const people = getCasePeople(caseItem);
+    return people.length > 0 ? people : ["Unassigned"];
+  }))];
+  const filteredRecentCases = recentCases.filter((caseItem) => caseMatchesOwnerFilter(caseItem, selectedOwner));
 
-  const filteredOpenCases = filteredRecentCases.filter((caseItem) => caseItem.status === "Open").length;
+  const filteredNewCases = filteredRecentCases.filter((caseItem) => caseItem.status === "New").length;
   const filteredEscalatedCases = filteredRecentCases.filter((caseItem) => caseItem.status === "Escalated").length;
-  const filteredRecentlyUpdatedCases = filteredRecentCases.filter((caseItem) => isWithinDays(caseItem.updatedAt || caseItem.createdAt, 7)).length;
-  const filteredAverageCaseAge = getAverageCaseAge(filteredRecentCases);
+  const filteredAssignedCases = filteredRecentCases.filter((caseItem) => Boolean(caseItem.assignedTo)).length;
+  const filteredClosedCases = filteredRecentCases.filter((caseItem) => caseItem.status === "Closed-Resolved" || caseItem.status === "Closed-Dead").length;
 
   const stats = [
     {
-      label: "Open Cases",
-      value: filteredOpenCases.toString(),
+      label: "New Cases",
+      value: filteredNewCases.toString(),
       change: "Needs attention",
       trend: "up",
       icon: Briefcase,
@@ -138,17 +120,17 @@ export function Home() {
       color: "bg-[#c41230]"
     },
     {
-      label: "Updated in 7 Days",
-      value: filteredRecentlyUpdatedCases.toString(),
-      change: "Recently active",
+      label: "Assigned Cases",
+      value: filteredAssignedCases.toString(),
+      change: "Has assignee",
       trend: "neutral",
       icon: Clock3,
       color: "bg-[#2c3e50]"
     },
     {
-      label: "Average Case Age",
-      value: `${filteredAverageCaseAge.toFixed(1)}d`,
-      change: "Lower is better",
+      label: "Closed Cases",
+      value: filteredClosedCases.toString(),
+      change: "Completed",
       trend: "neutral",
       icon: FolderKanban,
       color: "bg-[#666666]"
@@ -159,7 +141,7 @@ export function Home() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Home</h1>
-        <p className="text-gray-600 mt-1">Overview of your NFR metrics and activity</p>
+        <p className="text-gray-600 mt-1">Overview of your metrics and activity</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -221,7 +203,7 @@ export function Home() {
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="font-semibold text-lg text-gray-900">Recent Cases</h2>
-              <p className="text-sm text-gray-600 mt-1">Filter the latest cases by owner name.</p>
+              <p className="text-sm text-gray-600 mt-1">Filter the latest cases by assignee or SE owner.</p>
             </div>
             <p className="text-sm text-gray-500">
               Showing {filteredRecentCases.length} of {recentCases.length}
@@ -248,18 +230,17 @@ export function Home() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">Case ID</th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">Description</th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">Status</th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">Priority</th>
-                <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">Owner</th>
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">Assigned To</th>
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">SE Owner</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredRecentCases.length > 0 ? (
                 filteredRecentCases.map((caseItem) => (
                   <tr key={caseItem.recordId} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{caseItem.recordId}</td>
                     <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={caseItem.description}>
                       {caseItem.description}
                     </td>
@@ -273,7 +254,8 @@ export function Home() {
                         {caseItem.priority}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{getCaseOwnerLabel(caseItem.caseOwner)}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{caseItem.assignedTo || "Unassigned"}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{caseItem.seOwner || "-"}</td>
                   </tr>
                 ))
               ) : (

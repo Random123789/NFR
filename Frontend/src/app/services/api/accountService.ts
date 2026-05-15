@@ -2,7 +2,7 @@ import { fetchJson } from './http';
 import type { AccountRecord, BaseRecord, HistoryEntry } from './types';
 
 export async function listAccounts() {
-  return fetchJson<AccountRecord[]>('/accounts');
+  return fetchJson<AccountRecord[]>('/accounts?limit=10000');
 }
 
 export async function createAccount(data: Omit<AccountRecord, keyof BaseRecord> & Partial<BaseRecord>) {

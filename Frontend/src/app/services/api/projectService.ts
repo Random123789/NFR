@@ -2,7 +2,7 @@ import { fetchJson } from './http';
 import type { BaseRecord, HistoryEntry, ProjectRecord } from './types';
 
 export async function listProjects() {
-  return fetchJson<ProjectRecord[]>('/projects');
+  return fetchJson<ProjectRecord[]>('/projects?limit=10000');
 }
 
 export async function createProject(data: Omit<ProjectRecord, keyof BaseRecord> & Partial<BaseRecord>) {

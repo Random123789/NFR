@@ -8,15 +8,15 @@ from typing import Awaitable, Callable, Optional
 
 from fastapi import APIRouter, FastAPI
 
-from accountService import router as account_router
+from accountService import ensure_account_schema, router as account_router
 from authService import ensure_default_user, router as auth_router
 from bookmarkService import ensure_bookmark_tables, router as bookmark_router
 from caseService import ensure_case_link_tables, router as case_router
 from knockService import router as knock_router
-from nfrService import router as nfr_router
+from mantisService import ensure_mantis_schema, router as mantis_router
 from notificationsService import ensure_notification_tables, router as notification_router
-from productService import router as product_router
-from projectService import router as project_router
+from productService import ensure_product_schema, router as product_router
+from projectService import ensure_project_schema, router as project_router
 from reportsService import ensure_custom_report_tables, router as reports_router
 
 
@@ -36,11 +36,11 @@ class BackendService:
 SERVICES = [
     BackendService("authService", auth_router, ensure_default_user),
     BackendService("bookmarkService", bookmark_router, ensure_bookmark_tables),
-    BackendService("accountService", account_router),
+    BackendService("accountService", account_router, ensure_account_schema),
+    BackendService("productService", product_router, ensure_product_schema),
+    BackendService("projectService", project_router, ensure_project_schema),
+    BackendService("mantisService", mantis_router, ensure_mantis_schema),
     BackendService("caseService", case_router, ensure_case_link_tables),
-    BackendService("productService", product_router),
-    BackendService("projectService", project_router),
-    BackendService("nfrService", nfr_router),
     BackendService("knockService", knock_router),
     BackendService("reportsService", reports_router, ensure_custom_report_tables),
     BackendService("notificationsService", notification_router, ensure_notification_tables),

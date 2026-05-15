@@ -1,7 +1,6 @@
 """Pydantic models for all domain entities."""
 
-from datetime import datetime
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Literal
 from pydantic import BaseModel, Field
 
 
@@ -30,12 +29,16 @@ class BaseRecord(BaseModel):
     history: List[HistoryEntry] = Field(default_factory=list)
 
 
+AccountType = Literal["Customer", "Distributor", "Reseller"]
+AccountVertical = Literal["Channel", "Commercial", "Enterprise", "Government", "FSI", "Telco"]
+
+
 class AccountRecord(BaseRecord):
     """Account entity."""
     accountName: str
     website: Optional[str] = None
-    type: Optional[str] = None
-    vertical: Optional[str] = None
+    type: Optional[AccountType] = None
+    vertical: Optional[AccountVertical] = None
 
 
 class ProductRecord(BaseRecord):
@@ -43,6 +46,16 @@ class ProductRecord(BaseRecord):
     productFamily: Optional[str] = None
     productName: str
     productUrl: Optional[str] = None
+    description: Optional[str] = None
+
+
+ProjectStage = Literal[
+    "Technical Qualification",
+    "Tender - RFP/RFI/RFQ",
+    "Technical Validation",
+    "Technical Lost",
+    "Technical Won",
+]
 
 
 class ProjectRecord(BaseRecord):
@@ -51,20 +64,22 @@ class ProjectRecord(BaseRecord):
     accountId: Optional[str] = None
     startDate: Optional[str] = None
     closeDate: Optional[str] = None
-    stage: Optional[str] = None
+    seOwner: Optional[str] = None
+    isClosed: bool = False
+    stage: Optional[ProjectStage] = None
     sfdc: Optional[str] = None
-    sfdcValue: Optional[str] = None
-    se: Optional[str] = None
+    sfdcValue: Optional[int] = None
 
 
-class NfrRecord(BaseRecord):
-    """Non-functional requirement entity."""
+class MantisRecord(BaseRecord):
+    """Mantis entity."""
     description: str
     mantisId: Optional[str] = None
     mantisUrl: Optional[str] = None
-    nfrStatus: Optional[str] = None
-    nfrRequestDate: Optional[str] = None
-    nfrTargetDate: Optional[str] = None
+    category: Optional[str] = None
+    mantisStatus: Optional[str] = None
+    mantisRequestDate: Optional[str] = None
+    mantisTargetDate: Optional[str] = None
 
 
 class KnockRecord(BaseRecord):
@@ -77,26 +92,30 @@ class KnockRecord(BaseRecord):
     targetDate: Optional[str] = None
 
 
-class CaseRecord(BaseRecord):
+CaseCategory = Literal["Pre-Sales", "Post-Sales", "Bug", "NFR", "Others"]
+CaseEscalationType = Literal["Escalation", "Monitoring", "Re-Escalation", "Drop", "Others"]
+CasePriority = Literal["Very Low", "Low", "Medium", "High", "Very High"]
+CaseStatus = Literal["New", "Acknowledged", "Escalated", "Monitoring", "Closed-Resolved", "Closed-Dead"]
+
+
+class CaseRecord(BaseModel):
     """Case/opportunity entity."""
-    description: str
-    previousStatus: Optional[str] = None
-    closeDate: Optional[str] = None
-    status: Optional[str] = None
-    priority: Optional[str] = None
-    category: Optional[str] = None
-    caseOwner: Optional[str] = None
-    assignedTo: Optional[str] = None
-    product: Optional[str] = None
+    recordId: str
     account: Optional[str] = None
     project: Optional[str] = None
-    nfrRecordId: Optional[str] = None
-    knockRecordId: Optional[str] = None
+    category: Optional[CaseCategory] = None
+    escalationType: Optional[CaseEscalationType] = None
+    escalationNote: Optional[str] = None
+    product: Optional[str] = None
+    closeDate: Optional[str] = None
+    description: str
+    seOwner: Optional[str] = None
+    assignedTo: Optional[str] = None
+    priority: Optional[CasePriority] = None
+    status: Optional[CaseStatus] = None
     knockId: Optional[str] = None
     mantisId: Optional[str] = None
-    escalationNote: Optional[str] = None
-    escalationType: Optional[str] = None
-    seOwner: Optional[str] = None
+    history: List[HistoryEntry] = Field(default_factory=list)
 
 
 class ReportValue(BaseModel):
@@ -190,16 +209,16 @@ class CustomReportRecord(CustomReportCreate):
     """Persisted custom report configuration."""
     id: int
     userId: int
-    createdAt: datetime
-    updatedAt: datetime
+    createdAt: str
+    updatedAt: str
 
 
 # Create request models (without timestamp/user fields)
 class AccountCreate(BaseModel):
     accountName: str
     website: Optional[str] = None
-    type: Optional[str] = None
-    vertical: Optional[str] = None
+    type: Optional[AccountType] = None
+    vertical: Optional[AccountVertical] = None
     metaData: Optional[str] = None
 
 
@@ -207,6 +226,7 @@ class ProductCreate(BaseModel):
     productFamily: Optional[str] = None
     productName: str
     productUrl: Optional[str] = None
+    description: Optional[str] = None
     metaData: Optional[str] = None
     ownedBy: Optional[str] = None
 
@@ -216,21 +236,23 @@ class ProjectCreate(BaseModel):
     accountId: Optional[str] = None
     startDate: Optional[str] = None
     closeDate: Optional[str] = None
-    stage: Optional[str] = None
+    seOwner: Optional[str] = None
+    isClosed: bool = False
+    stage: Optional[ProjectStage] = None
     sfdc: Optional[str] = None
-    sfdcValue: Optional[str] = None
-    se: Optional[str] = None
+    sfdcValue: Optional[int] = None
     metaData: Optional[str] = None
     ownedBy: Optional[str] = None
 
 
-class NfrCreate(BaseModel):
+class MantisCreate(BaseModel):
     description: str
     mantisId: Optional[str] = None
     mantisUrl: Optional[str] = None
-    nfrStatus: Optional[str] = None
-    nfrRequestDate: Optional[str] = None
-    nfrTargetDate: Optional[str] = None
+    category: Optional[str] = None
+    mantisStatus: Optional[str] = None
+    mantisRequestDate: Optional[str] = None
+    mantisTargetDate: Optional[str] = None
     metaData: Optional[str] = None
     ownedBy: Optional[str] = None
 
@@ -247,25 +269,20 @@ class KnockCreate(BaseModel):
 
 
 class CaseCreate(BaseModel):
-    description: str
-    previousStatus: Optional[str] = None
-    closeDate: Optional[str] = None
-    status: Optional[str] = None
-    priority: Optional[str] = None
-    category: Optional[str] = None
-    caseOwner: Optional[str] = None
-    assignedTo: Optional[str] = None
-    product: Optional[str] = None
     account: Optional[str] = None
     project: Optional[str] = None
-    nfrRecordId: Optional[str] = None
-    knockRecordId: Optional[str] = None
+    category: Optional[CaseCategory] = None
+    escalationType: Optional[CaseEscalationType] = None
+    escalationNote: Optional[str] = None
+    product: Optional[str] = None
+    closeDate: Optional[str] = None
+    description: str
+    seOwner: Optional[str] = None
+    assignedTo: Optional[str] = None
+    priority: Optional[CasePriority] = None
+    status: Optional[CaseStatus] = None
     knockId: Optional[str] = None
     mantisId: Optional[str] = None
-    escalationNote: Optional[str] = None
-    escalationType: Optional[str] = None
-    seOwner: Optional[str] = None
-    metaData: Optional[str] = None
 
 
 class HistoryEntryCreate(BaseModel):

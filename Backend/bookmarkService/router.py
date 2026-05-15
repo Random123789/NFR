@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from authService import ensure_auth_tables, require_auth_user
 from database import execute_mutation, execute_query
+from utils import current_timestamp
 
 router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
 
@@ -30,11 +31,12 @@ class BookmarkResponse(BaseModel):
     timestamp: int
 
 
-ALLOWED_TYPES = {"case", "project", "account", "nfr", "knock", "product"}
+ALLOWED_TYPES = {"case", "project", "account", "mantis", "knock", "product"}
 
 
 async def ensure_bookmark_tables() -> None:
     await ensure_auth_tables()
+    await execute_mutation("UPDATE user_bookmarks SET entityType = 'mantis' WHERE entityType = 'nfr'")
 
 
 def _to_timestamp(value: object) -> int:
@@ -42,7 +44,7 @@ def _to_timestamp(value: object) -> int:
         return int(value.timestamp() * 1000)
 
     if isinstance(value, str):
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
             try:
                 return int(datetime.strptime(value, fmt).timestamp() * 1000)
             except ValueError:
@@ -97,7 +99,7 @@ async def add_bookmark(request: Request, item: BookmarkItem):
         VALUES (%s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE title = VALUES(title), subtitle = VALUES(subtitle), createdAt = VALUES(createdAt)
         """,
-        [user["id"], item.type, item.id, item.title, item.subtitle, datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+        [user["id"], item.type, item.id, item.title, item.subtitle, current_timestamp()],
     )
 
     return {"success": True}

@@ -1,5 +1,6 @@
 import { HistoryEntry } from "../data/apiClient";
 import { useMemo, useState } from "react";
+import { formatTimestampMinute } from "../utils/dateTime";
 
 interface RecordHistoryTimelineProps {
   history?: HistoryEntry[];
@@ -44,7 +45,7 @@ function parseQuotedReply(changes?: unknown) {
 
   return {
     quotedFrom: quoteHeaderMatch[1],
-    quotedAt: quoteHeaderMatch[2],
+    quotedAt: formatTimestampMinute(quoteHeaderMatch[2]),
     quotedBody,
     replyBody,
   };
@@ -70,10 +71,10 @@ export function RecordHistoryTimeline({ history, emptyMessage = "No history avai
       const timeB = Date.parse(b.timestamp);
 
       if (Number.isNaN(timeA) || Number.isNaN(timeB)) {
-        return a.timestamp.localeCompare(b.timestamp);
+        return b.timestamp.localeCompare(a.timestamp);
       }
 
-      return timeA - timeB;
+      return timeB - timeA;
     });
   }, [normalizedHistory]);
 
@@ -83,7 +84,7 @@ export function RecordHistoryTimeline({ history, emptyMessage = "No history avai
 
   const visibleCount = initialVisibleCount;
   const hasMore = sortedHistory.length > visibleCount;
-  const visibleHistory = isExpanded ? sortedHistory : sortedHistory.slice(-visibleCount);
+  const visibleHistory = isExpanded ? sortedHistory : sortedHistory.slice(0, visibleCount);
 
   return (
     <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
@@ -112,7 +113,7 @@ export function RecordHistoryTimeline({ history, emptyMessage = "No history avai
           }`}
         >
           <div className="w-full flex-shrink-0 sm:w-40">
-            <div className={`text-sm text-gray-500 ${wrappingTextClass}`}>{entry.timestamp}</div>
+            <div className={`text-sm text-gray-500 ${wrappingTextClass}`}>{formatTimestampMinute(entry.timestamp)}</div>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1 flex-wrap">

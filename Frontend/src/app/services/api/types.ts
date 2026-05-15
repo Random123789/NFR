@@ -3,6 +3,7 @@ export interface AuthUser {
   email: string;
   displayName: string;
   role: string;
+  vertical?: AccountVertical | null;
 }
 
 export interface AssignableUser extends AuthUser {
@@ -26,6 +27,7 @@ export interface ManagedUser {
   email: string;
   displayName: string;
   role: string;
+  vertical?: AccountVertical | null;
   isActive: number;
   createdAt: string;
   lastLoginAt?: string | null;
@@ -35,16 +37,18 @@ export interface CreateUserRequest {
   email: string;
   displayName: string;
   role: 'admin' | 'user';
+  vertical?: AccountVertical | null;
   password: string;
 }
 
 export interface UpdateManagedUserRoleRequest {
   role: 'admin' | 'user';
+  vertical?: AccountVertical | null;
 }
 
 export interface BookmarkedItem {
   id: string;
-  type: 'case' | 'project' | 'account' | 'nfr' | 'knock' | 'product';
+  type: 'case' | 'project' | 'account' | 'mantis' | 'knock' | 'product';
   title: string;
   subtitle?: string;
   timestamp: number;
@@ -73,37 +77,50 @@ export interface BaseRecord {
   history: HistoryEntry[];
 }
 
+export type AccountType = 'Customer' | 'Distributor' | 'Reseller';
+export type AccountVertical = 'Channel' | 'Commercial' | 'Enterprise' | 'Government' | 'FSI' | 'Telco';
+
 export interface AccountRecord extends BaseRecord {
   accountName: string;
   website: string | null;
-  type: string | null;
-  vertical: string | null;
+  type: AccountType | null;
+  vertical: AccountVertical | null;
 }
 
 export interface ProductRecord extends BaseRecord {
   productFamily: string | null;
   productName: string;
   productUrl: string | null;
+  description: string | null;
 }
+
+export type ProjectStage =
+  | 'Technical Qualification'
+  | 'Tender - RFP/RFI/RFQ'
+  | 'Technical Validation'
+  | 'Technical Lost'
+  | 'Technical Won';
 
 export interface ProjectRecord extends BaseRecord {
   projectName: string;
   accountId: string | null;
   startDate: string | null;
   closeDate: string | null;
-  stage: string | null;
+  seOwner: string | null;
+  isClosed: boolean;
+  stage: ProjectStage | null;
   sfdc: string | null;
-  sfdcValue: string | null;
-  se: string | null;
+  sfdcValue: number | null;
 }
 
-export interface NfrRecord extends BaseRecord {
+export interface MantisRecord extends BaseRecord {
   description: string;
   mantisId: string | null;
   mantisUrl: string | null;
-  nfrStatus: string | null;
-  nfrRequestDate: string | null;
-  nfrTargetDate: string | null;
+  category: string | null;
+  mantisStatus: string | null;
+  mantisRequestDate: string | null;
+  mantisTargetDate: string | null;
 }
 
 export interface KnockRecord extends BaseRecord {
@@ -115,34 +132,37 @@ export interface KnockRecord extends BaseRecord {
   targetDate: string | null;
 }
 
-export interface CaseRecord extends BaseRecord {
-  description: string;
-  previousStatus: string | null;
-  closeDate: string | null;
-  status: string | null;
-  priority: string | null;
-  category: string | null;
-  caseOwner: string | null;
-  assignedTo: string | null;
-  product: string | null;
+export interface CaseRecord {
+  recordId: string;
   account: string | null;
   project: string | null;
-  nfrRecordId: string | null;
-  knockRecordId: string | null;
+  category: CaseCategory | null;
+  escalationType: CaseEscalationType | null;
+  escalationNote: string | null;
+  product: string | null;
+  closeDate: string | null;
+  description: string;
+  seOwner: string | null;
+  assignedTo: string | null;
+  priority: CasePriority | null;
+  status: CaseStatus | null;
   knockId: string | null;
   mantisId: string | null;
-  escalationNote: string | null;
-  escalationType: string | null;
-  seOwner: string | null;
+  history: HistoryEntry[];
 }
 
-export type CaseLinkEntityType = 'account' | 'product' | 'project' | 'nfr' | 'knock';
+export type CaseCategory = 'Pre-Sales' | 'Post-Sales' | 'Bug' | 'NFR' | 'Others';
+export type CaseEscalationType = 'Escalation' | 'Monitoring' | 'Re-Escalation' | 'Drop' | 'Others';
+export type CasePriority = 'Very Low' | 'Low' | 'Medium' | 'High' | 'Very High';
+export type CaseStatus = 'New' | 'Acknowledged' | 'Escalated' | 'Monitoring' | 'Closed-Resolved' | 'Closed-Dead';
+
+export type CaseLinkEntityType = 'account' | 'product' | 'project' | 'mantis' | 'knock';
 
 export interface CaseLinksResponse {
   accounts: AccountRecord[];
   products: ProductRecord[];
   projects: ProjectRecord[];
-  nfrs: NfrRecord[];
+  mantis: MantisRecord[];
   knocks: KnockRecord[];
 }
 
@@ -276,6 +296,6 @@ export interface Notification {
   message: string;
   type: 'info' | 'success' | 'warning' | 'error';
   timestamp: string;
-  entityType?: 'project' | 'case' | 'account' | 'nfr' | 'knock' | 'product';
+  entityType?: 'project' | 'case' | 'account' | 'mantis' | 'knock' | 'product';
   entityId?: string;
 }

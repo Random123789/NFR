@@ -1,5 +1,5 @@
-CREATE DATABASE IF NOT EXISTS nfr;
-USE nfr;
+CREATE DATABASE IF NOT EXISTS mantis;
+USE mantis;
 
 CREATE TABLE IF NOT EXISTS accounts (
   recordId VARCHAR(32) PRIMARY KEY,
@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   recordRevision VARCHAR(16) NOT NULL DEFAULT '1.0',
   metaData VARCHAR(255),
   ownedBy VARCHAR(120),
-  createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  createdAt DATETIME NOT NULL,
   createdBy VARCHAR(120) DEFAULT 'System',
-  updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updatedAt DATETIME NOT NULL,
   updatedBy VARCHAR(120) DEFAULT 'System',
   accountName VARCHAR(255) NOT NULL,
   website VARCHAR(255),
@@ -24,13 +24,14 @@ CREATE TABLE IF NOT EXISTS products (
   recordRevision VARCHAR(16) NOT NULL DEFAULT '1.0',
   metaData VARCHAR(255),
   ownedBy VARCHAR(120),
-  createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  createdAt DATETIME NOT NULL,
   createdBy VARCHAR(120) DEFAULT 'System',
-  updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updatedAt DATETIME NOT NULL,
   updatedBy VARCHAR(120) DEFAULT 'System',
   productFamily VARCHAR(120),
   productName VARCHAR(255) NOT NULL,
   productUrl VARCHAR(255),
+  description TEXT,
   history JSON
 );
 
@@ -40,41 +41,43 @@ CREATE TABLE IF NOT EXISTS projects (
   recordRevision VARCHAR(16) NOT NULL DEFAULT '1.0',
   metaData VARCHAR(255),
   ownedBy VARCHAR(120),
-  createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  createdAt DATETIME NOT NULL,
   createdBy VARCHAR(120) DEFAULT 'System',
-  updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updatedAt DATETIME NOT NULL,
   updatedBy VARCHAR(120) DEFAULT 'System',
   projectName VARCHAR(255) NOT NULL,
   accountId VARCHAR(32),
   startDate VARCHAR(32),
   closeDate VARCHAR(32),
+  seOwner VARCHAR(120),
+  isClosed TINYINT(1) NOT NULL DEFAULT 0,
   stage VARCHAR(120),
   sfdc VARCHAR(120),
-  sfdcValue VARCHAR(120),
-  se VARCHAR(120),
+  sfdcValue BIGINT,
   history JSON
 );
 
-CREATE TABLE IF NOT EXISTS nfrs (
+CREATE TABLE IF NOT EXISTS mantis (
   recordId VARCHAR(32) PRIMARY KEY,
-  moduleId VARCHAR(32) NOT NULL DEFAULT 'MOD-NFR',
+  moduleId VARCHAR(32) NOT NULL DEFAULT 'MOD-MANTIS',
   recordRevision VARCHAR(16) NOT NULL DEFAULT '1.0',
   metaData VARCHAR(255),
   ownedBy VARCHAR(120),
-  createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  createdAt DATETIME NOT NULL,
   createdBy VARCHAR(120) DEFAULT 'System',
-  updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updatedAt DATETIME NOT NULL,
   updatedBy VARCHAR(120) DEFAULT 'System',
   description TEXT NOT NULL,
   mantisId VARCHAR(120),
   mantisUrl VARCHAR(255),
-  nfrStatus VARCHAR(120),
-  nfrRequestDate VARCHAR(32),
-  nfrTargetDate VARCHAR(32),
+  category VARCHAR(120),
+  mantisStatus VARCHAR(120),
+  mantisRequestDate VARCHAR(32),
+  mantisTargetDate VARCHAR(32),
   history JSON
 );
 
-CREATE UNIQUE INDEX uniq_nfrs_mantisId ON nfrs (mantisId);
+CREATE UNIQUE INDEX uniq_mantis_mantisId ON mantis (mantisId);
 
 CREATE TABLE IF NOT EXISTS knocks (
   recordId VARCHAR(32) PRIMARY KEY,
@@ -82,9 +85,9 @@ CREATE TABLE IF NOT EXISTS knocks (
   recordRevision VARCHAR(16) NOT NULL DEFAULT '1.0',
   metaData VARCHAR(255),
   ownedBy VARCHAR(120),
-  createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  createdAt DATETIME NOT NULL,
   createdBy VARCHAR(120) DEFAULT 'System',
-  updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updatedAt DATETIME NOT NULL,
   updatedBy VARCHAR(120) DEFAULT 'System',
   description TEXT NOT NULL,
   knockId VARCHAR(120),
@@ -99,41 +102,28 @@ CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId);
 
 CREATE TABLE IF NOT EXISTS cases (
   recordId VARCHAR(32) PRIMARY KEY,
-  moduleId VARCHAR(32) NOT NULL DEFAULT 'MOD-CASE',
-  recordRevision VARCHAR(16) NOT NULL DEFAULT '1.0',
-  metaData VARCHAR(255),
-  ownedBy VARCHAR(120),
-  createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  createdBy VARCHAR(120) DEFAULT 'System',
-  updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  updatedBy VARCHAR(120) DEFAULT 'System',
-  description TEXT NOT NULL,
-  previousStatus VARCHAR(120),
-  closeDate VARCHAR(32),
-  status VARCHAR(120),
-  priority VARCHAR(120),
-  category VARCHAR(120),
-  caseOwner VARCHAR(120),
-  assignedTo VARCHAR(120),
-  product VARCHAR(32),
   account VARCHAR(32),
   project VARCHAR(32),
-  nfrRecordId VARCHAR(32),
-  knockRecordId VARCHAR(32),
+  category VARCHAR(120),
+  escalationType VARCHAR(120),
+  escalationNote TEXT,
+  product VARCHAR(32),
+  closeDate VARCHAR(32),
+  description TEXT NOT NULL,
+  seOwner VARCHAR(120),
+  assignedTo VARCHAR(120),
+  priority VARCHAR(120),
+  status VARCHAR(120),
   knockId VARCHAR(120),
   mantisId VARCHAR(120),
-  escalationNote TEXT,
-  escalationType VARCHAR(120),
-  seOwner VARCHAR(120),
   history JSON
 );
 
 CREATE INDEX idx_cases_account ON cases (account);
 CREATE INDEX idx_cases_product ON cases (product);
 CREATE INDEX idx_cases_project ON cases (project);
+CREATE INDEX idx_cases_seOwner ON cases (seOwner);
 CREATE INDEX idx_cases_assignedTo ON cases (assignedTo);
-CREATE INDEX idx_cases_nfrRecordId ON cases (nfrRecordId);
-CREATE INDEX idx_cases_knockRecordId ON cases (knockRecordId);
 CREATE INDEX idx_cases_mantisId ON cases (mantisId);
 CREATE INDEX idx_cases_knockId ON cases (knockId);
 CREATE INDEX idx_projects_accountId ON projects (accountId);
@@ -162,18 +152,6 @@ ALTER TABLE cases
   ON DELETE SET NULL
   ON UPDATE CASCADE;
 
-ALTER TABLE cases
-  ADD CONSTRAINT fk_cases_nfr
-  FOREIGN KEY (nfrRecordId) REFERENCES nfrs(recordId)
-  ON DELETE SET NULL
-  ON UPDATE CASCADE;
-
-ALTER TABLE cases
-  ADD CONSTRAINT fk_cases_knock
-  FOREIGN KEY (knockRecordId) REFERENCES knocks(recordId)
-  ON DELETE SET NULL
-  ON UPDATE CASCADE;
-
 CREATE TABLE IF NOT EXISTS case_entity_links (
   caseRecordId VARCHAR(32) NOT NULL,
   entityType VARCHAR(16) NOT NULL,
@@ -191,6 +169,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) NOT NULL UNIQUE,
   displayName VARCHAR(120) NOT NULL,
   role VARCHAR(64) NOT NULL DEFAULT 'user',
+  vertical VARCHAR(120),
   passwordHash VARCHAR(255) NOT NULL,
   isActive TINYINT(1) NOT NULL DEFAULT 1,
   createdAt DATETIME NOT NULL,

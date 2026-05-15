@@ -1,10 +1,12 @@
-# NFR App Integration Overview
+# Mantis App Integration Overview
 
 This repository has three connected parts:
 
 - **Frontend** (`Frontend/`): React + Vite UI.
 - **Backend** (`Backend/`): Python + FastAPI (`main.py`, `service_registry.py`, `*Service/router.py`, `database.py`).
 - **Database**: MySQL schema and seed scripts in `Backend/sql/`.
+
+For a fuller system guide covering services, frontend/backend interactions, APIs, database tables, data flows, and extension notes, see [SYSTEM_DOCUMENTATION.md](SYSTEM_DOCUMENTATION.md).
 
 ## How They Integrate
 
@@ -13,7 +15,7 @@ This repository has three connected parts:
    - `http://localhost:4000/api`
 3. The FastAPI app acts as a local API gateway and mounts Python service modules such as `accountService`, `authService`, `caseService`, and `reportsService`.
 4. Each service owns its API routes and uses the shared MySQL connection layer.
-5. MySQL stores all records (`accounts`, `cases`, `projects`, `products`, `nfrs`, `knocks`, `users`).
+5. MySQL stores all records (`accounts`, `cases`, `projects`, `products`, `mantis`, `knocks`, `users`).
 6. The backend returns JSON to the frontend for rendering and updates.
 
 ## Data Flow (Simple)
@@ -37,8 +39,8 @@ Frontend UI updates
 - Backend services are mounted in `Backend/service_registry.py`.
 - Python backend DB env variables use:
   - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-- SQL schema currently creates database **`nfr`** (`Backend/sql/schema.sql`).
-- The Python backend default database name is also **`nfr`**. If a local `.env` still refers to **`nfr_db`**, update it or import the SQL into that database intentionally.
+- SQL schema currently creates database **`mantis`** (`Backend/sql/schema.sql`).
+- The Python backend default database name is also **`mantis`**. If a local `.env` still refers to an older database name, update it or import the SQL into that database intentionally.
 
 ## Quick Start (Local)
 
@@ -131,20 +133,20 @@ VITE_API_URL=http://localhost:4000/api
 
 ### 4) MySQL Import Commands by OS
 
-Use a consistent database name in SQL import and backend env vars (recommended: `nfr`).
+Use a consistent database name in SQL import and backend env vars (recommended: `mantis`).
 
 Windows (PowerShell):
 
 ```bash
-Get-Content .\sql\schema.sql | mysql -u root -p nfr
-Get-Content .\sql\seed.sql | mysql -u root -p nfr
+Get-Content .\sql\schema.sql | mysql -u root -p
+Get-Content .\sql\seed.sql | mysql -u root -p mantis
 ```
 
 Linux/macOS (bash/zsh):
 
 ```bash
-mysql -u root -p nfr < sql/schema.sql
-mysql -u root -p nfr < sql/seed.sql
+mysql -u root -p < sql/schema.sql
+mysql -u root -p mantis < sql/seed.sql
 ```
 
 ## API and Health Check
@@ -164,7 +166,6 @@ If the endpoint returns JSON, frontend-backend-database integration is working.
 - `Backend/service_registry.py`: service registration and startup hooks.
 - `Backend/*Service/router.py`: Python service modules for each domain (`accountService`, `authService`, `caseService`, etc.).
 - `Backend/entity_crud.py`: shared Python CRUD helper used by the standard record-backed service routers.
-- `Backend/routers/`: compatibility wrappers that point to the service modules.
 - `Backend/database.py`: MySQL pool and query helpers.
 - `Frontend/src/app/services/api/`: frontend API service modules by domain.
 - `Frontend/src/app/data/apiClient.ts`: compatibility barrel that re-exports the frontend service modules.
@@ -172,9 +173,9 @@ If the endpoint returns JSON, frontend-backend-database integration is working.
 
 ## Case Multi-Link Support
 
-- Cases now support linking multiple entities of each type (accounts, products, projects, NFRs, knocks).
+- Cases now support linking multiple entities of each type (accounts, products, projects, Mantis records, knocks).
 - Backend stores these in `case_entity_links` (created by schema and ensured at runtime in case routes).
-- Existing single-link case fields remain for compatibility and are auto-synced to the newest linked item per type.
+- Direct case reference fields are synced to the newest linked item per type.
 
 ## Backend Runtime
 

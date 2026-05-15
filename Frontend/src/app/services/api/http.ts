@@ -1,6 +1,8 @@
+import { normalizeApiTimestamps } from "../../utils/dateTime";
+
 export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 
-const AUTH_TOKEN_KEY = 'nfr_auth_token';
+const AUTH_TOKEN_KEY = 'mantis_auth_token';
 
 export function getStoredToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY);
@@ -67,5 +69,6 @@ export async function fetchJson<T>(pathOrUrl: string, options?: RequestInit): Pr
     return undefined as T;
   }
 
-  return response.json();
+  const payload = await response.json() as T;
+  return normalizeApiTimestamps(payload);
 }

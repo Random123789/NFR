@@ -1,5 +1,5 @@
 """Product service package."""
 
-from .router import router
+from .router import ensure_product_schema, router
 
-__all__ = ["router"]
+__all__ = ["ensure_product_schema", "router"]

@@ -18,6 +18,7 @@ from schemas import (
     ReportSummary,
     ReportValue,
 )
+from utils import current_timestamp, format_datetime_minute, trim_timestamp_seconds
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -99,10 +100,10 @@ def _deserialize_query_spec(query_spec_value: str | dict | None, metric: str, fi
 def _build_custom_report_record(row: dict) -> CustomReportRecord:
     def _fmt(dt):
         if isinstance(dt, datetime):
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
+            return format_datetime_minute(dt)
         if dt is None:
             return ""
-        return str(dt)
+        return str(trim_timestamp_seconds(dt))
 
     filters = _deserialize_filters(row.get("filters"))
 
@@ -207,12 +208,13 @@ async def get_cases_by_product() -> List[ReportValue]:
 
 @router.get("/cases-over-time", response_model=List[ReportValue])
 async def get_cases_over_time() -> List[ReportValue]:
-    """Get case creation trend over time."""
+    """Get case close-date trend over time."""
     
     sql = """
-        SELECT DATE(createdAt) as date, COUNT(*) as value
+        SELECT DATE(closeDate) as date, COUNT(*) as value
         FROM cases
-        GROUP BY DATE(createdAt)
+        WHERE closeDate IS NOT NULL AND TRIM(closeDate) <> ''
+        GROUP BY DATE(closeDate)
         ORDER BY date DESC
         LIMIT 30
     """
@@ -271,11 +273,12 @@ async def create_custom_report(request: Request, payload: CustomReportCreate) ->
         fetch_one=True,
     )
     next_sort_order = int((next_order_row or {}).get("nextSortOrder", 0))
+    now = current_timestamp()
 
     inserted_id = await execute_mutation(
         """
         INSERT INTO custom_reports (userId, title, chartType, metric, layoutSpan, filters, querySpec, createdAt, updatedAt)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         [
             actor["id"],
@@ -285,6 +288,8 @@ async def create_custom_report(request: Request, payload: CustomReportCreate) ->
             payload.layoutSpan,
             _serialize_filters(payload.filters),
             _serialize_query_spec(payload.querySpec),
+            now,
+            now,
         ],
     )
 
@@ -331,7 +336,7 @@ async def update_custom_report(reportId: int, request: Request, payload: CustomR
             sortOrder = %s,
             filters = %s,
             querySpec = %s,
-            updatedAt = NOW()
+            updatedAt = %s
         WHERE id = %s AND userId = %s
         """,
         [
@@ -342,6 +347,7 @@ async def update_custom_report(reportId: int, request: Request, payload: CustomR
             payload.sortOrder,
             _serialize_filters(payload.filters),
             _serialize_query_spec(payload.querySpec),
+            current_timestamp(),
             reportId,
             actor["id"],
         ],

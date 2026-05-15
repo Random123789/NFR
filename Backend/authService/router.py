@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -13,14 +14,18 @@ from pydantic import BaseModel
 
 from config import settings
 from database import execute_mutation, execute_query
+from schemas import AccountVertical
+from utils import current_timestamp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-DEFAULT_USER_EMAIL = "admin@nfr.local"
+DEFAULT_USER_EMAIL = "admin@local"
+LEGACY_DEFAULT_USER_EMAIL = "admin@mantis.local"
 DEFAULT_USER_PASSWORD = "Admin123!"
 DEFAULT_USER_NAME = "Admin User"
 DEFAULT_USER_ROLE = "admin"
 TOKEN_TTL_DAYS = 7
+ACCOUNT_VERTICALS = ("Channel", "Commercial", "Enterprise", "Government", "FSI", "Telco")
 
 
 class LoginRequest(BaseModel):
@@ -33,6 +38,7 @@ class AuthUser(BaseModel):
     email: str
     displayName: str
     role: str
+    vertical: Optional[AccountVertical] = None
 
 
 class AssignableUser(AuthUser):
@@ -59,11 +65,13 @@ class CreateUserRequest(BaseModel):
     email: str
     displayName: str
     role: str = "user"
+    vertical: Optional[AccountVertical] = None
     password: str
 
 
 class UpdateUserRoleRequest(BaseModel):
     role: str
+    vertical: Optional[AccountVertical] = None
 
 
 class ManagedUser(BaseModel):
@@ -71,6 +79,7 @@ class ManagedUser(BaseModel):
     email: str
     displayName: str
     role: str
+    vertical: Optional[AccountVertical] = None
     isActive: int
     createdAt: str
     lastLoginAt: Optional[str] = None
@@ -116,8 +125,20 @@ def _normalize_role(role: str) -> str:
     return aliases.get(normalized, normalized)
 
 
+def _normalize_vertical(vertical: Optional[str]) -> Optional[str]:
+    if vertical is None:
+        return None
+
+    normalized = vertical.strip()
+    if not normalized:
+        return None
+    if normalized not in ACCOUNT_VERTICALS:
+        raise HTTPException(status_code=400, detail="Vertical must match an account vertical")
+    return normalized
+
+
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return current_timestamp()
 
 
 async def ensure_auth_tables() -> None:
@@ -128,6 +149,7 @@ async def ensure_auth_tables() -> None:
           email VARCHAR(255) NOT NULL UNIQUE,
           displayName VARCHAR(120) NOT NULL,
           role VARCHAR(64) NOT NULL DEFAULT 'user',
+          vertical VARCHAR(120) NULL,
           passwordHash VARCHAR(255) NOT NULL,
           isActive TINYINT(1) NOT NULL DEFAULT 1,
           createdAt DATETIME NOT NULL,
@@ -197,13 +219,54 @@ async def ensure_auth_tables() -> None:
         fetch_one=True,
     )
     if not updated_at_column:
-        await execute_mutation("ALTER TABLE users ADD COLUMN updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        await execute_mutation("ALTER TABLE users ADD COLUMN updatedAt DATETIME NULL")
+        await execute_mutation("UPDATE users SET updatedAt = %s WHERE updatedAt IS NULL", [_now()])
+
+    vertical_column = await execute_query(
+        """
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = %s
+          AND TABLE_NAME = 'users'
+          AND COLUMN_NAME = 'vertical'
+        LIMIT 1
+        """,
+        [settings.db_name],
+        fetch_one=True,
+    )
+    if not vertical_column:
+        await execute_mutation("ALTER TABLE users ADD COLUMN vertical VARCHAR(120) NULL AFTER role")
+
+    await execute_mutation(
+        """
+        UPDATE users
+        SET vertical = CASE
+          WHEN vertical IN ('Channel', 'Commercial', 'Enterprise', 'Government', 'FSI', 'Telco') THEN vertical
+          WHEN vertical IN ('Financial Services', 'Finance', 'Banking') THEN 'FSI'
+          WHEN vertical IN ('Public Sector') THEN 'Government'
+          WHEN vertical IN ('Telecommunications', 'Telecom') THEN 'Telco'
+          WHEN vertical IS NULL OR TRIM(vertical) = '' THEN NULL
+          ELSE NULL
+        END
+        WHERE vertical IS NOT NULL
+        """
+    )
 
 
 async def ensure_default_user() -> None:
     await ensure_auth_tables()
     existing = await execute_query("SELECT id FROM users WHERE email = %s LIMIT 1", [DEFAULT_USER_EMAIL], fetch_one=True)
+    legacy = await execute_query("SELECT id FROM users WHERE email = %s LIMIT 1", [LEGACY_DEFAULT_USER_EMAIL], fetch_one=True)
     if existing:
+        if legacy:
+            await execute_mutation("DELETE FROM users WHERE id = %s", [legacy["id"]])
+        return
+
+    if legacy:
+        await execute_mutation(
+            "UPDATE users SET email = %s, updatedAt = %s WHERE id = %s",
+            [DEFAULT_USER_EMAIL, _now(), legacy["id"]],
+        )
         return
 
     await execute_mutation(
@@ -226,7 +289,7 @@ async def _get_user_from_token(token: str) -> Optional[dict]:
     token_hash = _hash_token(token)
     row = await execute_query(
         """
-        SELECT u.id, u.email, u.displayName, u.role
+        SELECT u.id, u.email, u.displayName, u.role, u.vertical
         FROM user_sessions s
         INNER JOIN users u ON u.id = s.userId
         WHERE s.tokenHash = %s
@@ -265,7 +328,7 @@ async def login(data: LoginRequest) -> LoginResponse:
     await ensure_default_user()
     user = await execute_query(
         """
-        SELECT id, email, displayName, role, passwordHash, isActive
+        SELECT id, email, displayName, role, vertical, passwordHash, isActive
         FROM users
         WHERE email = %s
         LIMIT 1
@@ -281,12 +344,13 @@ async def login(data: LoginRequest) -> LoginResponse:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = secrets.token_urlsafe(32)
+    expires_at = current_timestamp(datetime.now() + timedelta(days=TOKEN_TTL_DAYS))
     await execute_mutation(
         """
         INSERT INTO user_sessions (userId, tokenHash, expiresAt, createdAt)
-        VALUES (%s, %s, DATE_ADD(NOW(), INTERVAL %s DAY), %s)
+        VALUES (%s, %s, %s, %s)
         """,
-        [user["id"], _hash_token(token), TOKEN_TTL_DAYS, _now()],
+        [user["id"], _hash_token(token), expires_at, _now()],
     )
     await execute_mutation("UPDATE users SET lastLoginAt = %s WHERE id = %s", [_now(), user["id"]])
 
@@ -297,6 +361,7 @@ async def login(data: LoginRequest) -> LoginResponse:
             email=user["email"],
             displayName=user["displayName"],
             role=user["role"],
+            vertical=user.get("vertical"),
         ),
     )
 
@@ -313,9 +378,11 @@ async def list_assignable_users(request: Request) -> list[AssignableUser]:
 
     rows = await execute_query(
         """
-        SELECT id, email, displayName, role, isActive
+        SELECT id, email, displayName, role, vertical, isActive
         FROM users
-        ORDER BY isActive DESC, displayName ASC, email ASC
+        WHERE isActive = 1
+          AND LOWER(TRIM(role)) IN ('user', 'se user', 'se_user')
+        ORDER BY displayName ASC, email ASC
         """,
     )
     return [AssignableUser(**row) for row in rows]
@@ -380,7 +447,7 @@ async def update_me(request: Request, data: UpdateMeRequest) -> MeResponse:
     )
 
     refreshed = await execute_query(
-        "SELECT id, email, displayName, role FROM users WHERE id = %s LIMIT 1",
+        "SELECT id, email, displayName, role, vertical FROM users WHERE id = %s LIMIT 1",
         [user["id"]],
         fetch_one=True,
     )
@@ -412,9 +479,9 @@ async def list_users(request: Request):
 
     rows = await execute_query(
         """
-        SELECT id, email, displayName, role, isActive,
-             DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
-             DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
+        SELECT id, email, displayName, role, vertical, isActive,
+             DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i') AS createdAt,
+             DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i') AS lastLoginAt
         FROM users
         ORDER BY createdAt DESC
         """,
@@ -429,6 +496,7 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
     email = data.email.strip().lower()
     display_name = data.displayName.strip()
     role = _normalize_role(data.role or "user")
+    vertical = _normalize_vertical(data.vertical)
     password = data.password.strip()
 
     if not email:
@@ -437,6 +505,10 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
         raise HTTPException(status_code=400, detail="Display name is required")
     if role not in {"admin", "user"}:
         raise HTTPException(status_code=400, detail="Role must be SE user or Administrator")
+    if role == "admin":
+        vertical = None
+    elif not vertical:
+        raise HTTPException(status_code=400, detail="Vertical is required for SE users")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
@@ -447,17 +519,17 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
     now = _now()
     await execute_mutation(
         """
-        INSERT INTO users (email, displayName, role, passwordHash, isActive, createdAt, updatedAt)
-        VALUES (%s, %s, %s, %s, 1, %s, %s)
+        INSERT INTO users (email, displayName, role, vertical, passwordHash, isActive, createdAt, updatedAt)
+        VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
         """,
-        [email, display_name, role, _hash_password(password), now, now],
+        [email, display_name, role, vertical, _hash_password(password), now, now],
     )
 
     created = await execute_query(
         """
-        SELECT id, email, displayName, role, isActive,
-             DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
-             DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
+        SELECT id, email, displayName, role, vertical, isActive,
+             DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i') AS createdAt,
+             DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i') AS lastLoginAt
         FROM users
         WHERE email = %s
         LIMIT 1
@@ -477,7 +549,7 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
             "CREATE_USER",
             "users",
             email,
-            '{"createdByAdmin": true}',
+            json.dumps({"createdByAdmin": True, "vertical": vertical}),
             now,
         ],
     )
@@ -490,14 +562,15 @@ async def update_user_role(request: Request, user_id: int, data: UpdateUserRoleR
     admin = await require_admin_user(request)
 
     role = _normalize_role(data.role)
+    requested_vertical = _normalize_vertical(data.vertical)
     if role not in {"admin", "user"}:
         raise HTTPException(status_code=400, detail="Role must be SE user or Administrator")
 
     existing = await execute_query(
         """
-        SELECT id, email, displayName, role, isActive,
-               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
-               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
+        SELECT id, email, displayName, role, vertical, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i') AS lastLoginAt
         FROM users
         WHERE id = %s
         LIMIT 1
@@ -508,17 +581,24 @@ async def update_user_role(request: Request, user_id: int, data: UpdateUserRoleR
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if existing["role"] == role:
+    next_vertical = None if role == "admin" else requested_vertical or existing.get("vertical")
+    if role == "user" and not next_vertical:
+        raise HTTPException(status_code=400, detail="Vertical is required for SE users")
+
+    if existing["role"] == role and existing.get("vertical") == next_vertical:
         return UpdateUserRoleResponse(user=ManagedUser(**existing))
 
     now = _now()
-    await execute_mutation("UPDATE users SET role = %s, updatedAt = %s WHERE id = %s", [role, now, user_id])
+    await execute_mutation(
+        "UPDATE users SET role = %s, vertical = %s, updatedAt = %s WHERE id = %s",
+        [role, next_vertical, now, user_id],
+    )
 
     refreshed = await execute_query(
         """
-        SELECT id, email, displayName, role, isActive,
-               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i:%S') AS createdAt,
-               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i:%S') AS lastLoginAt
+        SELECT id, email, displayName, role, vertical, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i') AS lastLoginAt
         FROM users
         WHERE id = %s
         LIMIT 1
@@ -538,7 +618,7 @@ async def update_user_role(request: Request, user_id: int, data: UpdateUserRoleR
             "UPDATE_USER_ROLE",
             "users",
             str(user_id),
-            f'{{"role":"{role}"}}',
+            json.dumps({"role": role, "vertical": next_vertical}),
             now,
         ],
     )

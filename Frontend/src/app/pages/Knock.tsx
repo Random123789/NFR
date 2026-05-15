@@ -1,18 +1,32 @@
-import { useState, useEffect } from "react";
-import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { knocks, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getKnockById, updateKnock, type HistoryEntry } from "../data/apiClient";
+import { useState } from "react";
+import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
+import { addKnockHistory, updateKnock } from "../data/apiClient";
+import { DetailTabs } from "../components/DetailTabs";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
+import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useAuth } from "../context/AuthContext";
+import { useRecords } from "../context/RecordsContext";
 import { useToast } from "../context/ToastContext";
 import { knockStatusColors } from "../data/recordStyles";
+import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
+import { useLinkedCases } from "../hooks/useLinkedCases";
+import { useRecordComments } from "../hooks/useRecordComments";
 import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
+import {
+  createDetailTarget,
+  createLinkedDetailState,
+  type DetailRouteState,
+} from "../navigation/detailNavigation";
+import { exportRowsToCsv } from "../utils/csvExport";
+import { formatTimestampMinute } from "../utils/dateTime";
 
-type KnockColumnKey = "recordId" | "description" | "knockId" | "status" | "requestDate" | "targetDate";
-type KnockSearchKey = "recordId" | "description" | "knockId";
+type KnockColumnKey = "knockId" | "knockUrl" | "description" | "status" | "requestDate" | "targetDate";
+type KnockSearchKey = "knockId" | "knockUrl" | "description";
 
 type KnockTableColumn = {
   key: KnockColumnKey;
@@ -22,9 +36,9 @@ type KnockTableColumn = {
 };
 
 const KNOCK_TABLE_COLUMNS: KnockTableColumn[] = [
-  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
-  { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
   { key: "knockId", label: "Knock ID", sortKey: "knockId", searchKey: "knockId" },
+  { key: "knockUrl", label: "Knock URL", sortKey: "knockUrl", searchKey: "knockUrl" },
+  { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
   { key: "status", label: "Status", sortKey: "status" },
   { key: "requestDate", label: "Request Date", sortKey: "requestDate" },
   { key: "targetDate", label: "Target Date", sortKey: "targetDate" },
@@ -32,37 +46,66 @@ const KNOCK_TABLE_COLUMNS: KnockTableColumn[] = [
 
 const DEFAULT_KNOCK_COLUMN_KEYS = KNOCK_TABLE_COLUMNS.map((column) => column.key);
 const KNOCK_COLUMN_STORAGE_KEY = "knock.visibleTableColumns";
+const KNOCK_DETAIL_TABS = [
+  { key: "details", label: "Details" },
+  { key: "linkedCases", label: "Linked Cases" },
+];
+const RELATED_CREATE_BUTTON_CLASS = "inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50";
 
 export function Knock() {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast } = useToast();
+  const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { searchTerm } = useSearch();
-  const [selectedKnock, setSelectedKnock] = useState<typeof knocks[0] | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedKnock, setEditedKnock] = useState<typeof knocks[0] | null>(null);
-  const [newComment, setNewComment] = useState("");
-  const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
-  const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
-  const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
-  const [linkingCaseId, setLinkingCaseId] = useState("");
-  const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const { knocks, cases, getKnockById, upsertKnock } = useRecords();
+  const {
+    selectedRecord: selectedKnock,
+    setSelectedRecord: setSelectedKnock,
+    isEditing,
+    editedRecord: editedKnock,
+    setEditedRecord: setEditedKnock,
+    activeDetailTab,
+    setActiveDetailTab,
+    handleBackFromDetail,
+    handleEdit,
+    handleCancelEdit,
+    applySavedRecord,
+  } = useRoutedEntityDetail({
+    entityType: "knock",
+    getRecordById: getKnockById,
+  });
+  const {
+    linkedCases,
+    linkingCaseId,
+    setLinkingCaseId,
+    isLinkingCase,
+    availableCases,
+    linkCase,
+    handleLinkCase,
+    handleUnlinkCase,
+  } = useLinkedCases({
+    entityType: "knock",
+    entityRecordId: selectedKnock?.recordId,
+    cases,
+    entityLabel: "knock",
+    showToast,
+  });
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+    selectedRecord: selectedKnock,
+    setSelectedRecord: setSelectedKnock,
+    addHistory: addKnockHistory,
+    upsertRecord: upsertKnock,
+    userName: user?.displayName,
+    onError: (message) => showToast(message, "error"),
+  });
   const [visibleKnockColumnKeys, setVisibleKnockColumnKeys] = useStoredColumnKeys<KnockColumnKey>(KNOCK_COLUMN_STORAGE_KEY, DEFAULT_KNOCK_COLUMN_KEYS);
 
-  type LinkedReturnState = {
-    returnTo?: {
-      path: string;
-      eventName: string;
-      recordId: string;
-    };
-    previousState?: LinkedReturnState | null;
-  };
-
   const [searchFilters, setSearchFilters] = useState({
-    recordId: "",
-    description: "",
     knockId: "",
+    knockUrl: "",
+    description: "",
   });
 
   const [sortConfig, setSortConfig] = useState<SortConfig<KnockColumnKey>>({
@@ -70,120 +113,17 @@ export function Knock() {
     direction: null,
   });
 
-  useEffect(() => {
-    const handleOpenDetail = (event: Event) => {
-      const knockId = (event as CustomEvent<string>).detail;
-      const knock = getKnockById(knockId);
-      if (knock) {
-        setSelectedKnock(knock);
-        setActiveDetailTab("details");
-      }
-    };
-
-    window.addEventListener('openKnockDetail', handleOpenDetail as EventListener);
-    return () => window.removeEventListener('openKnockDetail', handleOpenDetail as EventListener);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadLinkedCases = async () => {
-      if (!selectedKnock) {
-        setLinkedCases([]);
-        setLinkingCaseId("");
-        return;
-      }
-
-      try {
-        const linked = await getLinkedCasesByEntity("knock", selectedKnock.recordId);
-        if (!cancelled) {
-          setLinkedCases(linked);
-        }
-      } catch (error) {
-        console.error("Failed to load linked cases for knock:", error);
-        if (!cancelled) {
-          setLinkedCases([]);
-        }
-      }
-    };
-
-    loadLinkedCases();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedKnock?.recordId]);
-
   const handleCaseClick = (caseId: string) => {
     if (!selectedKnock?.recordId) return;
 
-    const state: LinkedReturnState = {
-      returnTo: {
-        path: '/knock',
-        eventName: 'openKnockDetail',
-        recordId: selectedKnock.recordId,
-      },
-      previousState: (location.state as LinkedReturnState | null) ?? null,
-    };
-
-    navigate('/cases', { state });
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openCaseDetail', { detail: caseId }));
-    }, 100);
-  };
-
-  const handleLinkCase = async () => {
-    if (!selectedKnock || !linkingCaseId) return;
-
-    setIsLinkingCase(true);
-    try {
-      await addCaseLink(linkingCaseId, "knock", selectedKnock.recordId);
-      const linked = await getLinkedCasesByEntity("knock", selectedKnock.recordId);
-      setLinkedCases(linked);
-      setLinkingCaseId("");
-      showToast("Case linked successfully.", "success");
-    } catch (error) {
-      console.error("Failed to link case to knock:", error);
-      showToast("Failed to link case.", "error");
-    } finally {
-      setIsLinkingCase(false);
-    }
-  };
-
-  const handleUnlinkCase = async (caseRecordId: string) => {
-    if (!selectedKnock) return;
-
-    setIsLinkingCase(true);
-    try {
-      await removeCaseLink(caseRecordId, "knock", selectedKnock.recordId);
-      const linked = await getLinkedCasesByEntity("knock", selectedKnock.recordId);
-      setLinkedCases(linked);
-      showToast("Case unlinked successfully.", "success");
-    } catch (error) {
-      console.error("Failed to unlink case from knock:", error);
-      showToast("Failed to unlink case.", "error");
-    } finally {
-      setIsLinkingCase(false);
-    }
-  };
-
-  const handleBackFromDetail = () => {
-    const navState = (location.state as LinkedReturnState | null) ?? null;
-    if (navState?.returnTo) {
-      navigate(navState.returnTo.path, { state: navState.previousState ?? null });
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent(navState.returnTo!.eventName, { detail: navState.returnTo!.recordId }));
-      }, 100);
-      return;
-    }
-
-    setSelectedKnock(null);
-  };
-
-  const handleEdit = () => {
-    if (selectedKnock) {
-      setEditedKnock({ ...selectedKnock });
-      setIsEditing(true);
-    }
+    navigate('/cases', {
+      state: createLinkedDetailState(
+        "case",
+        caseId,
+        createDetailTarget("knock", selectedKnock.recordId),
+        (location.state as DetailRouteState | null) ?? null,
+      ),
+    });
   };
 
   const handleSave = async () => {
@@ -200,48 +140,13 @@ export function Knock() {
         metaData: editedKnock.metaData,
       });
 
-      const index = knocks.findIndex((knock) => knock.recordId === saved.recordId);
-      if (index >= 0) {
-        knocks[index] = saved;
-      }
+      upsertKnock(saved);
 
-      setSelectedKnock(saved);
-      setEditedKnock(saved);
-      setIsEditing(false);
+      applySavedRecord(saved);
       showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save knock:", error);
       showToast("Failed to save changes. Please try again.", "error");
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditedKnock(null);
-    setIsEditing(false);
-  };
-
-  const handleAddComment = () => {
-    if (selectedKnock && newComment.trim()) {
-      const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
-      const quoteText = selectedQuote
-        ? `[Quoted reply to ${selectedQuote.user} (${selectedQuote.timestamp})]\n${formatHistoryEntryText(selectedQuote)}`
-        : null;
-
-      const newHistoryEntry = {
-        timestamp,
-        user: "Current User",
-        action: "Comment",
-        changes: quoteText ? `${quoteText}\n\n${newComment.trim()}` : newComment.trim(),
-      };
-
-      const updatedKnock = {
-        ...selectedKnock,
-        history: [...(selectedKnock.history || []), newHistoryEntry],
-      };
-
-      setSelectedKnock(updatedKnock);
-      setNewComment("");
-      setSelectedQuote(null);
     }
   };
 
@@ -274,7 +179,6 @@ export function Knock() {
   const filteredKnocks = knocks.filter((knock) => {
     if (normalizedSearchTerm) {
       const matchesGlobalSearch = [
-        knock.recordId,
         knock.description,
         knock.knockId,
         knock.knockUrl,
@@ -284,9 +188,9 @@ export function Knock() {
       if (!matchesGlobalSearch) return false;
     }
 
-    if (searchFilters.recordId && !knock.recordId.toLowerCase().includes(searchFilters.recordId.toLowerCase())) return false;
-    if (searchFilters.description && !knock.description.toLowerCase().includes(searchFilters.description.toLowerCase())) return false;
     if (searchFilters.knockId && !(knock.knockId ?? "").toLowerCase().includes(searchFilters.knockId.toLowerCase())) return false;
+    if (searchFilters.knockUrl && !(knock.knockUrl ?? "").toLowerCase().includes(searchFilters.knockUrl.toLowerCase())) return false;
+    if (searchFilters.description && !knock.description.toLowerCase().includes(searchFilters.description.toLowerCase())) return false;
     return true;
   });
 
@@ -295,8 +199,25 @@ export function Knock() {
     return compareValues(a[sortConfig.key], b[sortConfig.key], sortConfig.direction);
   });
 
-  const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
   const visibleKnockColumns = KNOCK_TABLE_COLUMNS.filter((column) => visibleKnockColumnKeys.includes(column.key));
+  const detailGridClassName = activeDetailTab === "details"
+    ? `grid grid-cols-1 gap-3 sm:grid-cols-2 ${
+        isEditing
+          ? ""
+          : "[&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 [&>div]:gap-y-1 [&>div]:rounded-lg [&>div]:border [&>div]:border-gray-100 [&>div]:bg-gray-50 [&>div]:px-3 [&>div]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words [&_a]:min-w-0 [&_a]:break-all"
+      }`
+    : "hidden";
+
+  const handleExportCsv = () => {
+    exportRowsToCsv(
+      "knock",
+      sortedKnocks,
+      visibleKnockColumns.map((column) => ({
+        label: column.label,
+        value: (knock) => knock[column.key] ?? "",
+      })),
+    );
+  };
 
   const renderSortIcon = (key: KnockColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
@@ -329,20 +250,37 @@ export function Knock() {
 
   const renderColumnCell = (knock: typeof knocks[0], column: KnockTableColumn) => {
     switch (column.key) {
-      case "recordId":
-        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937] whitespace-nowrap">{knock.recordId}</td>;
+      case "knockId":
+        return <td key={column.key} className="px-6 py-4 text-sm text-[#E31937] hover:underline whitespace-nowrap">{knock.knockId || "-"}</td>;
+      case "knockUrl":
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm whitespace-nowrap">
+            {knock.knockUrl ? (
+              <a
+                href={knock.knockUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[#E31937] hover:underline"
+                onClick={(event) => event.stopPropagation()}
+              >
+                Open
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              <span className="text-gray-500">-</span>
+            )}
+          </td>
+        );
       case "description":
         return (
           <td key={column.key} className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={knock.description}>
             {knock.description}
           </td>
         );
-      case "knockId":
-        return <td key={column.key} className="px-6 py-4 text-sm text-[#E31937] hover:underline whitespace-nowrap">{knock.knockId}</td>;
       case "status":
         return (
           <td key={column.key} className="px-6 py-4">
-            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${knockStatusColors[knock.status ?? "Active"]}`}>
+            <span className={`inline-flex whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium ${knockStatusColors[knock.status ?? ""] ?? "bg-gray-100 text-gray-700"}`}>
               {knock.status ?? "-"}
             </span>
           </td>
@@ -369,12 +307,30 @@ export function Knock() {
             <h2 className="text-base font-semibold text-gray-900">Knock Records</h2>
             <p className="text-sm text-gray-500">{visibleKnockColumns.length} of {KNOCK_TABLE_COLUMNS.length} fields shown</p>
           </div>
-          <TableFieldSelector
-            columns={KNOCK_TABLE_COLUMNS}
-            visibleKeys={visibleKnockColumnKeys}
-            onToggle={handleToggleKnockColumn}
-            onReset={handleResetKnockColumns}
-          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={sortedKnocks.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+            <CreateEntityDialog
+              entityType="knock"
+              onCreated={(knock) => {
+                setSelectedKnock(knock);
+                setActiveDetailTab("details");
+              }}
+            />
+            <TableFieldSelector
+              columns={KNOCK_TABLE_COLUMNS}
+              visibleKeys={visibleKnockColumnKeys}
+              onToggle={handleToggleKnockColumn}
+              onReset={handleResetKnockColumns}
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -480,37 +436,10 @@ export function Knock() {
 
             <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="xl:col-span-2 space-y-6">
-              <div className="border-b border-gray-200 pb-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveDetailTab("details")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "details"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Details
-                  </button>
-                  <button
-                    onClick={() => setActiveDetailTab("linked")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "linked"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Linked Entities
-                  </button>
-                </div>
-              </div>
+              <DetailTabs tabs={KNOCK_DETAIL_TABS} activeTab={activeDetailTab} onChange={setActiveDetailTab} />
 
-              <div className={activeDetailTab === "details" ? "grid grid-cols-2 gap-4" : "hidden"}>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Record ID</label>
-                  <p className="text-gray-900">{selectedKnock.recordId}</p>
-                </div>
-                <div>
+              <div className={detailGridClassName}>
+                <div className="order-1">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Knock ID</label>
                   {isEditing && editedKnock ? (
                     <input
@@ -520,10 +449,71 @@ export function Knock() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
-                    <p className="text-gray-900">{selectedKnock.knockId}</p>
+                    <p className="text-gray-900">{selectedKnock.knockId || "-"}</p>
                   )}
                 </div>
-                <div className="col-span-2">
+                <div className="order-3">
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
+                  {isEditing && editedKnock ? (
+                    <input
+                      type="text"
+                      value={editedKnock.status ?? ""}
+                      onChange={(e) => setEditedKnock({ ...editedKnock, status: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    />
+                  ) : (
+                    <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${knockStatusColors[selectedKnock.status ?? ""] ?? "bg-gray-100 text-gray-700"}`}>
+                      {selectedKnock.status ?? "-"}
+                    </span>
+                  )}
+                </div>
+                <div className="order-2">
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Knock URL</label>
+                  {isEditing && editedKnock ? (
+                    <input
+                      type="url"
+                      value={editedKnock.knockUrl ?? ""}
+                      onChange={(e) => setEditedKnock({ ...editedKnock, knockUrl: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    />
+                  ) : (
+                    selectedKnock.knockUrl ? (
+                      <a href={selectedKnock.knockUrl} target="_blank" rel="noopener noreferrer" className="break-all text-[#E31937] hover:underline inline-flex items-center gap-1">
+                        {selectedKnock.knockUrl}
+                        <ExternalLink className="w-3 h-3 shrink-0" />
+                      </a>
+                    ) : (
+                      <p className="text-gray-900">-</p>
+                    )
+                  )}
+                </div>
+                <div className="order-4">
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Request Date</label>
+                  {isEditing && editedKnock ? (
+                    <input
+                      type="date"
+                      value={editedKnock.requestDate ?? ""}
+                      onChange={(e) => setEditedKnock({ ...editedKnock, requestDate: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{selectedKnock.requestDate || "-"}</p>
+                  )}
+                </div>
+                <div className="order-5">
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Target Date</label>
+                  {isEditing && editedKnock ? (
+                    <input
+                      type="date"
+                      value={editedKnock.targetDate ?? ""}
+                      onChange={(e) => setEditedKnock({ ...editedKnock, targetDate: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{selectedKnock.targetDate || "-"}</p>
+                  )}
+                </div>
+                <div className="order-6 sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Description</label>
                   {isEditing && editedKnock ? (
                     <textarea
@@ -536,83 +526,10 @@ export function Knock() {
                     <p className="text-gray-900">{selectedKnock.description}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
-                  {isEditing && editedKnock ? (
-                    <select
-                      value={editedKnock.status ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, status: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="Active">Active</option>
-                      <option value="In Progress">In Progress</option>
-                      <option value="Completed">Completed</option>
-                      <option value="Cancelled">Cancelled</option>
-                    </select>
-                  ) : (
-                    <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${knockStatusColors[selectedKnock.status ?? "Active"]}`}>
-                      {selectedKnock.status ?? "—"}
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Knock URL</label>
-                  {isEditing && editedKnock ? (
-                    <input
-                      type="url"
-                      value={editedKnock.knockUrl ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, knockUrl: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    selectedKnock.knockUrl ? (
-                      <a href={selectedKnock.knockUrl} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1">
-                        View in Knock
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    ) : (
-                      <span className="text-gray-500">—</span>
-                    )
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Request Date</label>
-                  {isEditing && editedKnock ? (
-                    <input
-                      type="date"
-                      value={editedKnock.requestDate ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, requestDate: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedKnock.requestDate}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Target Date</label>
-                  {isEditing && editedKnock ? (
-                    <input
-                      type="date"
-                      value={editedKnock.targetDate ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, targetDate: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedKnock.targetDate}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Created At</label>
-                  <p className="text-gray-900">{selectedKnock.createdAt}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Updated At</label>
-                  <p className="text-gray-900">{selectedKnock.updatedAt}</p>
-                </div>
               </div>
 
-              <div className={activeDetailTab === "linked" ? "pt-1" : "hidden"}>
-                <h3 className="font-semibold text-lg text-gray-900 mb-4">Related Data</h3>
+              <div className={activeDetailTab === "linkedCases" ? "pt-1" : "hidden"}>
+                <h3 className="font-semibold text-lg text-gray-900 mb-4">Linked Cases</h3>
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3 mb-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-end">
                     <div className="flex-1">
@@ -625,11 +542,23 @@ export function Knock() {
                         <option value="">Select a case</option>
                         {availableCases.map((caseItem) => (
                           <option key={caseItem.recordId} value={caseItem.recordId}>
-                            {caseItem.recordId} - {caseItem.description}
+                            {caseItem.description}
                           </option>
                         ))}
                       </select>
                     </div>
+                    <CreateEntityDialog
+                      entityType="case"
+                      triggerLabel="New"
+                      triggerTitle="Create case"
+                      initialValues={{
+                        knockIds: [selectedKnock.recordId],
+                      }}
+                      className={RELATED_CREATE_BUTTON_CLASS}
+                      onCreated={(created) => {
+                        void linkCase(created.recordId);
+                      }}
+                    />
                     <button
                       type="button"
                       onClick={handleLinkCase}
@@ -650,15 +579,14 @@ export function Knock() {
                 <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
-                <RecordHistoryTimeline history={selectedKnock.history} onQuote={setSelectedQuote} />
 
-                <div className="border-t border-gray-200 pt-4">
+                <div className="mb-4 border-b border-gray-200 pb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Comment</label>
                   {selectedQuote && (
                     <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 border-l-4 border-l-[#6264A7]">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-xs text-gray-500 font-medium">
-                          Replying to {selectedQuote.user} - {selectedQuote.timestamp}
+                          Replying to {selectedQuote.user} - {formatTimestampMinute(selectedQuote.timestamp)}
                         </p>
                         <button
                           onClick={() => setSelectedQuote(null)}
@@ -682,13 +610,14 @@ export function Knock() {
                   <div className="mt-2 flex justify-end">
                     <button
                       onClick={handleAddComment}
-                      disabled={!newComment.trim()}
+                      disabled={isAddingComment || !newComment.trim()}
                       className="px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      Add Comment
+                      {isAddingComment ? "Adding..." : "Add Comment"}
                     </button>
                   </div>
                 </div>
+                <RecordHistoryTimeline history={selectedKnock.history} onQuote={setSelectedQuote} />
               </div>
             </div>
           </div>

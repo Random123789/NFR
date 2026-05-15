@@ -7,11 +7,10 @@ const Home = lazy(() => import("./pages/Home").then((module) => ({ default: modu
 const Cases = lazy(() => import("./pages/Cases").then((module) => ({ default: module.Cases })));
 const Accounts = lazy(() => import("./pages/Accounts").then((module) => ({ default: module.Accounts })));
 const Projects = lazy(() => import("./pages/Projects").then((module) => ({ default: module.Projects })));
-const NFR = lazy(() => import("./pages/NFR").then((module) => ({ default: module.NFR })));
+const Mantis = lazy(() => import("./pages/Mantis").then((module) => ({ default: module.Mantis })));
 const Knock = lazy(() => import("./pages/Knock").then((module) => ({ default: module.Knock })));
 const Product = lazy(() => import("./pages/Product").then((module) => ({ default: module.Product })));
 const Reports = lazy(() => import("./pages/Reports").then((module) => ({ default: module.Reports })));
-const CreateData = lazy(() => import("./pages/CreateData").then((module) => ({ default: module.CreateData })));
 const Bookmarked = lazy(() => import("./pages/Bookmarked").then((module) => ({ default: module.Bookmarked })));
 const Login = lazy(() => import("./pages/Login").then((module) => ({ default: module.Login })));
 const Profile = lazy(() => import("./pages/Profile").then((module) => ({ default: module.Profile })));
@@ -49,13 +48,12 @@ export const router = createBrowserRouter([
       { path: "cases", element: pageElement(Cases) },
       { path: "accounts", element: pageElement(Accounts) },
       { path: "projects", element: pageElement(Projects) },
-      { path: "nfr", element: pageElement(NFR) },
+      { path: "mantis", element: pageElement(Mantis) },
       { path: "knock", element: pageElement(Knock) },
       { path: "product", element: pageElement(Product) },
       { path: "reports", element: pageElement(Reports) },
       { path: "bookmarked", element: pageElement(Bookmarked) },
       { path: "profile", element: pageElement(Profile) },
-      { path: "create-data", element: pageElement(CreateData) },
     ],
   },
 ]);

@@ -1,26 +1,63 @@
 """Cases endpoint router."""
 
-from fastapi import APIRouter, Query, HTTPException, Request
-from typing import List, Optional
-from datetime import datetime
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
-from database import execute_query, execute_mutation, generate_record_id
-from authService import require_auth_user
-from schemas import CaseRecord, CaseCreate, HistoryEntryCreate
-from utils import build_history_entry, build_update_history_entries, normalize_record
+from typing import List, Optional
 import json
 import logging
+
+from authService import require_auth_user
+from database import execute_mutation, execute_query, generate_record_id
+from schemas import CaseCreate, CaseRecord, HistoryEntryCreate
+from utils import build_history_entry, build_update_history_entries, current_timestamp, normalize_record
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 logger = logging.getLogger(__name__)
 
-SEARCH_FIELDS = [
-    "recordId", "description", "status", "priority", "category",
-    "caseOwner", "assignedTo", "seOwner", "account", "product", "project",
-    "nfrRecordId", "knockRecordId", "mantisId", "knockId"
+CASE_FIELDS = [
+    "recordId",
+    "account",
+    "project",
+    "category",
+    "escalationType",
+    "escalationNote",
+    "product",
+    "closeDate",
+    "description",
+    "seOwner",
+    "assignedTo",
+    "priority",
+    "status",
+    "knockId",
+    "mantisId",
 ]
-
-CASE_LINK_ENTITY_TYPES = {"account", "product", "project", "nfr", "knock"}
+CASE_DATA_FIELDS = [field for field in CASE_FIELDS if field != "recordId"]
+CASE_SELECT = ", ".join(f"`{field}`" for field in [*CASE_FIELDS, "history"])
+SEARCH_FIELDS = CASE_FIELDS
+CASE_LINK_TARGET_TABLES = {
+    "account": "accounts",
+    "product": "products",
+    "project": "projects",
+    "mantis": "mantis",
+    "knock": "knocks",
+}
+CASE_LINK_ENTITY_TYPES = set(CASE_LINK_TARGET_TABLES)
+CASE_FIELD_LABELS = {
+    "account": "Account",
+    "project": "Project",
+    "category": "Category",
+    "escalationType": "Escalation Type",
+    "escalationNote": "Escalation Note",
+    "product": "Product",
+    "closeDate": "Close Date",
+    "description": "Description",
+    "seOwner": "SE Owner",
+    "assignedTo": "Assigned To",
+    "priority": "Priority",
+    "status": "Status",
+    "knockId": "Knock ID",
+    "mantisId": "Mantis ID",
+}
 
 
 class CaseLinkRequest(BaseModel):
@@ -58,131 +95,6 @@ async def _index_exists(table_name: str, index_name: str) -> bool:
     return bool(row and row.get("count", 0) > 0)
 
 
-async def _add_column_if_missing(table_name: str, column_name: str, alter_sql: str) -> None:
-    if await _column_exists(table_name, column_name):
-        return
-
-    await execute_mutation(alter_sql)
-
-
-async def _add_index_if_missing(table_name: str, index_name: str, create_sql: str) -> None:
-    if await _index_exists(table_name, index_name):
-        return
-
-    try:
-        await execute_mutation(create_sql)
-    except Exception as exc:
-        logger.warning("Could not add index %s on %s: %s", index_name, table_name, exc)
-
-
-def _blank_to_none(value):
-    if isinstance(value, str) and not value.strip():
-        return None
-    return value
-
-
-def _case_payload(data: CaseCreate) -> dict:
-    return {
-        "description": data.description,
-        "previousStatus": _blank_to_none(data.previousStatus),
-        "closeDate": _blank_to_none(data.closeDate),
-        "status": _blank_to_none(data.status),
-        "priority": _blank_to_none(data.priority),
-        "category": _blank_to_none(data.category),
-        "caseOwner": _blank_to_none(data.caseOwner),
-        "assignedTo": _blank_to_none(data.assignedTo),
-        "product": _blank_to_none(data.product),
-        "account": _blank_to_none(data.account),
-        "project": _blank_to_none(data.project),
-        "nfrRecordId": _blank_to_none(data.nfrRecordId),
-        "knockRecordId": _blank_to_none(data.knockRecordId),
-        "knockId": _blank_to_none(data.knockId),
-        "mantisId": _blank_to_none(data.mantisId),
-        "escalationNote": _blank_to_none(data.escalationNote),
-        "escalationType": _blank_to_none(data.escalationType),
-        "seOwner": _blank_to_none(data.seOwner),
-        "metaData": _blank_to_none(data.metaData),
-    }
-
-
-async def ensure_case_link_tables() -> None:
-    await execute_mutation(
-        """
-        CREATE TABLE IF NOT EXISTS case_entity_links (
-          caseRecordId VARCHAR(32) NOT NULL,
-          entityType VARCHAR(16) NOT NULL,
-          entityRecordId VARCHAR(32) NOT NULL,
-          createdAt DATETIME NOT NULL,
-          createdBy VARCHAR(120) NULL,
-          PRIMARY KEY (caseRecordId, entityType, entityRecordId),
-          INDEX idx_case_entity_links_case (caseRecordId),
-          INDEX idx_case_entity_links_entity (entityType, entityRecordId)
-        )
-        """
-    )
-    await ensure_case_foreign_keys()
-
-    # Backfill legacy single-link fields into the multi-link table.
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'account', account, NOW(), updatedBy
-        FROM cases
-        WHERE account IS NOT NULL AND TRIM(account) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'product', product, NOW(), updatedBy
-        FROM cases
-        WHERE product IS NOT NULL AND TRIM(product) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'project', project, NOW(), updatedBy
-        FROM cases
-        WHERE project IS NOT NULL AND TRIM(project) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'nfr', nfrRecordId, NOW(), updatedBy
-        FROM cases
-        WHERE nfrRecordId IS NOT NULL AND TRIM(nfrRecordId) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'knock', knockRecordId, NOW(), updatedBy
-        FROM cases
-        WHERE knockRecordId IS NOT NULL AND TRIM(knockRecordId) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT c.recordId, 'nfr', n.recordId, NOW(), c.updatedBy
-        FROM cases c
-        INNER JOIN nfrs n ON n.mantisId = c.mantisId
-        WHERE c.mantisId IS NOT NULL AND TRIM(c.mantisId) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT c.recordId, 'knock', k.recordId, NOW(), c.updatedBy
-        FROM cases c
-        INNER JOIN knocks k ON k.knockId = c.knockId
-        WHERE c.knockId IS NOT NULL AND TRIM(c.knockId) <> ''
-        """
-    )
-
-
 async def _foreign_key_exists(constraint_name: str) -> bool:
     row = await execute_query(
         """
@@ -197,6 +109,26 @@ async def _foreign_key_exists(constraint_name: str) -> bool:
     return bool(row and row.get("count", 0) > 0)
 
 
+async def _add_index_if_missing(table_name: str, index_name: str, create_sql: str) -> None:
+    if await _index_exists(table_name, index_name):
+        return
+
+    try:
+        await execute_mutation(create_sql)
+    except Exception as exc:
+        logger.warning("Could not add index %s on %s: %s", index_name, table_name, exc)
+
+
+async def _add_column_if_missing(table_name: str, column_name: str, alter_sql: str) -> None:
+    if await _column_exists(table_name, column_name):
+        return
+
+    try:
+        await execute_mutation(alter_sql)
+    except Exception as exc:
+        logger.warning("Could not add column %s.%s: %s", table_name, column_name, exc)
+
+
 async def _add_foreign_key_if_missing(constraint_name: str, alter_sql: str) -> None:
     if await _foreign_key_exists(constraint_name):
         return
@@ -207,74 +139,83 @@ async def _add_foreign_key_if_missing(constraint_name: str, alter_sql: str) -> N
         logger.warning("Could not add foreign key %s: %s", constraint_name, exc)
 
 
+async def _drop_foreign_key_if_present(table_name: str, constraint_name: str) -> None:
+    if not await _foreign_key_exists(constraint_name):
+        return
+
+    try:
+        await execute_mutation(f"ALTER TABLE `{table_name}` DROP FOREIGN KEY `{constraint_name}`")
+    except Exception as exc:
+        logger.warning("Could not drop foreign key %s: %s", constraint_name, exc)
+
+
+async def _drop_index_if_present(table_name: str, index_name: str) -> None:
+    if not await _index_exists(table_name, index_name):
+        return
+
+    try:
+        await execute_mutation(f"ALTER TABLE `{table_name}` DROP INDEX `{index_name}`")
+    except Exception as exc:
+        logger.warning("Could not drop index %s on %s: %s", index_name, table_name, exc)
+
+
+async def _drop_column_if_present(table_name: str, column_name: str) -> None:
+    if not await _column_exists(table_name, column_name):
+        return
+
+    try:
+        await execute_mutation(f"ALTER TABLE `{table_name}` DROP COLUMN `{column_name}`")
+    except Exception as exc:
+        logger.warning("Could not drop column %s.%s: %s", table_name, column_name, exc)
+
+
+def _blank_to_none(value):
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+def _case_payload(data: CaseCreate) -> dict:
+    return {
+        "account": _blank_to_none(data.account),
+        "project": _blank_to_none(data.project),
+        "category": _blank_to_none(data.category),
+        "escalationType": _blank_to_none(data.escalationType),
+        "escalationNote": _blank_to_none(data.escalationNote),
+        "product": _blank_to_none(data.product),
+        "closeDate": _blank_to_none(data.closeDate),
+        "description": data.description,
+        "seOwner": _blank_to_none(data.seOwner),
+        "assignedTo": _blank_to_none(data.assignedTo),
+        "priority": _blank_to_none(data.priority),
+        "status": _blank_to_none(data.status),
+        "knockId": _blank_to_none(data.knockId),
+        "mantisId": _blank_to_none(data.mantisId),
+    }
+
+
+def _history_from_record(record: dict) -> list[dict]:
+    normalized = normalize_record(dict(record))
+    history = normalized.get("history")
+    return list(history) if isinstance(history, list) else []
+
+
 async def _normalize_foreign_key_values() -> None:
     for table_name, column_name in (
         ("cases", "account"),
         ("cases", "product"),
         ("cases", "project"),
-        ("cases", "nfrRecordId"),
-        ("cases", "knockRecordId"),
-        ("cases", "assignedTo"),
         ("cases", "mantisId"),
         ("cases", "knockId"),
+        ("cases", "assignedTo"),
         ("projects", "accountId"),
-        ("nfrs", "mantisId"),
+        ("mantis", "mantisId"),
         ("knocks", "knockId"),
     ):
         await execute_mutation(
             f"UPDATE {table_name} SET {column_name} = NULL WHERE {column_name} IS NOT NULL AND TRIM({column_name}) = ''"
         )
 
-    await execute_mutation(
-        """
-        UPDATE cases c
-        INNER JOIN (
-            SELECT mantisId, MIN(recordId) AS recordId
-            FROM nfrs
-            WHERE mantisId IS NOT NULL AND TRIM(mantisId) <> ''
-            GROUP BY mantisId
-        ) n ON n.mantisId = c.mantisId
-        SET c.nfrRecordId = n.recordId
-        WHERE c.nfrRecordId IS NULL
-          AND c.mantisId IS NOT NULL
-          AND TRIM(c.mantisId) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        UPDATE cases c
-        INNER JOIN (
-            SELECT knockId, MIN(recordId) AS recordId
-            FROM knocks
-            WHERE knockId IS NOT NULL AND TRIM(knockId) <> ''
-            GROUP BY knockId
-        ) k ON k.knockId = c.knockId
-        SET c.knockRecordId = k.recordId
-        WHERE c.knockRecordId IS NULL
-          AND c.knockId IS NOT NULL
-          AND TRIM(c.knockId) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        UPDATE cases c
-        INNER JOIN nfrs n ON n.recordId = c.nfrRecordId
-        SET c.mantisId = n.mantisId
-        WHERE (c.mantisId IS NULL OR TRIM(c.mantisId) = '')
-          AND n.mantisId IS NOT NULL
-          AND TRIM(n.mantisId) <> ''
-        """
-    )
-    await execute_mutation(
-        """
-        UPDATE cases c
-        INNER JOIN knocks k ON k.recordId = c.knockRecordId
-        SET c.knockId = k.knockId
-        WHERE (c.knockId IS NULL OR TRIM(c.knockId) = '')
-          AND k.knockId IS NOT NULL
-          AND TRIM(k.knockId) <> ''
-        """
-    )
     await execute_mutation(
         """
         UPDATE cases c
@@ -301,22 +242,6 @@ async def _normalize_foreign_key_values() -> None:
     )
     await execute_mutation(
         """
-        UPDATE cases c
-        LEFT JOIN nfrs n ON c.nfrRecordId = n.recordId
-        SET c.nfrRecordId = NULL
-        WHERE c.nfrRecordId IS NOT NULL AND n.recordId IS NULL
-        """
-    )
-    await execute_mutation(
-        """
-        UPDATE cases c
-        LEFT JOIN knocks k ON c.knockRecordId = k.recordId
-        SET c.knockRecordId = NULL
-        WHERE c.knockRecordId IS NOT NULL AND k.recordId IS NULL
-        """
-    )
-    await execute_mutation(
-        """
         UPDATE projects p
         LEFT JOIN accounts a ON p.accountId = a.recordId
         SET p.accountId = NULL
@@ -325,50 +250,53 @@ async def _normalize_foreign_key_values() -> None:
     )
 
 
-async def ensure_case_foreign_keys() -> None:
+async def ensure_case_schema() -> None:
+    """Keep the cases table aligned to the minimal case field set."""
+
     await _add_column_if_missing(
         "cases",
         "assignedTo",
-        "ALTER TABLE cases ADD COLUMN assignedTo VARCHAR(120) NULL AFTER caseOwner",
+        "ALTER TABLE cases ADD COLUMN assignedTo VARCHAR(120) NULL AFTER seOwner",
     )
     await _add_column_if_missing(
         "cases",
+        "history",
+        "ALTER TABLE cases ADD COLUMN history JSON NULL",
+    )
+
+    for constraint_name in ("fk_cases_nfr", "fk_cases_knock"):
+        await _drop_foreign_key_if_present("cases", constraint_name)
+
+    for index_name in ("idx_cases_nfrRecordId", "idx_cases_knockRecordId"):
+        await _drop_index_if_present("cases", index_name)
+
+    for column_name in (
+        "moduleId",
+        "recordRevision",
+        "metaData",
+        "ownedBy",
+        "createdAt",
+        "createdBy",
+        "updatedAt",
+        "updatedBy",
+        "previousStatus",
+        "caseOwner",
         "nfrRecordId",
-        "ALTER TABLE cases ADD COLUMN nfrRecordId VARCHAR(32) NULL AFTER project",
-    )
-    await _add_column_if_missing(
-        "cases",
         "knockRecordId",
-        "ALTER TABLE cases ADD COLUMN knockRecordId VARCHAR(32) NULL AFTER nfrRecordId",
-    )
-    await _add_index_if_missing(
-        "cases",
-        "idx_cases_nfrRecordId",
-        "CREATE INDEX idx_cases_nfrRecordId ON cases (nfrRecordId)",
-    )
-    await _add_index_if_missing(
-        "cases",
-        "idx_cases_knockRecordId",
-        "CREATE INDEX idx_cases_knockRecordId ON cases (knockRecordId)",
-    )
-    await _add_index_if_missing(
-        "cases",
-        "idx_cases_assignedTo",
-        "CREATE INDEX idx_cases_assignedTo ON cases (assignedTo)",
-    )
+    ):
+        await _drop_column_if_present("cases", column_name)
 
     await _normalize_foreign_key_values()
 
-    await _add_index_if_missing(
-        "nfrs",
-        "uniq_nfrs_mantisId",
-        "CREATE UNIQUE INDEX uniq_nfrs_mantisId ON nfrs (mantisId)",
-    )
-    await _add_index_if_missing(
-        "knocks",
-        "uniq_knocks_knockId",
-        "CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId)",
-    )
+    await _add_index_if_missing("cases", "idx_cases_account", "CREATE INDEX idx_cases_account ON cases (account)")
+    await _add_index_if_missing("cases", "idx_cases_product", "CREATE INDEX idx_cases_product ON cases (product)")
+    await _add_index_if_missing("cases", "idx_cases_project", "CREATE INDEX idx_cases_project ON cases (project)")
+    await _add_index_if_missing("cases", "idx_cases_seOwner", "CREATE INDEX idx_cases_seOwner ON cases (seOwner)")
+    await _add_index_if_missing("cases", "idx_cases_assignedTo", "CREATE INDEX idx_cases_assignedTo ON cases (assignedTo)")
+    await _add_index_if_missing("cases", "idx_cases_mantisId", "CREATE INDEX idx_cases_mantisId ON cases (mantisId)")
+    await _add_index_if_missing("cases", "idx_cases_knockId", "CREATE INDEX idx_cases_knockId ON cases (knockId)")
+    await _add_index_if_missing("mantis", "uniq_mantis_mantisId", "CREATE UNIQUE INDEX uniq_mantis_mantisId ON mantis (mantisId)")
+    await _add_index_if_missing("knocks", "uniq_knocks_knockId", "CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId)")
 
     await _add_foreign_key_if_missing(
         "fk_projects_account",
@@ -410,75 +338,160 @@ async def ensure_case_foreign_keys() -> None:
           ON UPDATE CASCADE
         """,
     )
-    await _add_foreign_key_if_missing(
-        "fk_cases_nfr",
+
+
+async def ensure_case_link_tables() -> None:
+    await ensure_case_schema()
+    backfill_created_at = current_timestamp()
+
+    await execute_mutation(
         """
-        ALTER TABLE cases
-          ADD CONSTRAINT fk_cases_nfr
-          FOREIGN KEY (nfrRecordId) REFERENCES nfrs(recordId)
-          ON DELETE SET NULL
-          ON UPDATE CASCADE
-        """,
-    )
-    await _add_foreign_key_if_missing(
-        "fk_cases_knock",
+        CREATE TABLE IF NOT EXISTS case_entity_links (
+          caseRecordId VARCHAR(32) NOT NULL,
+          entityType VARCHAR(16) NOT NULL,
+          entityRecordId VARCHAR(32) NOT NULL,
+          createdAt DATETIME NOT NULL,
+          createdBy VARCHAR(120) NULL,
+          PRIMARY KEY (caseRecordId, entityType, entityRecordId),
+          INDEX idx_case_entity_links_case (caseRecordId),
+          INDEX idx_case_entity_links_entity (entityType, entityRecordId)
+        )
         """
-        ALTER TABLE cases
-          ADD CONSTRAINT fk_cases_knock
-          FOREIGN KEY (knockRecordId) REFERENCES knocks(recordId)
-          ON DELETE SET NULL
-          ON UPDATE CASCADE
+    )
+    await execute_mutation("UPDATE case_entity_links SET entityType = 'mantis' WHERE entityType = 'nfr'")
+    await cleanup_case_entity_links()
+
+    await execute_mutation(
+        """
+        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+        SELECT recordId, 'account', account, %s, seOwner
+        FROM cases
+        WHERE account IS NOT NULL AND TRIM(account) <> ''
         """,
+        [backfill_created_at],
+    )
+    await execute_mutation(
+        """
+        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+        SELECT recordId, 'product', product, %s, seOwner
+        FROM cases
+        WHERE product IS NOT NULL AND TRIM(product) <> ''
+        """,
+        [backfill_created_at],
+    )
+    await execute_mutation(
+        """
+        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+        SELECT recordId, 'project', project, %s, seOwner
+        FROM cases
+        WHERE project IS NOT NULL AND TRIM(project) <> ''
+        """,
+        [backfill_created_at],
+    )
+    await execute_mutation(
+        """
+        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+        SELECT c.recordId, 'mantis', m.recordId, %s, c.seOwner
+        FROM cases c
+        INNER JOIN mantis m ON m.mantisId = c.mantisId
+        WHERE c.mantisId IS NOT NULL AND TRIM(c.mantisId) <> ''
+        """,
+        [backfill_created_at],
+    )
+    await execute_mutation(
+        """
+        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+        SELECT c.recordId, 'knock', k.recordId, %s, c.seOwner
+        FROM cases c
+        INNER JOIN knocks k ON k.knockId = c.knockId
+        WHERE c.knockId IS NOT NULL AND TRIM(c.knockId) <> ''
+        """,
+        [backfill_created_at],
     )
 
 
-async def _resolve_case_reference_fields(payload: dict) -> dict:
-    """Keep user-facing Mantis/Knock IDs in sync with internal record FK fields."""
-    nfr_record_id = payload.get("nfrRecordId")
-    mantis_id = payload.get("mantisId")
-    if nfr_record_id:
-        nfr = await execute_query(
-            "SELECT recordId, mantisId FROM nfrs WHERE recordId = %s LIMIT 1",
-            [nfr_record_id],
-            fetch_one=True,
-        )
-        if not nfr:
-            raise HTTPException(status_code=400, detail="NFR record not found")
-        payload["nfrRecordId"] = nfr["recordId"]
-        payload["mantisId"] = nfr.get("mantisId")
-    elif mantis_id:
-        nfr = await execute_query(
-            "SELECT recordId, mantisId FROM nfrs WHERE mantisId = %s LIMIT 1",
-            [mantis_id],
-            fetch_one=True,
-        )
-        if nfr:
-            payload["nfrRecordId"] = nfr["recordId"]
-            payload["mantisId"] = nfr.get("mantisId")
+async def cleanup_case_entity_links() -> None:
+    await execute_mutation(
+        """
+        DELETE cel
+        FROM case_entity_links cel
+        LEFT JOIN cases c ON c.recordId = cel.caseRecordId
+        WHERE c.recordId IS NULL
+        """
+    )
+    await execute_mutation(
+        """
+        DELETE FROM case_entity_links
+        WHERE entityType NOT IN ('account', 'product', 'project', 'mantis', 'knock')
+        """
+    )
 
-    knock_record_id = payload.get("knockRecordId")
-    knock_id = payload.get("knockId")
-    if knock_record_id:
-        knock = await execute_query(
-            "SELECT recordId, knockId FROM knocks WHERE recordId = %s LIMIT 1",
-            [knock_record_id],
-            fetch_one=True,
+    for entity_type, table_name in CASE_LINK_TARGET_TABLES.items():
+        await execute_mutation(
+            f"""
+            DELETE cel
+            FROM case_entity_links cel
+            LEFT JOIN `{table_name}` target_entity ON target_entity.recordId = cel.entityRecordId
+            WHERE cel.entityType = %s
+              AND target_entity.recordId IS NULL
+            """,
+            [entity_type],
         )
-        if not knock:
-            raise HTTPException(status_code=400, detail="Knock record not found")
-        payload["knockRecordId"] = knock["recordId"]
-        payload["knockId"] = knock.get("knockId")
-    elif knock_id:
-        knock = await execute_query(
-            "SELECT recordId, knockId FROM knocks WHERE knockId = %s LIMIT 1",
-            [knock_id],
-            fetch_one=True,
-        )
-        if knock:
-            payload["knockRecordId"] = knock["recordId"]
-            payload["knockId"] = knock.get("knockId")
 
-    return payload
+
+async def _lookup_mantis_record_id(mantis_id: Optional[str]) -> Optional[str]:
+    if not mantis_id:
+        return None
+
+    mantis = await execute_query(
+        "SELECT recordId FROM mantis WHERE mantisId = %s LIMIT 1",
+        [mantis_id],
+        fetch_one=True,
+    )
+    return mantis["recordId"] if mantis else None
+
+
+async def _lookup_knock_record_id(knock_id: Optional[str]) -> Optional[str]:
+    if not knock_id:
+        return None
+
+    knock = await execute_query(
+        "SELECT recordId FROM knocks WHERE knockId = %s LIMIT 1",
+        [knock_id],
+        fetch_one=True,
+    )
+    return knock["recordId"] if knock else None
+
+
+async def _upsert_case_entity_link(record_id: str, entity_type: str, entity_record_id: str, actor_display_name: str) -> None:
+    await execute_mutation(
+        """
+        INSERT INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE createdAt = VALUES(createdAt), createdBy = VALUES(createdBy)
+        """,
+        [record_id, entity_type, entity_record_id, current_timestamp(), actor_display_name],
+    )
+
+
+async def _remove_cleared_case_links(record_id: str, payload: dict) -> None:
+    for entity_type, payload_field in (
+        ("account", "account"),
+        ("product", "product"),
+        ("project", "project"),
+        ("mantis", "mantisId"),
+        ("knock", "knockId"),
+    ):
+        if payload.get(payload_field):
+            continue
+
+        await execute_mutation(
+            """
+            DELETE FROM case_entity_links
+            WHERE caseRecordId = %s AND entityType = %s
+            """,
+            [record_id, entity_type],
+        )
 
 
 async def _add_case_links_from_payload(record_id: str, payload: dict, actor_display_name: str) -> None:
@@ -486,26 +499,20 @@ async def _add_case_links_from_payload(record_id: str, payload: dict, actor_disp
         ("account", payload.get("account")),
         ("product", payload.get("product")),
         ("project", payload.get("project")),
-        ("nfr", payload.get("nfrRecordId")),
-        ("knock", payload.get("knockRecordId")),
+        ("mantis", await _lookup_mantis_record_id(payload.get("mantisId"))),
+        ("knock", await _lookup_knock_record_id(payload.get("knockId"))),
     ]
 
     for entity_type, entity_record_id in link_values:
         if not entity_record_id:
             continue
 
-        await execute_mutation(
-            """
-            INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-            VALUES (%s, %s, %s, NOW(), %s)
-            """,
-            [record_id, entity_type, entity_record_id, actor_display_name],
-        )
+        await _upsert_case_entity_link(record_id, entity_type, entity_record_id, actor_display_name)
 
 
 async def get_case_or_404(record_id: str) -> dict:
     case_row = await execute_query(
-        "SELECT * FROM cases WHERE recordId = %s",
+        f"SELECT {CASE_SELECT} FROM cases WHERE recordId = %s",
         [record_id],
         fetch_one=True,
     )
@@ -545,12 +552,12 @@ async def sync_case_primary_links(record_id: str, actor_display_name: str) -> No
         [record_id],
         fetch_one=True,
     )
-    nfr_link = await execute_query(
+    mantis_link = await execute_query(
         """
-        SELECT n.recordId, n.mantisId
+        SELECT m.mantisId
         FROM case_entity_links cel
-        INNER JOIN nfrs n ON n.recordId = cel.entityRecordId
-        WHERE cel.caseRecordId = %s AND cel.entityType = 'nfr'
+        INNER JOIN mantis m ON m.recordId = cel.entityRecordId
+        WHERE cel.caseRecordId = %s AND cel.entityType = 'mantis'
         ORDER BY cel.createdAt DESC
         LIMIT 1
         """,
@@ -559,7 +566,7 @@ async def sync_case_primary_links(record_id: str, actor_display_name: str) -> No
     )
     knock_link = await execute_query(
         """
-        SELECT k.recordId, k.knockId
+        SELECT k.knockId
         FROM case_entity_links cel
         INNER JOIN knocks k ON k.recordId = cel.entityRecordId
         WHERE cel.caseRecordId = %s AND cel.entityType = 'knock'
@@ -576,24 +583,16 @@ async def sync_case_primary_links(record_id: str, actor_display_name: str) -> No
         SET account = %s,
             product = %s,
             project = %s,
-            nfrRecordId = %s,
-            knockRecordId = %s,
             mantisId = %s,
-            knockId = %s,
-            updatedAt = %s,
-            updatedBy = %s
+            knockId = %s
         WHERE recordId = %s
         """,
         [
             account_link["entityRecordId"] if account_link else None,
             product_link["entityRecordId"] if product_link else None,
             project_link["entityRecordId"] if project_link else None,
-            nfr_link["recordId"] if nfr_link else None,
-            knock_link["recordId"] if knock_link else None,
-            nfr_link["mantisId"] if nfr_link else None,
+            mantis_link["mantisId"] if mantis_link else None,
             knock_link["knockId"] if knock_link else None,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            actor_display_name,
             record_id,
         ],
     )
@@ -630,12 +629,12 @@ async def build_case_links_payload(record_id: str) -> dict:
         """,
         [record_id],
     )
-    linked_nfrs = await execute_query(
+    linked_mantis = await execute_query(
         """
-        SELECT n.*
+        SELECT m.*
         FROM case_entity_links cel
-        INNER JOIN nfrs n ON n.recordId = cel.entityRecordId
-        WHERE cel.caseRecordId = %s AND cel.entityType = 'nfr'
+        INNER JOIN mantis m ON m.recordId = cel.entityRecordId
+        WHERE cel.caseRecordId = %s AND cel.entityType = 'mantis'
         ORDER BY cel.createdAt DESC
         """,
         [record_id],
@@ -655,44 +654,115 @@ async def build_case_links_payload(record_id: str) -> dict:
         "accounts": [normalize_record(row) for row in linked_accounts],
         "products": [normalize_record(row) for row in linked_products],
         "projects": [normalize_record(row) for row in linked_projects],
-        "nfrs": [normalize_record(row) for row in linked_nfrs],
+        "mantis": [normalize_record(row) for row in linked_mantis],
         "knocks": [normalize_record(row) for row in linked_knocks],
     }
 
 
 async def build_linked_cases_payload(entity_type: str, entity_record_id: str, actor: dict) -> list[dict]:
     cases_rows = await execute_query(
-        """
-        SELECT c.*
+        f"""
+        SELECT {CASE_SELECT}
         FROM case_entity_links cel
         INNER JOIN cases c ON c.recordId = cel.caseRecordId
         WHERE cel.entityType = %s AND cel.entityRecordId = %s
-        ORDER BY c.updatedAt DESC
+        ORDER BY c.recordId DESC
         """,
         [entity_type, entity_record_id],
     )
 
-    return [normalize_record(row) for row in cases_rows if _case_is_visible_to_actor(row, actor)]
+    visible_cases = []
+    for row in cases_rows:
+        if await _case_is_visible_to_actor(row, actor):
+            visible_cases.append(normalize_record(row))
+    return visible_cases
 
 
-def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
+def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, list[str]]:
+    if actor.get("role") == "admin":
+        return "1=1", []
+
+    actor_name = (actor.get("displayName") or "").strip().lower()
+    actor_vertical = (actor.get("vertical") or "").strip()
+    qualifier = f"{case_alias}." if case_alias else ""
+    conditions = []
+    params: list[str] = []
+
+    if actor_name:
+        conditions.append(f"(LOWER(TRIM({qualifier}`seOwner`)) = %s OR LOWER(TRIM({qualifier}`assignedTo`)) = %s)")
+        params.extend([actor_name, actor_name])
+
+    if actor_vertical:
+        conditions.append(
+            f"""
+            (
+              EXISTS (
+                SELECT 1
+                FROM accounts visible_account
+                WHERE visible_account.recordId = {qualifier}`account`
+                  AND visible_account.vertical = %s
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM case_entity_links visible_link
+                INNER JOIN accounts linked_account ON linked_account.recordId = visible_link.entityRecordId
+                WHERE visible_link.caseRecordId = {qualifier}`recordId`
+                  AND visible_link.entityType = 'account'
+                  AND linked_account.vertical = %s
+              )
+            )
+            """
+        )
+        params.extend([actor_vertical, actor_vertical])
+
+    if not conditions:
+        return "1=0", []
+
+    return f"({' OR '.join(conditions)})", params
+
+
+async def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
     if actor.get("role") == "admin":
         return True
 
     actor_name = (actor.get("displayName") or "").strip().lower()
-    if not actor_name:
+    if actor_name:
+        visible_values = [case_record.get("seOwner"), case_record.get("assignedTo")]
+        if any((value or "").strip().lower() == actor_name for value in visible_values):
+            return True
+
+    actor_vertical = (actor.get("vertical") or "").strip()
+    if not actor_vertical:
         return False
 
-    visible_values = [
-        case_record.get("assignedTo"),
-        case_record.get("seOwner"),
-        case_record.get("caseOwner"),
-        case_record.get("ownedBy"),
-        case_record.get("createdBy"),
-        case_record.get("updatedBy"),
-    ]
+    visible_account = await execute_query(
+        """
+        SELECT 1
+        FROM accounts a
+        WHERE a.recordId = %s
+          AND a.vertical = %s
+        LIMIT 1
+        """,
+        [case_record.get("account"), actor_vertical],
+        fetch_one=True,
+    )
+    if visible_account:
+        return True
 
-    return any((value or "").strip().lower() == actor_name for value in visible_values)
+    visible_linked_account = await execute_query(
+        """
+        SELECT 1
+        FROM case_entity_links cel
+        INNER JOIN accounts a ON a.recordId = cel.entityRecordId
+        WHERE cel.caseRecordId = %s
+          AND cel.entityType = 'account'
+          AND a.vertical = %s
+        LIMIT 1
+        """,
+        [case_record.get("recordId"), actor_vertical],
+        fetch_one=True,
+    )
+    return bool(visible_linked_account)
 
 
 @router.get("", response_model=List[CaseRecord])
@@ -705,38 +775,35 @@ async def list_cases(
     """List all cases with optional search and pagination."""
 
     actor = await require_auth_user(request)
-    
     where_parts = ["1=1"]
     params = []
 
-    if actor.get("role") != "admin":
-        where_parts.append("(`assignedTo` = %s OR `seOwner` = %s OR `caseOwner` = %s OR `ownedBy` = %s OR `createdBy` = %s OR `updatedBy` = %s)")
-        params.extend([actor["displayName"]] * 6)
-    
-    # Search across defined fields
+    visibility_clause, visibility_params = _case_visibility_clause(actor)
+    where_parts.append(visibility_clause)
+    params.extend(visibility_params)
+
     if q:
         search_conditions = [f"`{field}` LIKE %s" for field in SEARCH_FIELDS]
         where_parts.append(f"({' OR '.join(search_conditions)})")
         params.extend([f"%{q}%" for _ in SEARCH_FIELDS])
-    
-    # Additional filters
+
     for field, value in request.query_params.items():
-        if value is not None and field not in ["limit", "offset"]:
+        if field in CASE_FIELDS and value is not None:
             where_parts.append(f"`{field}` = %s")
             params.append(value)
-    
+
     where_clause = " AND ".join(where_parts)
-    
     sql = f"""
-        SELECT * FROM cases 
+        SELECT {CASE_SELECT}
+        FROM cases
         WHERE {where_clause}
-        ORDER BY createdAt DESC
+        ORDER BY recordId DESC
         LIMIT %s OFFSET %s
     """
     params.extend([limit, offset])
-    
+
     results = await execute_query(sql, params)
-    return [normalize_record(r) for r in results]
+    return [normalize_record(row) for row in results]
 
 
 @router.get("/linked")
@@ -745,6 +812,8 @@ async def get_linked_cases(request: Request, entityType: str = Query(...), entit
     await ensure_case_link_tables()
 
     entity_type = entityType.strip().lower()
+    if entity_type == "nfr":
+        entity_type = "mantis"
     if entity_type not in CASE_LINK_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported entity type")
 
@@ -757,289 +826,119 @@ async def get_linked_cases(request: Request, entityType: str = Query(...), entit
 
 @router.get("/{recordId}", response_model=CaseRecord)
 async def get_case(recordId: str, request: Request) -> CaseRecord:
-    """Get case detail with all related information."""
+    """Get case detail."""
+
     actor = await require_auth_user(request)
-    sql = "SELECT * FROM cases WHERE recordId = %s"
-    result = await execute_query(sql, [recordId], fetch_one=True)
-    
-    if not result:
+    result = await get_case_or_404(recordId)
+    if not await _case_is_visible_to_actor(result, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    if not _case_is_visible_to_actor(result, actor):
-        raise HTTPException(status_code=404, detail="Case not found")
-    
     return normalize_record(result)
 
 
 @router.post("", response_model=CaseRecord)
 async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
     """Create a new case."""
+
     actor = await require_auth_user(request)
     await ensure_case_link_tables()
 
     record_id = generate_record_id("REC", "cases")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     payload = _case_payload(data)
-    payload = await _resolve_case_reference_fields(payload)
-    actor_display_name = actor["displayName"]
-    
-    history = [
-        build_history_entry(
-            action="Created",
-            changes="Case created",
-            user=actor_display_name
-        )
-    ]
-    
-    sql = """
+
+    sql = f"""
         INSERT INTO cases (
-            recordId, moduleId, recordRevision, metaData, ownedBy,
-            createdAt, createdBy, updatedAt, updatedBy,
-            description, previousStatus, closeDate, status, priority,
-            category, caseOwner, assignedTo, product, account, project,
-            nfrRecordId, knockRecordId, knockId, mantisId,
-            escalationNote, escalationType, seOwner, history
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            recordId, account, project, category, escalationType, escalationNote,
+            product, closeDate, description, seOwner, assignedTo, priority, status, knockId, mantisId, history
+        ) VALUES ({', '.join(['%s'] * (len(CASE_FIELDS) + 1))})
     """
-    
-    params = [
-        record_id,
-        "MOD-CASE",
-        "1.0",
-        payload["metaData"],
-        actor_display_name,
-        now,
-        actor_display_name,
-        now,
-        actor_display_name,
-        payload["description"],
-        payload["previousStatus"],
-        payload["closeDate"],
-        payload["status"],
-        payload["priority"],
-        payload["category"],
-        payload["caseOwner"],
-        payload["assignedTo"],
-        payload["product"],
-        payload["account"],
-        payload["project"],
-        payload["nfrRecordId"],
-        payload["knockRecordId"],
-        payload["knockId"],
-        payload["mantisId"],
-        payload["escalationNote"],
-        payload["escalationType"],
-        payload["seOwner"],
-        json.dumps(history),
-    ]
-    
+    history = [build_history_entry("Created", "Case created", user=actor["displayName"])]
+    params = [record_id, *[payload[field] for field in CASE_DATA_FIELDS], json.dumps(history)]
+
     await execute_mutation(sql, params)
-    await _add_case_links_from_payload(record_id, payload, actor_display_name)
-    
-    # Fetch and return created record
-    result = await execute_query(
-        "SELECT * FROM cases WHERE recordId = %s",
-        [record_id],
-        fetch_one=True
-    )
+    await _add_case_links_from_payload(record_id, payload, actor["displayName"])
+
+    result = await get_case_or_404(record_id)
     return normalize_record(result)
 
 
 @router.put("/{recordId}", response_model=CaseRecord)
 async def update_case(recordId: str, data: CaseCreate, request: Request) -> CaseRecord:
     """Update a case."""
+
     actor = await require_auth_user(request)
-    
-    # Check if case exists
-    existing = await execute_query(
-        "SELECT * FROM cases WHERE recordId = %s",
-        [recordId],
-        fetch_one=True
-    )
-    
-    if not existing:
+    existing = await get_case_or_404(recordId)
+    if not await _case_is_visible_to_actor(existing, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    if not _case_is_visible_to_actor(existing, actor):
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     payload = _case_payload(data)
-    payload = await _resolve_case_reference_fields(payload)
-
-    history = existing.get("history", [])
-    if isinstance(history, str):
-        history = json.loads(history) if history else []
-
-    update_payload = {
-        "description": payload["description"],
-        "previousStatus": payload["previousStatus"],
-        "closeDate": payload["closeDate"],
-        "status": payload["status"],
-        "priority": payload["priority"],
-        "category": payload["category"],
-        "caseOwner": payload["caseOwner"],
-        "assignedTo": payload["assignedTo"],
-        "product": payload["product"],
-        "account": payload["account"],
-        "project": payload["project"],
-        "nfrRecordId": payload["nfrRecordId"],
-        "knockRecordId": payload["knockRecordId"],
-        "knockId": payload["knockId"],
-        "mantisId": payload["mantisId"],
-        "escalationNote": payload["escalationNote"],
-        "escalationType": payload["escalationType"],
-        "seOwner": payload["seOwner"],
-        "metaData": payload["metaData"],
-    }
-
+    history = _history_from_record(existing)
     history.extend(
         build_update_history_entries(
             existing,
-            update_payload,
+            payload,
             actor["displayName"],
-            field_labels={
-                "description": "Description",
-                "previousStatus": "Previous Status",
-                "closeDate": "Close Date",
-                "status": "Status",
-                "priority": "Priority",
-                "category": "Category",
-                "caseOwner": "Case Owner",
-                "assignedTo": "Assigned To",
-                "product": "Product",
-                "account": "Account",
-                "project": "Project",
-                "nfrRecordId": "NFR",
-                "knockRecordId": "Knock",
-                "knockId": "Knock ID",
-                "mantisId": "Mantis ID",
-                "escalationNote": "Escalation Note",
-                "escalationType": "Escalation Type",
-                "seOwner": "SE Owner",
-                "metaData": "Metadata",
-            },
+            field_labels=CASE_FIELD_LABELS,
         )
     )
 
-    if not history:
-        history.append(build_history_entry("Updated", "Case updated", user=actor["displayName"]))
-    
-    
-    sql = """
-        UPDATE cases SET
-            description = %s, previousStatus = %s, closeDate = %s,
-            status = %s, priority = %s, category = %s,
-            caseOwner = %s, assignedTo = %s, product = %s, account = %s, project = %s,
-            nfrRecordId = %s, knockRecordId = %s, knockId = %s,
-            mantisId = %s, escalationNote = %s,
-            escalationType = %s, seOwner = %s, metaData = %s,
-            updatedAt = %s, updatedBy = %s, history = %s
-        WHERE recordId = %s
-    """
-    
-    params = [
-        payload["description"],
-        payload["previousStatus"],
-        payload["closeDate"],
-        payload["status"],
-        payload["priority"],
-        payload["category"],
-        payload["caseOwner"],
-        payload["assignedTo"],
-        payload["product"],
-        payload["account"],
-        payload["project"],
-        payload["nfrRecordId"],
-        payload["knockRecordId"],
-        payload["knockId"],
-        payload["mantisId"],
-        payload["escalationNote"],
-        payload["escalationType"],
-        payload["seOwner"],
-        payload["metaData"],
-        now,
-        actor["displayName"],
-        json.dumps(history),
-        recordId,
-    ]
-    
+    update_fields = [*CASE_DATA_FIELDS, "history"]
+    assignments = ", ".join(f"`{field}` = %s" for field in update_fields)
+    sql = f"UPDATE cases SET {assignments} WHERE recordId = %s"
+    params = [payload[field] for field in CASE_DATA_FIELDS]
+    params.append(json.dumps(history))
+    params.append(recordId)
+
     await execute_mutation(sql, params)
-    
-    # Fetch and return updated record
-    result = await execute_query(
-        "SELECT * FROM cases WHERE recordId = %s",
-        [recordId],
-        fetch_one=True
+    await _remove_cleared_case_links(recordId, payload)
+    await _add_case_links_from_payload(recordId, payload, actor["displayName"])
+
+    result = await get_case_or_404(recordId)
+    return normalize_record(result)
+
+
+@router.post("/{recordId}/history", response_model=CaseRecord)
+async def add_case_history(recordId: str, entry: HistoryEntryCreate, request: Request) -> CaseRecord:
+    """Append a comment/history entry to a visible case."""
+
+    actor = await require_auth_user(request)
+    existing = await get_case_or_404(recordId)
+    if not await _case_is_visible_to_actor(existing, actor):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    history = _history_from_record(existing)
+    history.append(
+        build_history_entry(
+            action=entry.action,
+            changes=entry.changes,
+            user=entry.user or actor["displayName"],
+            field=entry.field,
+            previous_value=entry.previousValue,
+            new_value=entry.newValue,
+        )
     )
+
+    await execute_mutation(
+        "UPDATE cases SET history = %s WHERE recordId = %s",
+        [json.dumps(history), recordId],
+    )
+
+    result = await get_case_or_404(recordId)
     return normalize_record(result)
 
 
 @router.delete("/{recordId}")
 async def delete_case(recordId: str, request: Request):
     """Delete a case."""
+
     actor = await require_auth_user(request)
-    
-    # Check if exists
-    existing = await execute_query(
-        "SELECT * FROM cases WHERE recordId = %s",
-        [recordId],
-        fetch_one=True
-    )
-    
-    if not existing:
+    existing = await get_case_or_404(recordId)
+    if not await _case_is_visible_to_actor(existing, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    if not _case_is_visible_to_actor(existing, actor):
-        raise HTTPException(status_code=404, detail="Case not found")
-    
+    await execute_mutation("DELETE FROM case_entity_links WHERE caseRecordId = %s", [recordId])
     await execute_mutation("DELETE FROM cases WHERE recordId = %s", [recordId])
     return {"status": "deleted", "recordId": recordId}
-
-
-@router.post("/{recordId}/history", response_model=CaseRecord)
-async def add_case_history(recordId: str, request: Request, entry: HistoryEntryCreate) -> CaseRecord:
-    """Add a history entry to a case."""
-    actor = await require_auth_user(request)
-    
-    # Get existing record
-    existing = await execute_query(
-        "SELECT * FROM cases WHERE recordId = %s",
-        [recordId],
-        fetch_one=True
-    )
-    
-    if not existing:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    if not _case_is_visible_to_actor(existing, actor):
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    # Parse and add to history
-    history = existing.get("history", [])
-    if isinstance(history, str):
-        history = json.loads(history) if history else []
-    
-    history.append(build_history_entry(
-        action=entry.action,
-        changes=entry.changes,
-        user=entry.user
-    ))
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    await execute_mutation(
-        "UPDATE cases SET history = %s, updatedAt = %s, updatedBy = %s WHERE recordId = %s",
-        [json.dumps(history), now, entry.user, recordId]
-    )
-    
-    # Return updated record
-    result = await execute_query(
-        "SELECT * FROM cases WHERE recordId = %s",
-        [recordId],
-        fetch_one=True
-    )
-    return normalize_record(result)
 
 
 @router.get("/{recordId}/links")
@@ -1048,7 +947,7 @@ async def get_case_links(recordId: str, request: Request) -> dict:
     await ensure_case_link_tables()
 
     case_row = await get_case_or_404(recordId)
-    if not _case_is_visible_to_actor(case_row, actor):
+    if not await _case_is_visible_to_actor(case_row, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
     await sync_case_primary_links(recordId, actor["displayName"])
@@ -1061,10 +960,12 @@ async def add_case_link(recordId: str, request: Request, payload: CaseLinkReques
     await ensure_case_link_tables()
 
     case_row = await get_case_or_404(recordId)
-    if not _case_is_visible_to_actor(case_row, actor):
+    if not await _case_is_visible_to_actor(case_row, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
     entity_type = payload.entityType.strip().lower()
+    if entity_type == "nfr":
+        entity_type = "mantis"
     if entity_type not in CASE_LINK_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported entity type")
 
@@ -1076,7 +977,7 @@ async def add_case_link(recordId: str, request: Request, payload: CaseLinkReques
         "account": "accounts",
         "product": "products",
         "project": "projects",
-        "nfr": "nfrs",
+        "mantis": "mantis",
         "knock": "knocks",
     }
     target = await execute_query(
@@ -1087,13 +988,7 @@ async def add_case_link(recordId: str, request: Request, payload: CaseLinkReques
     if not target:
         raise HTTPException(status_code=404, detail="Linked entity not found")
 
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        VALUES (%s, %s, %s, NOW(), %s)
-        """,
-        [recordId, entity_type, entity_record_id, actor["displayName"]],
-    )
+    await _upsert_case_entity_link(recordId, entity_type, entity_record_id, actor["displayName"])
 
     await sync_case_primary_links(recordId, actor["displayName"])
     return await build_case_links_payload(recordId)
@@ -1105,10 +1000,12 @@ async def remove_case_link(recordId: str, entityType: str, entityRecordId: str, 
     await ensure_case_link_tables()
 
     case_row = await get_case_or_404(recordId)
-    if not _case_is_visible_to_actor(case_row, actor):
+    if not await _case_is_visible_to_actor(case_row, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
     entity_type = entityType.strip().lower()
+    if entity_type == "nfr":
+        entity_type = "mantis"
     if entity_type not in CASE_LINK_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported entity type")
 

@@ -1,12 +1,12 @@
-# NFR Ubuntu Setup Guide
+# Mantis Ubuntu Setup Guide
 
-This is the quick path for running the NFR app on Ubuntu. It keeps the existing `README.md` untouched and focuses only on local Ubuntu setup.
+This is the quick path for running the Mantis app on Ubuntu. It focuses only on local Ubuntu setup.
 
 ## What You Will Run
 
 - Frontend: React + Vite at `http://localhost:5173`
 - Backend: FastAPI at `http://localhost:4000`
-- Database: MySQL database named `nfr`
+- Database: MySQL database named `mantis`
 
 ## 1. Install System Dependencies
 
@@ -36,7 +36,7 @@ mysql --version
 Go to this repository before running the remaining commands:
 
 ```bash
-cd /path/to/NFR
+cd /path/to/Mantis
 ```
 
 ## 2. Start MySQL
@@ -54,9 +54,9 @@ From the repository root:
 
 ```bash
 sudo mysql <<'SQL'
-CREATE DATABASE IF NOT EXISTS nfr;
-CREATE USER IF NOT EXISTS 'nfr_user'@'localhost' IDENTIFIED BY 'nfr_password';
-GRANT ALL PRIVILEGES ON nfr.* TO 'nfr_user'@'localhost';
+CREATE DATABASE IF NOT EXISTS mantis;
+CREATE USER IF NOT EXISTS 'mantis_user'@'localhost' IDENTIFIED BY 'mantis_password';
+GRANT ALL PRIVILEGES ON mantis.* TO 'mantis_user'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 ```
@@ -65,7 +65,7 @@ Import the schema and seed data:
 
 ```bash
 sudo mysql < Backend/sql/schema.sql
-sudo mysql nfr < Backend/sql/seed.sql
+sudo mysql mantis < Backend/sql/seed.sql
 ```
 
 ## 4. Set Up the Backend
@@ -86,9 +86,9 @@ Create `Backend/.env`:
 cat > .env <<'EOF'
 DB_HOST=localhost
 DB_PORT=3306
-DB_USER=nfr_user
-DB_PASSWORD=nfr_password
-DB_NAME=nfr
+DB_USER=mantis_user
+DB_PASSWORD=mantis_password
+DB_NAME=mantis
 
 HOST=0.0.0.0
 PORT=4000
@@ -153,7 +153,7 @@ Open that URL in your browser.
 The backend creates a default admin user on startup:
 
 ```text
-Email: admin@nfr.local
+Email: admin@local
 Password: Admin123!
 ```
 

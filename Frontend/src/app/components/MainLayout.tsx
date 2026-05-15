@@ -1,15 +1,17 @@
-import { useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
-import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, Home, Info, LogOut, Package, PlusCircle, Search, User, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, Home, Info, LogOut, Package, Search, User, X } from "lucide-react";
 import { useSearch } from "../context/SearchContext";
 import { useAuth } from "../context/AuthContext";
 import { formatRoleLabel } from "../data/roleLabels";
+import { formatTimestampMinute } from "../utils/dateTime";
 import {
   clearAllNotifications as clearAllNotificationsApi,
   dismissNotification as dismissNotificationApi,
   getRecentNotifications,
   type Notification,
 } from "../data/apiClient";
+import { createOpenDetailState, getDetailRoute, type DetailEntityType } from "../navigation/detailNavigation";
 
 const navItems = [
   { path: "/", label: "Home", icon: Home, exact: true },
@@ -18,10 +20,9 @@ const navItems = [
   { path: "/cases", label: "Cases", icon: Briefcase },
   { path: "/accounts", label: "Accounts", icon: Building2 },
   { path: "/projects", label: "Projects", icon: FolderKanban },
-  { path: "/nfr", label: "NFR", icon: FileText },
+  { path: "/mantis", label: "Mantis", icon: FileText },
   { path: "/knock", label: "Knock", icon: Hammer },
-  { path: "/product", label: "Product", icon: Package },
-  { path: "/create-data", label: "Create Data", icon: PlusCircle },
+  { path: "/product", label: "Products", icon: Package },
 ];
 
 export function MainLayout() {
@@ -49,8 +50,8 @@ export function MainLayout() {
 
     fetchNotifications();
 
-    // Poll for new notifications every 30 seconds
-    const interval = setInterval(fetchNotifications, 30000);
+    // Poll for new notifications every 60 seconds
+    const interval = setInterval(fetchNotifications, 60000);
 
     return () => clearInterval(interval);
   }, [token]);
@@ -58,33 +59,12 @@ export function MainLayout() {
   const handleNotificationClick = (notification: Notification) => {
     if (!notification.entityType || !notification.entityId) return;
 
-    const routeMap: Record<string, string> = {
-      'case': '/cases',
-      'project': '/projects',
-      'account': '/accounts',
-      'nfr': '/nfr',
-      'knock': '/knock',
-      'product': '/product',
-    };
-
-    const eventMap: Record<string, string> = {
-      'case': 'openCaseDetail',
-      'project': 'openProjectDetail',
-      'account': 'openAccountDetail',
-      'nfr': 'openNfrDetail',
-      'knock': 'openKnockDetail',
-      'product': 'openProductDetail',
-    };
-
-    const path = routeMap[notification.entityType];
-    const eventName = eventMap[notification.entityType];
+    const entityType = notification.entityType as DetailEntityType;
+    const path = getDetailRoute(entityType);
     
-    if (path && eventName) {
-      navigate(path);
+    if (path) {
+      navigate(path, { state: createOpenDetailState(entityType, notification.entityId) });
       setShowNotifications(false);
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent(eventName, { detail: notification.entityId }));
-      }, 100);
       dismissNotification(notification.id);
     }
   };
@@ -107,6 +87,11 @@ export function MainLayout() {
     }
 
     setNotifications([]);
+  };
+
+  const handleSidebarNavigation = (event: MouseEvent<HTMLAnchorElement>, path: string) => {
+    event.preventDefault();
+    navigate(path, { state: { listViewKey: Date.now() } });
   };
 
   const getNotificationIcon = (type: Notification["type"]) => {
@@ -133,7 +118,7 @@ export function MainLayout() {
       { path: "/cases", patterns: [/^rec-/, /case/, /priority/, /status/, /escalat/, /category/, /se owner/, /account/, /product/, /project/, /knock/, /mantis/] },
       { path: "/accounts", patterns: [/^acc-/, /account/, /customer/, /organization/, /website/, /vertical/, /enterprise/, /mid-market/, /startup/] },
       { path: "/projects", patterns: [/^prj-/, /project/, /stage/, /sfdc/, /solution consultant/, /account/] },
-      { path: "/nfr", patterns: [/^nfr-/, /nfr/, /feature request/, /mantis/] },
+      { path: "/mantis", patterns: [/^mantis-/, /^mant-/, /mantis/, /feature request/] },
       { path: "/knock", patterns: [/^knock-/, /^knk-/, /knock/, /request/, /integration/] },
       { path: "/product", patterns: [/^prd-/, /product/, /catalog/, /url/, /family/] },
       { path: "/reports", patterns: [/report/, /dashboard/, /metric/, /trend/, /activity/] },
@@ -158,7 +143,7 @@ export function MainLayout() {
             </div>
             <div>
               <h1 className="font-bold text-lg text-white">Fortinet</h1>
-              <p className="text-xs text-gray-400">NFR System</p>
+              <p className="text-xs text-gray-400">Case Management</p>
             </div>
           </div>
         </div>
@@ -169,6 +154,7 @@ export function MainLayout() {
               key={item.path}
               to={item.path}
               end={item.exact}
+              onClick={(event) => handleSidebarNavigation(event, item.path)}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors ${
                   isActive
@@ -190,7 +176,7 @@ export function MainLayout() {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col">
+      <div className="min-w-0 flex-1 flex flex-col">
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm">
           <div className="flex-1 max-w-xl">
             <div className="relative">
@@ -251,7 +237,7 @@ export function MainLayout() {
                                 <p className="text-sm text-gray-900 font-medium">{notif.message}</p>
                               </div>
                               <p className="text-xs text-gray-500 mt-1">
-                                {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {formatTimestampMinute(notif.timestamp)}
                               </p>
                             </div>
                             <button 
@@ -303,7 +289,7 @@ export function MainLayout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-6 bg-gradient-to-br from-gray-50 to-gray-100">
+        <main className="min-w-0 flex-1 overflow-auto p-6 bg-gradient-to-br from-gray-50 to-gray-100">
           <Outlet />
         </main>
       </div>

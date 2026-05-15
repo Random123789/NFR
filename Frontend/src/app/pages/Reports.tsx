@@ -36,7 +36,6 @@ import {
   getCustomReports,
   getReportBuilderSchema,
   previewReportQuery,
-  runCustomReport,
   updateCustomReport,
   type CustomReportInput,
   type CustomReportRecord,
@@ -51,6 +50,13 @@ import {
 } from "../data/apiClient";
 import { chartColors } from "../data/recordStyles";
 
+type ReportPageFilters = {
+  dateRange: "all-time" | "7d" | "30d" | "90d";
+  owner: string;
+  status: string;
+  priority: string;
+};
+
 const defaultFilters = {
   dateRange: "all-time",
   owner: "",
@@ -60,22 +66,39 @@ const defaultFilters = {
   product: "",
 };
 
+const DEFAULT_REPORT_PAGE_FILTERS: ReportPageFilters = {
+  dateRange: "all-time",
+  owner: "",
+  status: "",
+  priority: "",
+};
+
+const REPORT_DATE_RANGE_OPTIONS: Array<{ value: ReportPageFilters["dateRange"]; label: string }> = [
+  { value: "all-time", label: "All time" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "90d", label: "Last 90 days" },
+];
+
+const REPORT_STATUS_OPTIONS = ["New", "Acknowledged", "Escalated", "Monitoring", "Closed-Resolved", "Closed-Dead"];
+const REPORT_PRIORITY_OPTIONS = ["Very Low", "Low", "Medium", "High", "Very High"];
+
 const TABLE_FIELD_PRESETS: Record<string, string[]> = {
-  cases: ["cases.recordId", "cases.createdAt", "cases.updatedAt", "cases.status", "cases.priority", "cases.caseOwner", "cases.assignedTo", "cases.nfrRecordId", "cases.knockRecordId"],
-  accounts: ["accounts.recordId", "accounts.accountName", "accounts.type", "accounts.vertical", "accounts.createdAt", "accounts.updatedAt"],
-  projects: ["projects.recordId", "projects.projectName", "projects.stage", "projects.se", "projects.startDate", "projects.closeDate"],
-  products: ["products.recordId", "products.productName", "products.productFamily", "products.createdAt", "products.updatedAt"],
-  nfrs: ["nfrs.recordId", "nfrs.mantisId", "nfrs.nfrStatus", "nfrs.nfrRequestDate", "nfrs.nfrTargetDate"],
+  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.assignedTo", "cases.seOwner", "cases.closeDate", "cases.mantisId", "cases.knockId"],
+  accounts: ["accounts.accountName", "accounts.type", "accounts.vertical", "accounts.website"],
+  projects: ["projects.projectName", "projects.accountId", "projects.startDate", "projects.closeDate", "projects.seOwner", "projects.isClosed", "projects.stage", "projects.sfdc", "projects.sfdcValue"],
+  products: ["products.recordId", "products.productName", "products.productFamily", "products.description", "products.createdAt", "products.updatedAt"],
+  mantis: ["mantis.recordId", "mantis.mantisId", "mantis.category", "mantis.mantisStatus", "mantis.mantisRequestDate", "mantis.mantisTargetDate"],
   knocks: ["knocks.recordId", "knocks.knockId", "knocks.status", "knocks.requestDate", "knocks.targetDate"],
 };
 
 const JOIN_FIELD_PRESETS: Record<string, string[]> = {
   accounts: ["accounts.accountName", "accounts.type", "accounts.vertical"],
-  projects: ["projects.projectName", "projects.stage", "projects.se"],
-  products: ["products.productName", "products.productFamily"],
-  nfrs: ["nfrs.mantisId", "nfrs.nfrStatus", "nfrs.nfrTargetDate"],
+  projects: ["projects.projectName", "projects.stage", "projects.seOwner"],
+  products: ["products.productName", "products.productFamily", "products.description"],
+  mantis: ["mantis.mantisId", "mantis.category", "mantis.mantisStatus", "mantis.mantisTargetDate"],
   knocks: ["knocks.knockId", "knocks.status", "knocks.targetDate"],
-  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.createdAt"],
+  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.closeDate"],
 };
 
 function createDefaultQuerySpec(base = "cases"): ReportQuerySpec {
@@ -134,7 +157,7 @@ function getScopedFields(schema: ReportBuilderSchema | null, spec: ReportQuerySp
 }
 
 function getDefaultGroupBy(schema: ReportBuilderSchema | null, base: string) {
-  const preferred = ["cases.status", "accounts.accountName", "projects.stage", "products.productFamily", "nfrs.nfrStatus", "knocks.status"];
+  const preferred = ["cases.status", "accounts.accountName", "projects.stage", "products.productFamily", "mantis.mantisStatus", "knocks.status"];
   const source = getSource(schema, base);
   return preferred.find((field) => fieldSource(field) === base && source?.fields.some((option) => option.key === field)) ?? source?.fields[0]?.key ?? `${base}.recordId`;
 }
@@ -155,6 +178,65 @@ function getDefaultJoinFields(schema: ReportBuilderSchema | null, sourceKey: str
 
 function uniqueFields(fields: string[]) {
   return [...new Set(fields)];
+}
+
+function formatDateForReportFilter(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDateRangeStart(dateRange: ReportPageFilters["dateRange"]) {
+  if (dateRange === "all-time") return null;
+
+  const days = dateRange === "7d" ? 7 : dateRange === "30d" ? 30 : 90;
+  const start = new Date();
+  start.setDate(start.getDate() - days);
+  return formatDateForReportFilter(start);
+}
+
+function hasReportPageFilters(filters: ReportPageFilters) {
+  return Boolean(filters.owner.trim() || filters.status || filters.priority || filters.dateRange !== "all-time");
+}
+
+function areReportPageFiltersEqual(left: ReportPageFilters, right: ReportPageFilters) {
+  return (
+    left.dateRange === right.dateRange &&
+    left.owner === right.owner &&
+    left.status === right.status &&
+    left.priority === right.priority
+  );
+}
+
+function applyReportPageFilters(spec: ReportQuerySpec, filters: ReportPageFilters): ReportQuerySpec {
+  const filterRules: ReportFilterRule[] = [];
+  const dateStart = getDateRangeStart(filters.dateRange);
+
+  if (dateStart) {
+    filterRules.push({ field: "cases.closeDate", operator: "gte", value: dateStart });
+  }
+
+  if (filters.owner.trim()) {
+    filterRules.push({ field: "cases.assignedTo", operator: "contains", value: filters.owner.trim() });
+  }
+
+  if (filters.status) {
+    filterRules.push({ field: "cases.status", operator: "eq", value: filters.status });
+  }
+
+  if (filters.priority) {
+    filterRules.push({ field: "cases.priority", operator: "eq", value: filters.priority });
+  }
+
+  if (filterRules.length === 0) {
+    return spec;
+  }
+
+  return {
+    ...spec,
+    filters: [...spec.filters, ...filterRules],
+  };
 }
 
 function describeReport(schema: ReportBuilderSchema | null, report: CustomReportRecord) {
@@ -292,12 +374,17 @@ export function Reports() {
   const [previewResult, setPreviewResult] = useState<ReportRunResult | null>(null);
   const [reportResults, setReportResults] = useState<Record<number, ReportRunResult>>({});
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const [showAdvancedJoins, setShowAdvancedJoins] = useState(false);
+  const [reportPageFilterDraft, setReportPageFilterDraft] = useState<ReportPageFilters>(DEFAULT_REPORT_PAGE_FILTERS);
+  const [reportPageFilters, setReportPageFilters] = useState<ReportPageFilters>(DEFAULT_REPORT_PAGE_FILTERS);
   const [error, setError] = useState<string | null>(null);
 
   const currentSpec = draftReport.querySpec ?? createDefaultQuerySpec();
   const baseSource = getSource(schema, currentSpec.base);
   const scopedFields = useMemo(() => getScopedFields(schema, currentSpec), [schema, currentSpec]);
   const orderedReports = useMemo(() => sortCustomReports(customReports), [customReports]);
+  const reportPageFiltersActive = hasReportPageFilters(reportPageFilters);
+  const reportPageFilterDraftChanged = !areReportPageFiltersEqual(reportPageFilterDraft, reportPageFilters);
 
   useEffect(() => {
     let cancelled = false;
@@ -324,7 +411,10 @@ export function Reports() {
   }, []);
 
   useEffect(() => {
-    if (customReports.length === 0) return;
+    if (customReports.length === 0) {
+      setReportResults({});
+      return;
+    }
 
     let cancelled = false;
 
@@ -332,7 +422,10 @@ export function Reports() {
       const entries = await Promise.all(
         customReports.map(async (report) => {
           try {
-            return [report.id, await runCustomReport(report.id)] as const;
+            return [
+              report.id,
+              await previewReportQuery(applyReportPageFilters(report.querySpec ?? createDefaultQuerySpec(), reportPageFilters)),
+            ] as const;
           } catch {
             return [report.id, undefined] as const;
           }
@@ -355,7 +448,7 @@ export function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [customReports]);
+  }, [customReports, reportPageFilters]);
 
   const updateSpec = (updater: (spec: ReportQuerySpec) => ReportQuerySpec) => {
     setDraftReport((current) => {
@@ -368,6 +461,21 @@ export function Reports() {
         querySpec: nextSpec,
       };
     });
+    setPreviewResult(null);
+  };
+
+  const updateReportPageFilterDraft = (patch: Partial<ReportPageFilters>) => {
+    setReportPageFilterDraft((current) => ({ ...current, ...patch }));
+  };
+
+  const applyReportPageFilterDraft = () => {
+    setReportPageFilters(reportPageFilterDraft);
+    setPreviewResult(null);
+  };
+
+  const resetReportPageFilters = () => {
+    setReportPageFilterDraft(DEFAULT_REPORT_PAGE_FILTERS);
+    setReportPageFilters(DEFAULT_REPORT_PAGE_FILTERS);
     setPreviewResult(null);
   };
 
@@ -438,7 +546,7 @@ export function Reports() {
     setLoadingPreview(true);
     setError(null);
     try {
-      const result = await previewReportQuery(draftReport.querySpec);
+      const result = await previewReportQuery(applyReportPageFilters(draftReport.querySpec, reportPageFilters));
       setPreviewResult(result);
     } catch (previewError) {
       setError(previewError instanceof Error ? previewError.message : "Failed to preview report");
@@ -463,7 +571,7 @@ export function Reports() {
     try {
       if (editingReportId !== null) {
         const updatedReport = await updateCustomReport(editingReportId, payload);
-        const result = await runCustomReport(updatedReport.id);
+        const result = await previewReportQuery(applyReportPageFilters(updatedReport.querySpec ?? createDefaultQuerySpec(), reportPageFilters));
         setCustomReports((currentReports) =>
           sortCustomReports(currentReports.map((report) => (report.id === editingReportId ? updatedReport : report))),
         );
@@ -471,7 +579,7 @@ export function Reports() {
         setEditingReportId(null);
       } else {
         const createdReport = await createCustomReport(payload);
-        const result = await runCustomReport(createdReport.id);
+        const result = await previewReportQuery(applyReportPageFilters(createdReport.querySpec ?? createDefaultQuerySpec(), reportPageFilters));
         setCustomReports((currentReports) => sortCustomReports([createdReport, ...currentReports]));
         setReportResults((current) => ({ ...current, [createdReport.id]: result }));
       }
@@ -589,7 +697,7 @@ export function Reports() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Reports & Analytics</h1>
-          <p className="mt-1 text-gray-600">Build saved reports from joined NFR records.</p>
+          <p className="mt-1 text-gray-600">Build saved reports from joined records.</p>
         </div>
       </div>
 
@@ -597,11 +705,100 @@ export function Reports() {
         <div className="border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
       ) : null}
 
+      <div className="border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <Filter className="h-4 w-4 text-[#E31937]" />
+            Page Filters
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={applyReportPageFilterDraft}
+              disabled={!reportPageFilterDraftChanged}
+              className="inline-flex items-center gap-1 bg-[#E31937] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#c41230] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Apply
+            </button>
+          {reportPageFiltersActive || reportPageFilterDraftChanged ? (
+            <button
+              type="button"
+              onClick={resetReportPageFilters}
+              className="inline-flex items-center gap-1 border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+            >
+              <X className="h-3.5 w-3.5" />
+              Reset
+            </button>
+          ) : null}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-gray-700">Date Range</span>
+            <select
+              value={reportPageFilterDraft.dateRange}
+              onChange={(event) => updateReportPageFilterDraft({ dateRange: event.target.value as ReportPageFilters["dateRange"] })}
+              className="w-full border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+            >
+              {REPORT_DATE_RANGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-gray-700">Case Owner</span>
+            <input
+              type="text"
+              value={reportPageFilterDraft.owner}
+              onChange={(event) => updateReportPageFilterDraft({ owner: event.target.value })}
+              placeholder="Any owner"
+              className="w-full border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-gray-700">Status</span>
+            <select
+              value={reportPageFilterDraft.status}
+              onChange={(event) => updateReportPageFilterDraft({ status: event.target.value })}
+              className="w-full border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+            >
+              <option value="">Any status</option>
+              {REPORT_STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-gray-700">Priority</span>
+            <select
+              value={reportPageFilterDraft.priority}
+              onChange={(event) => updateReportPageFilterDraft({ priority: event.target.value })}
+              className="w-full border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+            >
+              <option value="">Any priority</option>
+              {REPORT_PRIORITY_OPTIONS.map((priority) => (
+                <option key={priority} value={priority}>
+                  {priority}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
       <div className="border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-200 p-5">
           <div className="flex items-center gap-2">
             <Database className="h-5 w-5 text-[#E31937]" />
-            <h2 className="text-lg font-semibold text-gray-900">Custom Report Builder</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Report Builder</h2>
           </div>
         </div>
 
@@ -642,13 +839,13 @@ export function Reports() {
                     }}
                     className="w-full border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                   >
-                    <option value="aggregate">Summary chart</option>
-                    <option value="table">Details table</option>
+                    <option value="aggregate">Grouped summary</option>
+                    <option value="table">Record list</option>
                   </select>
                 </label>
 
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-gray-700">Width</span>
+                  <span className="mb-1 block text-sm font-medium text-gray-700">Layout</span>
                   <select
                     value={draftReport.layoutSpan}
                     onChange={(event) => setDraftReport({ ...draftReport, layoutSpan: Number(event.target.value) as 1 | 2 })}
@@ -662,7 +859,7 @@ export function Reports() {
 
               {currentSpec.mode === "aggregate" ? (
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-gray-700">Chart</span>
+                  <span className="mb-1 block text-sm font-medium text-gray-700">Chart Type</span>
                   <select
                     value={draftReport.chartType}
                     onChange={(event) => setDraftReport({ ...draftReport, chartType: event.target.value as ReportChartType })}
@@ -678,7 +875,7 @@ export function Reports() {
               <div className="border-t border-gray-200 pt-5">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900">
                   <Database className="h-4 w-4" />
-                  Start From
+                  Dataset
                 </div>
                 <select
                   value={currentSpec.base}
@@ -694,15 +891,24 @@ export function Reports() {
               </div>
 
               <div className="border-t border-gray-200 pt-5">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900">
-                  <Link2 className="h-4 w-4" />
-                  Include
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                    <Link2 className="h-4 w-4" />
+                    Related Data
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedJoins((current) => !current)}
+                    className="border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                  >
+                    {showAdvancedJoins ? "Hide Advanced" : "Advanced"}
+                  </button>
                 </div>
                 <div className="space-y-2">
                   {(baseSource?.joins ?? []).map((joinOption) => {
                     const selected = currentSpec.joins.find((join) => join.source === joinOption.source);
                     return (
-                      <div key={joinOption.source} className="grid grid-cols-[1fr_150px] gap-2">
+                      <div key={joinOption.source} className={showAdvancedJoins ? "grid grid-cols-[1fr_190px] gap-2" : "block"}>
                         <label className="flex items-center gap-2 border border-gray-200 px-3 py-2 text-sm text-gray-700">
                           <input
                             type="checkbox"
@@ -712,15 +918,17 @@ export function Reports() {
                           />
                           {joinOption.label}
                         </label>
-                        <select
-                          value={selected?.joinType ?? "left"}
-                          disabled={!selected}
-                          onChange={(event) => handleJoinTypeChange(joinOption.source, event.target.value as ReportJoinSpec["joinType"])}
-                          className="border border-gray-300 bg-white px-2 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-400"
-                        >
-                          <option value="left">Keep base</option>
-                          <option value="inner">Matches</option>
-                        </select>
+                        {showAdvancedJoins ? (
+                          <select
+                            value={selected?.joinType ?? "left"}
+                            disabled={!selected}
+                            onChange={(event) => handleJoinTypeChange(joinOption.source, event.target.value as ReportJoinSpec["joinType"])}
+                            className="border border-gray-300 bg-white px-2 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+                          >
+                            <option value="left">Include all records</option>
+                            <option value="inner">Only matching records</option>
+                          </select>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -730,7 +938,7 @@ export function Reports() {
               <div className="border-t border-gray-200 pt-5">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900">
                   {currentSpec.mode === "table" ? <Columns3 className="h-4 w-4" /> : <Table2 className="h-4 w-4" />}
-                  {currentSpec.mode === "table" ? "Fields" : "Group By"}
+                  {currentSpec.mode === "table" ? "Table Columns" : "Summarize By"}
                 </div>
 
                 {currentSpec.mode === "aggregate" ? (
@@ -778,7 +986,7 @@ export function Reports() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
                     <Filter className="h-4 w-4" />
-                    Filters
+                    Report Filters
                   </div>
                   <button
                     type="button"
@@ -846,7 +1054,7 @@ export function Reports() {
 
               <div className="grid grid-cols-2 gap-3 border-t border-gray-200 pt-5">
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-gray-700">Limit</span>
+                  <span className="mb-1 block text-sm font-medium text-gray-700">Row Limit</span>
                   <input
                     type="number"
                     min={1}
@@ -857,7 +1065,7 @@ export function Reports() {
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-gray-700">Sort</span>
+                  <span className="mb-1 block text-sm font-medium text-gray-700">Sort By</span>
                   <select
                     value={currentSpec.sortBy ?? (currentSpec.mode === "aggregate" ? "value" : currentSpec.fields[0] ?? "")}
                     onChange={(event) => updateSpec((spec) => ({ ...spec, sortBy: event.target.value }))}
@@ -918,8 +1126,8 @@ export function Reports() {
 
           <div className="p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="font-semibold text-gray-900">Preview</h3>
-              <span className="text-sm text-gray-500">{currentSpec.mode === "table" ? "Table" : "Summary"} result</span>
+              <h3 className="font-semibold text-gray-900">Result Preview</h3>
+              <span className="text-sm text-gray-500">{currentSpec.mode === "table" ? "Record list" : "Grouped summary"}</span>
             </div>
             <ReportVisualization chartType={draftReport.chartType} result={previewResult ?? undefined} />
           </div>

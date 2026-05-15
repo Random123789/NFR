@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 import json
 from typing import Any, Mapping, Optional, Sequence, Union
 
@@ -12,7 +11,7 @@ from pydantic import BaseModel
 
 from database import execute_mutation, execute_query, generate_record_id
 from schemas import HistoryEntryCreate
-from utils import build_history_entry, build_update_history_entries, normalize_record
+from utils import build_history_entry, build_update_history_entries, current_timestamp, normalize_record
 
 
 @dataclass(frozen=True)
@@ -31,7 +30,7 @@ class EntityCrudConfig:
 
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return current_timestamp()
 
 
 Payload = Union[BaseModel, Mapping[str, Any]]

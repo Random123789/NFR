@@ -1,17 +1,32 @@
-import { useState, useEffect } from "react";
-import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Edit2, Save, Bookmark } from "lucide-react";
-import { accounts, cases, getLinkedCasesByEntity, addCaseLink, removeCaseLink, getProjectsByAccountId, getCaseById, updateAccount, type HistoryEntry } from "../data/apiClient";
-import { LinkedCasesList } from "../components/LinkedEntityCard";
+import { useState } from "react";
+import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
+import { addAccountHistory, updateAccount, updateProject, type ProjectRecord } from "../data/apiClient";
+import { DetailTabs } from "../components/DetailTabs";
+import { LinkedCasesList, LinkedEntityList } from "../components/LinkedEntityCard";
+import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useAuth } from "../context/AuthContext";
+import { useRecords } from "../context/RecordsContext";
 import { useToast } from "../context/ToastContext";
+import { accountTypes, accountVerticals, type AccountType, type AccountVertical } from "../data/accountOptions";
+import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
+import { useLinkedCases } from "../hooks/useLinkedCases";
+import { useRecordComments } from "../hooks/useRecordComments";
 import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
+import {
+  createDetailTarget,
+  createLinkedDetailState,
+  type DetailRouteState,
+} from "../navigation/detailNavigation";
+import { exportRowsToCsv } from "../utils/csvExport";
+import { formatTimestampMinute } from "../utils/dateTime";
 
-type AccountColumnKey = "recordId" | "accountName" | "type" | "vertical" | "website" | "updatedAt";
-type AccountSearchKey = "recordId" | "accountName" | "type" | "vertical";
+type AccountColumnKey = "accountName" | "type" | "vertical" | "website";
+type AccountSearchKey = "accountName" | "type" | "vertical";
 
 type AccountTableColumn = {
   key: AccountColumnKey;
@@ -21,190 +36,123 @@ type AccountTableColumn = {
 };
 
 const ACCOUNT_TABLE_COLUMNS: AccountTableColumn[] = [
-  { key: "recordId", label: "Record ID", sortKey: "recordId", searchKey: "recordId" },
   { key: "accountName", label: "Account Name", sortKey: "accountName", searchKey: "accountName" },
   { key: "type", label: "Type", sortKey: "type", searchKey: "type" },
   { key: "vertical", label: "Vertical", sortKey: "vertical", searchKey: "vertical" },
   { key: "website", label: "Website", sortKey: "website" },
-  { key: "updatedAt", label: "Updated At", sortKey: "updatedAt" },
 ];
 
 const DEFAULT_ACCOUNT_COLUMN_KEYS = ACCOUNT_TABLE_COLUMNS.map((column) => column.key);
 const ACCOUNT_COLUMN_STORAGE_KEY = "accounts.visibleTableColumns";
+const ACCOUNT_DETAIL_TABS = [
+  { key: "details", label: "Details" },
+  { key: "linkedCases", label: "Linked Cases" },
+  { key: "linkedProjects", label: "Linked Projects" },
+];
+const RELATED_CREATE_BUTTON_CLASS = "inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50";
+
+function createProjectPayload(project: ProjectRecord, accountId: string | null) {
+  return {
+    projectName: project.projectName,
+    accountId,
+    startDate: project.startDate,
+    closeDate: project.closeDate,
+    seOwner: project.seOwner,
+    isClosed: project.isClosed,
+    stage: project.stage,
+    sfdc: project.sfdc,
+    sfdcValue: project.sfdcValue,
+    metaData: project.metaData,
+  };
+}
 
 export function Accounts() {
   const navigate = useNavigate();
   const location = useLocation();
   const { showToast } = useToast();
+  const { user } = useAuth();
   const { searchTerm } = useSearch();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
-  const [selectedAccount, setSelectedAccount] = useState<typeof accounts[0] | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedAccount, setEditedAccount] = useState<typeof accounts[0] | null>(null);
-  const [newComment, setNewComment] = useState("");
-  const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
-  const [activeDetailTab, setActiveDetailTab] = useState<"details" | "linked">("details");
-  const [linkedCases, setLinkedCases] = useState<typeof cases>([]);
-  const [linkingCaseId, setLinkingCaseId] = useState("");
-  const [isLinkingCase, setIsLinkingCase] = useState(false);
+  const { accounts, projects, cases, getAccountById, getProjectsByAccountId, upsertAccount, upsertProject } = useRecords();
+  const {
+    selectedRecord: selectedAccount,
+    setSelectedRecord: setSelectedAccount,
+    isEditing,
+    editedRecord: editedAccount,
+    setEditedRecord: setEditedAccount,
+    activeDetailTab,
+    setActiveDetailTab,
+    handleBackFromDetail,
+    handleEdit,
+    handleCancelEdit,
+    applySavedRecord,
+  } = useRoutedEntityDetail({
+    entityType: "account",
+    getRecordById: getAccountById,
+  });
+  const {
+    linkedCases,
+    linkingCaseId,
+    setLinkingCaseId,
+    isLinkingCase,
+    availableCases,
+    linkCase,
+    handleLinkCase,
+    handleUnlinkCase,
+  } = useLinkedCases({
+    entityType: "account",
+    entityRecordId: selectedAccount?.recordId,
+    cases,
+    entityLabel: "account",
+    showToast,
+  });
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+    selectedRecord: selectedAccount,
+    setSelectedRecord: setSelectedAccount,
+    addHistory: addAccountHistory,
+    upsertRecord: upsertAccount,
+    userName: user?.displayName,
+    onError: (message) => showToast(message, "error"),
+  });
   const [visibleAccountColumnKeys, setVisibleAccountColumnKeys] = useStoredColumnKeys<AccountColumnKey>(ACCOUNT_COLUMN_STORAGE_KEY, DEFAULT_ACCOUNT_COLUMN_KEYS);
 
-  type LinkedReturnState = {
-    returnTo?: {
-      path: string;
-      eventName: string;
-      recordId: string;
-    };
-    previousState?: LinkedReturnState | null;
-  };
-
   const [searchFilters, setSearchFilters] = useState({
-    recordId: "",
-    moduleId: "",
     accountName: "",
     type: "",
     vertical: "",
   });
+  const [linkingProjectId, setLinkingProjectId] = useState("");
+  const [isLinkingProject, setIsLinkingProject] = useState(false);
 
   const [sortConfig, setSortConfig] = useState<SortConfig<AccountColumnKey>>({
     key: "",
     direction: null,
   });
 
-  useEffect(() => {
-    const handleOpenDetail = (event: Event) => {
-      const accountId = (event as CustomEvent<string>).detail;
-      const account = accounts.find(a => a.recordId === accountId);
-      if (account) {
-        setSelectedAccount(account);
-        setActiveDetailTab("details");
-      }
-    };
-
-    window.addEventListener('openAccountDetail', handleOpenDetail as EventListener);
-    return () => window.removeEventListener('openAccountDetail', handleOpenDetail as EventListener);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadLinkedCases = async () => {
-      if (!selectedAccount) {
-        setLinkedCases([]);
-        setLinkingCaseId("");
-        return;
-      }
-
-      try {
-        const linked = await getLinkedCasesByEntity("account", selectedAccount.recordId);
-        if (!cancelled) {
-          setLinkedCases(linked);
-        }
-      } catch (error) {
-        console.error("Failed to load linked cases for account:", error);
-        if (!cancelled) {
-          setLinkedCases([]);
-        }
-      }
-    };
-
-    loadLinkedCases();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedAccount?.recordId]);
-
   const handleCaseClick = (caseId: string) => {
     if (!selectedAccount?.recordId) return;
 
-    const state: LinkedReturnState = {
-      returnTo: {
-        path: '/accounts',
-        eventName: 'openAccountDetail',
-        recordId: selectedAccount.recordId,
-      },
-      previousState: (location.state as LinkedReturnState | null) ?? null,
-    };
-
-    navigate('/cases', { state });
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openCaseDetail', { detail: caseId }));
-    }, 100);
+    navigate('/cases', {
+      state: createLinkedDetailState(
+        "case",
+        caseId,
+        createDetailTarget("account", selectedAccount.recordId),
+        (location.state as DetailRouteState | null) ?? null,
+      ),
+    });
   };
 
   const handleProjectClick = (projectId: string) => {
     if (!selectedAccount?.recordId) return;
 
-    const state: LinkedReturnState = {
-      returnTo: {
-        path: '/accounts',
-        eventName: 'openAccountDetail',
-        recordId: selectedAccount.recordId,
-      },
-      previousState: (location.state as LinkedReturnState | null) ?? null,
-    };
-
-    navigate('/projects', { state });
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('openProjectDetail', { detail: projectId }));
-    }, 100);
-  };
-
-  const handleLinkCase = async () => {
-    if (!selectedAccount || !linkingCaseId) return;
-
-    setIsLinkingCase(true);
-    try {
-      await addCaseLink(linkingCaseId, "account", selectedAccount.recordId);
-      const linked = await getLinkedCasesByEntity("account", selectedAccount.recordId);
-      setLinkedCases(linked);
-      setLinkingCaseId("");
-      showToast("Case linked successfully.", "success");
-    } catch (error) {
-      console.error("Failed to link case to account:", error);
-      showToast("Failed to link case.", "error");
-    } finally {
-      setIsLinkingCase(false);
-    }
-  };
-
-  const handleUnlinkCase = async (caseRecordId: string) => {
-    if (!selectedAccount) return;
-
-    setIsLinkingCase(true);
-    try {
-      await removeCaseLink(caseRecordId, "account", selectedAccount.recordId);
-      const linked = await getLinkedCasesByEntity("account", selectedAccount.recordId);
-      setLinkedCases(linked);
-      showToast("Case unlinked successfully.", "success");
-    } catch (error) {
-      console.error("Failed to unlink case from account:", error);
-      showToast("Failed to unlink case.", "error");
-    } finally {
-      setIsLinkingCase(false);
-    }
-  };
-
-  const handleBackFromDetail = () => {
-    const navState = (location.state as LinkedReturnState | null) ?? null;
-    if (navState?.returnTo) {
-      navigate(navState.returnTo.path, { state: navState.previousState ?? null });
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent(navState.returnTo!.eventName, { detail: navState.returnTo!.recordId }));
-      }, 100);
-      return;
-    }
-
-    setSelectedAccount(null);
-    setIsEditing(false);
-    setEditedAccount(null);
-  };
-
-  const handleEdit = () => {
-    if (selectedAccount) {
-      setEditedAccount({ ...selectedAccount });
-      setIsEditing(true);
-    }
+    navigate('/projects', {
+      state: createLinkedDetailState(
+        "project",
+        projectId,
+        createDetailTarget("account", selectedAccount.recordId),
+        (location.state as DetailRouteState | null) ?? null,
+      ),
+    });
   };
 
   const handleSave = async () => {
@@ -219,14 +167,9 @@ export function Accounts() {
         metaData: editedAccount.metaData,
       });
 
-      const index = accounts.findIndex((a) => a.recordId === saved.recordId);
-      if (index >= 0) {
-        accounts[index] = saved;
-      }
+      upsertAccount(saved);
 
-      setSelectedAccount(saved);
-      setEditedAccount(saved);
-      setIsEditing(false);
+      applySavedRecord(saved);
       showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save account:", error);
@@ -234,33 +177,26 @@ export function Accounts() {
     }
   };
 
-  const handleCancelEdit = () => {
-    setEditedAccount(null);
-    setIsEditing(false);
-  };
+  const handleLinkProject = async (projectId = linkingProjectId) => {
+    if (!selectedAccount || !projectId) return;
 
-  const handleAddComment = () => {
-    if (selectedAccount && newComment.trim()) {
-      const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(",", "");
-      const quoteText = selectedQuote
-        ? `[Quoted reply to ${selectedQuote.user} (${selectedQuote.timestamp})]\n${formatHistoryEntryText(selectedQuote)}`
-        : null;
+    const project = projects.find((item) => item.recordId === projectId);
+    if (!project) {
+      showToast("Project not found.", "error");
+      return;
+    }
 
-      const newHistoryEntry = {
-        timestamp,
-        user: "Current User",
-        action: "Comment",
-        changes: quoteText ? `${quoteText}\n\n${newComment.trim()}` : newComment.trim(),
-      };
-
-      const updatedAccount = {
-        ...selectedAccount,
-        history: [...(selectedAccount.history || []), newHistoryEntry],
-      };
-
-      setSelectedAccount(updatedAccount);
-      setNewComment("");
-      setSelectedQuote(null);
+    setIsLinkingProject(true);
+    try {
+      const saved = await updateProject(project.recordId, createProjectPayload(project, selectedAccount.recordId));
+      upsertProject(saved);
+      setLinkingProjectId("");
+      showToast("Project linked successfully.", "success");
+    } catch (error) {
+      console.error("Failed to link project to account:", error);
+      showToast("Failed to link project.", "error");
+    } finally {
+      setIsLinkingProject(false);
     }
   };
 
@@ -293,22 +229,18 @@ export function Accounts() {
   const filteredAccounts = accounts.filter((account) => {
     if (normalizedSearchTerm) {
       const matchesGlobalSearch = [
-        account.recordId,
         account.accountName,
         account.type,
         account.vertical,
         account.website,
-        account.ownedBy,
       ].some((value) => (value ?? "").toLowerCase().includes(normalizedSearchTerm));
 
       if (!matchesGlobalSearch) return false;
     }
 
-    if (searchFilters.recordId && !account.recordId.toLowerCase().includes(searchFilters.recordId.toLowerCase())) return false;
-    if (searchFilters.moduleId && !account.moduleId.toLowerCase().includes(searchFilters.moduleId.toLowerCase())) return false;
     if (searchFilters.accountName && !account.accountName.toLowerCase().includes(searchFilters.accountName.toLowerCase())) return false;
-    if (searchFilters.type && !account.type.toLowerCase().includes(searchFilters.type.toLowerCase())) return false;
-    if (searchFilters.vertical && !account.vertical.toLowerCase().includes(searchFilters.vertical.toLowerCase())) return false;
+    if (searchFilters.type && !(account.type ?? "").toLowerCase().includes(searchFilters.type.toLowerCase())) return false;
+    if (searchFilters.vertical && !(account.vertical ?? "").toLowerCase().includes(searchFilters.vertical.toLowerCase())) return false;
     return true;
   });
 
@@ -317,10 +249,30 @@ export function Accounts() {
     return compareValues(a[sortConfig.key], b[sortConfig.key], sortConfig.direction);
   });
 
-  const relatedCases = linkedCases;
   const relatedProjects = selectedAccount ? getProjectsByAccountId(selectedAccount.recordId) : [];
-  const availableCases = cases.filter((caseItem) => !linkedCases.some((linkedCase) => linkedCase.recordId === caseItem.recordId));
+  const availableProjects = selectedAccount
+    ? projects.filter((project) => project.accountId !== selectedAccount.recordId)
+    : projects;
   const visibleAccountColumns = ACCOUNT_TABLE_COLUMNS.filter((column) => visibleAccountColumnKeys.includes(column.key));
+  const detailGridClassName = activeDetailTab === "details"
+    ? `grid grid-cols-1 gap-3 sm:grid-cols-2 ${
+        isEditing
+          ? ""
+          : "[&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 [&>div]:gap-y-1 [&>div]:rounded-lg [&>div]:border [&>div]:border-gray-100 [&>div]:bg-gray-50 [&>div]:px-3 [&>div]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words [&_a]:min-w-0 [&_a]:break-all"
+      }`
+    : "hidden";
+  const textValue = (value: unknown) => value === null || value === undefined || value === "" ? "-" : String(value);
+
+  const handleExportCsv = () => {
+    exportRowsToCsv(
+      "accounts",
+      sortedAccounts,
+      visibleAccountColumns.map((column) => ({
+        label: column.label,
+        value: (account) => textValue(account[column.key]),
+      })),
+    );
+  };
 
   const renderSortIcon = (key: AccountColumnKey) => {
     if (sortConfig.key !== key || !sortConfig.direction) {
@@ -353,25 +305,25 @@ export function Accounts() {
 
   const renderColumnCell = (account: typeof accounts[0], column: AccountTableColumn) => {
     switch (column.key) {
-      case "recordId":
-        return <td key={column.key} className="px-6 py-4 text-sm font-medium text-[#E31937]">{account.recordId}</td>;
       case "accountName":
         return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900">{account.accountName}</td>;
       case "type":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700">{account.type}</td>;
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700">{textValue(account.type)}</td>;
       case "vertical":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700">{account.vertical}</td>;
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700">{textValue(account.vertical)}</td>;
       case "website":
         return (
           <td key={column.key} className="px-6 py-4 text-sm">
-            <a href={account.website} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              {account.website}
-              <ExternalLink className="w-3 h-3" />
-            </a>
+            {account.website ? (
+              <a href={account.website} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                {account.website}
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            ) : (
+              <span className="text-gray-500">-</span>
+            )}
           </td>
         );
-      case "updatedAt":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-500">{account.updatedAt}</td>;
       default:
         return null;
     }
@@ -390,12 +342,30 @@ export function Accounts() {
             <h2 className="text-base font-semibold text-gray-900">Account Records</h2>
             <p className="text-sm text-gray-500">{visibleAccountColumns.length} of {ACCOUNT_TABLE_COLUMNS.length} fields shown</p>
           </div>
-          <TableFieldSelector
-            columns={ACCOUNT_TABLE_COLUMNS}
-            visibleKeys={visibleAccountColumnKeys}
-            onToggle={handleToggleAccountColumn}
-            onReset={handleResetAccountColumns}
-          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={sortedAccounts.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+            <CreateEntityDialog
+              entityType="account"
+              onCreated={(account) => {
+                setSelectedAccount(account);
+                setActiveDetailTab("details");
+              }}
+            />
+            <TableFieldSelector
+              columns={ACCOUNT_TABLE_COLUMNS}
+              visibleKeys={visibleAccountColumnKeys}
+              onToggle={handleToggleAccountColumn}
+              onReset={handleResetAccountColumns}
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -428,7 +398,7 @@ export function Accounts() {
                             id: account.recordId,
                             type: 'account',
                             title: account.accountName,
-                            subtitle: account.vertical,
+                            subtitle: account.vertical ?? undefined,
                             timestamp: Date.now(),
                           });
                         }
@@ -462,7 +432,7 @@ export function Accounts() {
                         id: selectedAccount!.recordId,
                         type: 'account',
                         title: selectedAccount!.accountName,
-                        subtitle: selectedAccount!.vertical,
+                        subtitle: selectedAccount!.vertical ?? undefined,
                         timestamp: Date.now(),
                       });
                     }
@@ -513,58 +483,9 @@ export function Accounts() {
 
             <div className="p-6 grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="xl:col-span-2 space-y-6">
-              <div className="border-b border-gray-200 pb-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveDetailTab("details")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "details"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Details
-                  </button>
-                  <button
-                    onClick={() => setActiveDetailTab("linked")}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      activeDetailTab === "linked"
-                        ? "bg-[#E31937] text-white"
-                        : "text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Linked Entities
-                  </button>
-                </div>
-              </div>
+              <DetailTabs tabs={ACCOUNT_DETAIL_TABS} activeTab={activeDetailTab} onChange={setActiveDetailTab} />
 
-              <div className={activeDetailTab === "details" ? "grid grid-cols-2 gap-4" : "hidden"}>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Record ID</label>
-                  {isEditing && editedAccount ? (
-                    <input
-                      type="text"
-                      value={editedAccount.recordId}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, recordId: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedAccount.recordId}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Module ID</label>
-                  {isEditing && editedAccount ? (
-                    <input
-                      type="text"
-                      value={editedAccount.moduleId}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, moduleId: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedAccount.moduleId}</p>
-                  )}
-                </div>
+              <div className={detailGridClassName}>
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Account Name</label>
                   {isEditing && editedAccount ? (
@@ -582,116 +503,63 @@ export function Accounts() {
                   <label className="block text-sm font-medium text-gray-600 mb-1">Type</label>
                   {isEditing && editedAccount ? (
                     <select
-                      value={editedAccount.type}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, type: e.target.value })}
+                      value={editedAccount.type ?? ""}
+                      onChange={(e) => setEditedAccount({ ...editedAccount, type: e.target.value ? e.target.value as AccountType : null })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
-                      <option value="Enterprise">Enterprise</option>
-                      <option value="Mid-Market">Mid-Market</option>
-                      <option value="Startup">Startup</option>
+                      <option value="">No type</option>
+                      {accountTypes.map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
                     </select>
                   ) : (
-                    <p className="text-gray-900">{selectedAccount.type}</p>
+                    <p className="text-gray-900">{textValue(selectedAccount.type)}</p>
                   )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Vertical</label>
                   {isEditing && editedAccount ? (
-                    <input
-                      type="text"
-                      value={editedAccount.vertical}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, vertical: e.target.value })}
+                    <select
+                      value={editedAccount.vertical ?? ""}
+                      onChange={(e) => setEditedAccount({ ...editedAccount, vertical: e.target.value ? e.target.value as AccountVertical : null })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
+                    >
+                      <option value="">No vertical</option>
+                      {accountVerticals.map((vertical) => (
+                        <option key={vertical} value={vertical}>
+                          {vertical}
+                        </option>
+                      ))}
+                    </select>
                   ) : (
-                    <p className="text-gray-900">{selectedAccount.vertical}</p>
+                    <p className="text-gray-900">{textValue(selectedAccount.vertical)}</p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Owned By</label>
-                  {isEditing && editedAccount ? (
-                    <input
-                      type="text"
-                      value={editedAccount.ownedBy}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, ownedBy: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedAccount.ownedBy}</p>
-                  )}
-                </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Website</label>
                   {isEditing && editedAccount ? (
                     <input
-                      type="text"
-                      value={editedAccount.website}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, website: e.target.value })}
+                      type="url"
+                      value={editedAccount.website ?? ""}
+                      onChange={(e) => setEditedAccount({ ...editedAccount, website: e.target.value || null })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      placeholder="https://example.com"
                     />
-                  ) : (
+                  ) : selectedAccount.website ? (
                     <a href={selectedAccount.website} target="_blank" rel="noopener noreferrer" className="text-[#E31937] hover:underline flex items-center gap-1">
                       {selectedAccount.website}
-                      <ExternalLink className="w-3 h-3" />
+                      <ExternalLink className="w-3 h-3 shrink-0" />
                     </a>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Created At</label>
-                  {isEditing && editedAccount ? (
-                    <input
-                      type="date"
-                      value={editedAccount.createdAt}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, createdAt: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
                   ) : (
-                    <p className="text-gray-900">{selectedAccount.createdAt}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Created By</label>
-                  {isEditing && editedAccount ? (
-                    <input
-                      type="text"
-                      value={editedAccount.createdBy}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, createdBy: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedAccount.createdBy}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Updated At</label>
-                  {isEditing && editedAccount ? (
-                    <input
-                      type="date"
-                      value={editedAccount.updatedAt}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, updatedAt: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedAccount.updatedAt}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Updated By</label>
-                  {isEditing && editedAccount ? (
-                    <input
-                      type="text"
-                      value={editedAccount.updatedBy}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, updatedBy: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{selectedAccount.updatedBy}</p>
+                    <p className="text-gray-900">-</p>
                   )}
                 </div>
               </div>
 
-              <div className={activeDetailTab === "linked" ? "pt-1" : "hidden"}>
-                <h3 className="font-semibold text-lg text-gray-900 mb-4">Related Data</h3>
+              <div className={activeDetailTab === "linkedCases" ? "pt-1" : "hidden"}>
+                <h3 className="font-semibold text-lg text-gray-900 mb-4">Linked Cases</h3>
                 <div className="space-y-4">
                   <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
                     <div className="flex flex-col gap-3 md:flex-row md:items-end">
@@ -705,7 +573,7 @@ export function Accounts() {
                           <option value="">Select a case</option>
                           {availableCases.map((caseItem) => (
                             <option key={caseItem.recordId} value={caseItem.recordId}>
-                              {caseItem.recordId} - {caseItem.description}
+                              {caseItem.description}
                             </option>
                           ))}
                         </select>
@@ -718,36 +586,79 @@ export function Accounts() {
                       >
                         Link Case
                       </button>
+                      <CreateEntityDialog
+                        entityType="case"
+                        triggerLabel="New"
+                        triggerTitle="Create case"
+                        initialValues={{
+                          account: selectedAccount.recordId,
+                        }}
+                        className={RELATED_CREATE_BUTTON_CLASS}
+                        onCreated={(created) => {
+                          void linkCase(created.recordId);
+                        }}
+                      />
                     </div>
                   </div>
 
                   <LinkedCasesList cases={linkedCases} onCaseClick={handleCaseClick} onRemoveCase={handleUnlinkCase} />
+                </div>
+              </div>
 
-                  {relatedProjects.length > 0 ? (
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <h3 className="font-medium text-gray-900 mb-3">Related Projects ({relatedProjects.length})</h3>
-                      <div className="space-y-2">
-                        {relatedProjects.map((project) => (
-                          <div
-                            key={project.recordId}
-                            className="bg-white rounded p-3 hover:shadow-sm transition-shadow cursor-pointer"
-                            onClick={() => handleProjectClick(project.recordId)}
-                          >
-                            <div className="text-sm font-medium text-[#E31937] mb-1">{project.recordId}</div>
-                            <div className="text-sm text-gray-900">{project.projectName}</div>
-                            <div className="text-xs text-gray-500 mt-1">
-                              Stage: {project.stage} | Value: {project.sfdcValue}
-                            </div>
-                          </div>
-                        ))}
+              <div className={activeDetailTab === "linkedProjects" ? "pt-1" : "hidden"}>
+                <h3 className="font-semibold text-lg text-gray-900 mb-4">Linked Projects</h3>
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Link project</label>
+                        <select
+                          value={linkingProjectId}
+                          onChange={(event) => setLinkingProjectId(event.target.value)}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                        >
+                          <option value="">Select a project</option>
+                          {availableProjects.map((project) => (
+                            <option key={project.recordId} value={project.recordId}>
+                              {project.projectName}
+                            </option>
+                          ))}
+                        </select>
                       </div>
+                      <CreateEntityDialog
+                        entityType="project"
+                        triggerLabel="New"
+                        triggerTitle="Create project"
+                        initialValues={{
+                          accountId: selectedAccount.recordId,
+                        }}
+                        hideLinkedCaseSelect
+                        className={RELATED_CREATE_BUTTON_CLASS}
+                        onCreated={(created) => {
+                          upsertProject(created);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleLinkProject()}
+                        disabled={!linkingProjectId || isLinkingProject}
+                        className="px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Link Project
+                      </button>
                     </div>
-                  ) : (
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <h3 className="font-medium text-gray-900 mb-2">Related Projects</h3>
-                      <p className="text-sm text-gray-500">No related projects</p>
-                    </div>
-                  )}
+                  </div>
+
+                  <LinkedEntityList
+                    title="Linked Projects"
+                    entities={relatedProjects}
+                    fields={[
+                      { label: "Name", key: "projectName" },
+                      { label: "Stage", key: "stage" },
+                      { label: "Value", key: "sfdcValue" },
+                    ]}
+                    onEntityClick={handleProjectClick}
+                  />
                 </div>
               </div>
 
@@ -757,15 +668,14 @@ export function Accounts() {
                 <div className="xl:sticky xl:top-24 border border-gray-200 rounded-lg bg-white p-4 max-h-[60vh] overflow-y-auto overflow-x-hidden">
               <div className="pt-0">
                 <h3 className="font-semibold text-lg text-gray-900 mb-4">History</h3>
-                <RecordHistoryTimeline history={selectedAccount.history} onQuote={setSelectedQuote} />
 
-                <div className="border-t border-gray-200 pt-4">
+                <div className="mb-4 border-b border-gray-200 pb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Comment</label>
                   {selectedQuote && (
                     <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 border-l-4 border-l-[#6264A7]">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-xs text-gray-500 font-medium">
-                          Replying to {selectedQuote.user} - {selectedQuote.timestamp}
+                          Replying to {selectedQuote.user} - {formatTimestampMinute(selectedQuote.timestamp)}
                         </p>
                         <button
                           onClick={() => setSelectedQuote(null)}
@@ -789,13 +699,14 @@ export function Accounts() {
                   <div className="mt-2 flex justify-end">
                     <button
                       onClick={handleAddComment}
-                      disabled={!newComment.trim()}
+                      disabled={isAddingComment || !newComment.trim()}
                       className="px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      Add Comment
+                      {isAddingComment ? "Adding..." : "Add Comment"}
                     </button>
                   </div>
                 </div>
+                <RecordHistoryTimeline history={selectedAccount.history} onQuote={setSelectedQuote} />
               </div>
             </div>
           </div>
