@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { AlertTriangle, ArrowLeft, Check, Save, Trash2 } from "lucide-react";
-import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUserRole, type ManagedUser } from "../data/apiClient";
+import { AlertTriangle, ArrowLeft, Check, KeyRound, Save, Trash2 } from "lucide-react";
+import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUserPassword, updateManagedUserRole, type ManagedUser } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
 import { accountVerticals, type AccountVertical } from "../data/accountOptions";
 import { formatRoleLabel, managedRoleOptions } from "../data/roleLabels";
@@ -20,6 +20,7 @@ export function Profile() {
   const [adminMessage, setAdminMessage] = useState("");
   const [adminError, setAdminError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [newUserDisplayName, setNewUserDisplayName] = useState("");
@@ -30,7 +31,9 @@ export function Profile() {
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [roleDrafts, setRoleDrafts] = useState<Record<number, "admin" | "user">>({});
   const [verticalDrafts, setVerticalDrafts] = useState<Record<number, AccountVertical | "">>({});
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<number, string>>({});
   const [savingRoleUserId, setSavingRoleUserId] = useState<number | null>(null);
+  const [resettingPasswordUserId, setResettingPasswordUserId] = useState<number | null>(null);
 
   useEffect(() => {
     setDisplayName(user?.displayName || "");
@@ -63,33 +66,51 @@ export function Profile() {
     setIsSaving(true);
 
     try {
-      if (newPassword || confirmPassword || currentPassword) {
-        if (!currentPassword) {
-          throw new Error("Current password is required to change password");
-        }
-        if (newPassword !== confirmPassword) {
-          throw new Error("New password and confirmation do not match");
-        }
-      }
-
       const result = await updateCurrentUserProfile({
         displayName,
         email,
-        currentPassword: currentPassword || undefined,
-        newPassword: newPassword || undefined,
       });
 
       setSessionUser(result.user);
       setDisplayName(result.user.displayName);
       setEmail(result.user.email);
       setProfileMessage("Profile updated successfully.");
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : "Failed to update profile");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleResetOwnPassword = async () => {
+    setProfileMessage("");
+    setProfileError("");
+    setIsResettingPassword(true);
+
+    try {
+      if (!currentPassword) {
+        throw new Error("Current password is required");
+      }
+      if (!newPassword) {
+        throw new Error("New password is required");
+      }
+      if (newPassword !== confirmPassword) {
+        throw new Error("New password and confirmation do not match");
+      }
+
+      await updateCurrentUserProfile({
+        currentPassword,
+        newPassword,
+      });
+
+      setProfileMessage("Password reset successfully.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : "Failed to reset password");
+    } finally {
+      setIsResettingPassword(false);
     }
   };
 
@@ -201,6 +222,31 @@ export function Profile() {
     }
   };
 
+  const handleResetManagedUserPassword = async (managedUser: ManagedUser) => {
+    setAdminError("");
+    setAdminMessage("");
+    setResettingPasswordUserId(managedUser.id);
+
+    try {
+      const password = (passwordDrafts[managedUser.id] || "").trim();
+      if (password.length < 8) {
+        throw new Error("New password must be at least 8 characters");
+      }
+
+      await updateManagedUserPassword(managedUser.id, { password });
+      setPasswordDrafts((prev) => {
+        const next = { ...prev };
+        delete next[managedUser.id];
+        return next;
+      });
+      setAdminMessage(`Password reset for ${managedUser.email}.`);
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : "Failed to reset password");
+    } finally {
+      setResettingPasswordUserId(null);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -244,37 +290,6 @@ export function Profile() {
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Required for password changes"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-              />
-            </div>
-          </div>
-
           {profileMessage && (
             <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
               <Check className="w-4 h-4" />
@@ -301,6 +316,53 @@ export function Profile() {
               className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
             >
               Cancel
+            </button>
+          </div>
+
+          <div className="border-t border-gray-200 pt-6 space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Reset Password</h2>
+              <p className="text-sm text-gray-600 mt-1">Change the password for this profile.</p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Required for password changes"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={handleResetOwnPassword}
+              disabled={isResettingPassword}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-black disabled:opacity-60 transition-colors"
+            >
+              <KeyRound className="w-4 h-4" />
+              {isResettingPassword ? "Resetting..." : "Reset Password"}
             </button>
           </div>
         </div>
@@ -351,7 +413,7 @@ export function Profile() {
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Admin User Management</h2>
-            <p className="text-sm text-gray-600 mt-1">Create accounts for other users.</p>
+            <p className="text-sm text-gray-600 mt-1">Create accounts and reset passwords for other users.</p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
@@ -450,6 +512,7 @@ export function Profile() {
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Email</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Role</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Vertical</th>
+                  <th className="text-left px-4 py-2 font-semibold text-gray-700">New Password</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Last Login</th>
                   <th className="text-left px-4 py-2 font-semibold text-gray-700">Actions</th>
                 </tr>
@@ -506,16 +569,40 @@ export function Profile() {
                           ))}
                         </select>
                       </td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                        <input
+                          type="password"
+                          value={passwordDrafts[managedUser.id] || ""}
+                          onChange={(e) =>
+                            setPasswordDrafts((prev) => ({
+                              ...prev,
+                              [managedUser.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Temporary password"
+                          className="w-full min-w-44 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                        />
+                      </td>
                       <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.lastLoginAt ? formatTimestampMinute(managedUser.lastLoginAt) : "Never"}</td>
                       <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
-                        <button
-                          onClick={() => handleUpdateUserRole(managedUser)}
-                          disabled={savingRoleUserId === managedUser.id || !hasUserDraftChanges}
-                          className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          <Save className="w-4 h-4" />
-                          {savingRoleUserId === managedUser.id ? "Saving..." : "Save"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleUpdateUserRole(managedUser)}
+                            disabled={savingRoleUserId === managedUser.id || !hasUserDraftChanges}
+                            className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Save className="w-4 h-4" />
+                            {savingRoleUserId === managedUser.id ? "Saving..." : "Save"}
+                          </button>
+                          <button
+                            onClick={() => handleResetManagedUserPassword(managedUser)}
+                            disabled={resettingPasswordUserId === managedUser.id || !(passwordDrafts[managedUser.id] || "").trim()}
+                            className="inline-flex items-center gap-2 px-3 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <KeyRound className="w-4 h-4" />
+                            {resettingPasswordUserId === managedUser.id ? "Resetting..." : "Reset"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

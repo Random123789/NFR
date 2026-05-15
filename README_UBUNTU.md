@@ -287,19 +287,26 @@ sudo journalctl -u mantis-backend -f
 
 ### 4. Build and Publish the Frontend
 
-From your repository root:
+From your normal writable repository checkout, not from `/opt/mantis`:
 
 ```bash
 cd Frontend
-cat > .env.production <<'EOF'
-VITE_API_URL=/api
-EOF
 npm ci
-npm run build
+VITE_API_URL=/api npm run build
 sudo mkdir -p /var/www/mantis
 sudo rsync -a --delete dist/ /var/www/mantis/
 sudo chown -R www-data:www-data /var/www/mantis
 ```
+
+The production frontend must call `/api`, not `http://<server-ip>:4000/api`. Vite bakes `VITE_API_URL` into the JavaScript during `npm run build`, so the command above forces the Apache-safe value even if `Frontend/.env` contains an older development URL.
+
+You can confirm the built frontend is Apache-ready:
+
+```bash
+grep -R "http://.*:4000" dist/assets || echo "OK: frontend uses Apache /api proxy"
+```
+
+If you are already inside `/opt/mantis/Frontend`, creating files may fail because `/opt/mantis` is owned by root/www-data for the system service.
 
 ### 5. Enable the Apache Site
 

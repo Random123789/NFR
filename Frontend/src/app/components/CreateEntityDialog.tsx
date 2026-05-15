@@ -33,8 +33,9 @@ import { useRecords } from "../context/RecordsContext";
 import { useToast } from "../context/ToastContext";
 import { accountTypes, accountVerticals, type AccountType, type AccountVertical } from "../data/accountOptions";
 import { caseCategories, caseEscalationTypes, casePriorities, caseStatuses } from "../data/caseOptions";
-import { mantisCategories, mantisStatuses } from "../data/mantisOptions";
+import { buildMantisUrl, mantisCategories, mantisStatuses } from "../data/mantisOptions";
 import { projectStages } from "../data/projectOptions";
+import { formatRelatedCaseOption, getRelatedCaseLabelParts } from "../utils/caseLabels";
 import { normalizeUsdIntegerInput, parseUsdIntegerInput } from "../utils/currency";
 
 export type CreateEntityType = "case" | "account" | "project" | "mantis" | "knock" | "product";
@@ -133,6 +134,12 @@ const entityLabels: Record<CreateEntityType, string> = {
 
 const inputClassName = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]";
 const labelClassName = "block text-sm font-medium text-gray-700 mb-1";
+
+type SelectOption = {
+  value: string;
+  label: string;
+  description?: string | null;
+};
 
 function createEmptyQuickAccountDraft() {
   return {
@@ -234,11 +241,6 @@ function nullableString(value: string | null | undefined) {
   return cleanString(value) ?? null;
 }
 
-function caseOptionLabel(caseItem: CaseRecord) {
-  const description = caseItem.description.length > 70 ? `${caseItem.description.slice(0, 70)}...` : caseItem.description;
-  return description;
-}
-
 function isActiveUser(user: AssignableUser) {
   return Boolean(user.isActive);
 }
@@ -248,60 +250,209 @@ function isSeUserRole(role: string | null | undefined) {
   return normalized === "user" || normalized === "se user" || normalized === "se_user";
 }
 
-function assignableUserLabel(user: AssignableUser) {
-  return `${user.displayName}${user.vertical ? ` - ${user.vertical}` : ""}`;
+function joinDescriptionParts(parts: Array<string | null | undefined>) {
+  return parts.map((part) => part?.trim()).filter(Boolean).join(" | ");
 }
 
-function MultiRecordDropdown<T extends { recordId: string }>({
+function SearchableSelect({
+  label,
+  value,
+  options,
+  emptyLabel,
+  searchPlaceholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: SelectOption[];
+  emptyLabel: string;
+  searchPlaceholder?: string;
+  onChange: (nextValue: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+  const selectedOption = options.find((option) => option.value === value);
+  const normalizedSearch = searchValue.trim().toLowerCase();
+  const filteredOptions = normalizedSearch
+    ? options.filter((option) =>
+        [option.label, option.description]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedSearch),
+      )
+    : options;
+
+  const handleChange = (nextValue: string) => {
+    onChange(nextValue);
+    setSearchValue("");
+    setIsOpen(false);
+  };
+
+  return (
+    <Popover
+      open={isOpen}
+      onOpenChange={(nextOpen) => {
+        setIsOpen(nextOpen);
+        if (!nextOpen) setSearchValue("");
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="flex min-h-[38px] w-full items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+        >
+          {selectedOption ? (
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium text-gray-900">{selectedOption.label}</span>
+              {selectedOption.description ? (
+                <span className="mt-0.5 block truncate text-xs text-gray-500">{selectedOption.description}</span>
+              ) : null}
+            </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-gray-600">{emptyLabel}</span>
+          )}
+          <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-80 p-2" align="start">
+        <input
+          type="text"
+          value={searchValue}
+          onChange={(event) => setSearchValue(event.target.value)}
+          placeholder={searchPlaceholder ?? `Search ${label.toLowerCase()}`}
+          className="mb-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+        />
+        <div className="max-h-72 space-y-1 overflow-auto pr-1">
+          <button
+            type="button"
+            className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-gray-50 ${value ? "text-gray-700" : "bg-red-50 text-[#E31937]"}`}
+            onClick={() => handleChange("")}
+          >
+            <span>{emptyLabel}</span>
+            {!value ? <Check className="h-4 w-4 shrink-0" /> : null}
+          </button>
+          {filteredOptions.length === 0 ? (
+            <div className="px-2 py-3 text-sm text-gray-500">No matching records</div>
+          ) : (
+            filteredOptions.map((option) => {
+              const isSelected = option.value === value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`flex w-full items-start justify-between gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-gray-50 ${isSelected ? "bg-red-50" : ""}`}
+                  onClick={() => handleChange(option.value)}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-gray-900">{option.label}</span>
+                    {option.description ? (
+                      <span className="mt-0.5 block truncate text-xs text-gray-500">{option.description}</span>
+                    ) : null}
+                  </span>
+                  {isSelected ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#E31937]" /> : null}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function MultiRecordDropdown({
   label,
   values,
   options,
-  getOptionLabel,
+  emptyLabel,
+  searchPlaceholder,
   onChange,
 }: {
   label: string;
   values: string[];
-  options: T[];
-  getOptionLabel: (option: T) => string;
+  options: SelectOption[];
+  emptyLabel?: string;
+  searchPlaceholder?: string;
   onChange: (nextValues: string[]) => void;
 }) {
-  const selectedLabels = options
-    .filter((option) => values.includes(option.recordId))
-    .map(getOptionLabel)
-    .filter(Boolean);
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+  const selectedOptions = options.filter((option) => values.includes(option.value));
+  const normalizedSearch = searchValue.trim().toLowerCase();
+  const filteredOptions = normalizedSearch
+    ? options.filter((option) =>
+        [option.label, option.description]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedSearch),
+      )
+    : options;
 
   return (
-    <Popover>
+    <Popover
+      open={isOpen}
+      onOpenChange={(nextOpen) => {
+        setIsOpen(nextOpen);
+        if (!nextOpen) setSearchValue("");
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="flex min-h-[38px] w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+          className="flex min-h-[38px] w-full items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
         >
-          <span className="truncate">{selectedLabels.length > 0 ? selectedLabels.join(", ") : `Select ${label}`}</span>
+          <span className="min-w-0 flex-1">
+            <span className={`block truncate ${selectedOptions.length > 0 ? "font-medium text-gray-900" : "text-gray-600"}`}>
+              {selectedOptions.length > 0
+                ? selectedOptions.map((option) => option.label).join(", ")
+                : emptyLabel ?? `Select ${label}`}
+            </span>
+            {selectedOptions.length > 1 ? (
+              <span className="mt-0.5 block text-xs text-gray-500">{selectedOptions.length} selected</span>
+            ) : selectedOptions[0]?.description ? (
+              <span className="mt-0.5 block truncate text-xs text-gray-500">{selectedOptions[0].description}</span>
+            ) : null}
+          </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
-        <div className="max-h-72 space-y-1 overflow-auto">
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-80 p-2" align="start">
+        <input
+          type="text"
+          value={searchValue}
+          onChange={(event) => setSearchValue(event.target.value)}
+          placeholder={searchPlaceholder ?? `Search ${label.toLowerCase()}`}
+          className="mb-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+        />
+        <div className="max-h-72 space-y-1 overflow-auto pr-1">
           {options.length === 0 ? (
             <div className="px-2 py-2 text-sm text-gray-500">No records available</div>
+          ) : filteredOptions.length === 0 ? (
+            <div className="px-2 py-3 text-sm text-gray-500">No matching records</div>
           ) : (
-            options.map((option) => {
-              const checked = values.includes(option.recordId);
+            filteredOptions.map((option) => {
+              const checked = values.includes(option.value);
               return (
                 <button
-                  key={option.recordId}
+                  key={option.value}
                   type="button"
-                  className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-gray-50"
+                  className={`flex w-full items-start gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-gray-50 ${checked ? "bg-red-50" : ""}`}
                   onClick={() => {
                     const nextValues = checked
-                      ? values.filter((value) => value !== option.recordId)
-                      : [...values, option.recordId];
+                      ? values.filter((value) => value !== option.value)
+                      : [...values, option.value];
                     onChange(nextValues);
                   }}
                 >
-                  <Checkbox checked={checked} className="pointer-events-none" />
-                  <span className="min-w-0 flex-1 truncate text-gray-900">{getOptionLabel(option)}</span>
+                  <Checkbox checked={checked} className="pointer-events-none mt-0.5" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-gray-900">{option.label}</span>
+                    {option.description ? (
+                      <span className="mt-0.5 line-clamp-2 text-xs leading-snug text-gray-500">{option.description}</span>
+                    ) : null}
+                  </span>
                   {checked ? <Check className="h-4 w-4 shrink-0 text-[#E31937]" /> : null}
                 </button>
               );
@@ -310,6 +461,112 @@ function MultiRecordDropdown<T extends { recordId: string }>({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function RelatedCaseSelect({
+  value,
+  cases,
+  accounts,
+  projects,
+  onChange,
+}: {
+  value: string;
+  cases: CaseRecord[];
+  accounts: AccountRecord[];
+  projects: ProjectRecord[];
+  onChange: (value: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+  const selectedCase = cases.find((caseItem) => caseItem.recordId === value);
+  const selectedParts = selectedCase ? getRelatedCaseLabelParts(selectedCase, accounts, projects) : null;
+  const normalizedSearch = searchValue.trim().toLowerCase();
+  const filteredCases = normalizedSearch
+    ? cases.filter((caseItem) => formatRelatedCaseOption(caseItem, accounts, projects).toLowerCase().includes(normalizedSearch))
+    : cases;
+
+  const handleSelect = (nextValue: string) => {
+    onChange(nextValue);
+    setSearchValue("");
+    setIsOpen(false);
+  };
+
+  return (
+    <div>
+      <label className={labelClassName}>Related Case</label>
+      <Popover
+        open={isOpen}
+        onOpenChange={(nextOpen) => {
+          setIsOpen(nextOpen);
+          if (!nextOpen) setSearchValue("");
+        }}
+      >
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="flex min-h-[42px] w-full items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+          >
+            {selectedParts ? (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-gray-900">
+                  {selectedParts.account} | {selectedParts.project}
+                </span>
+                <span className="mt-0.5 block truncate text-xs text-gray-500">{selectedParts.description}</span>
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1 text-gray-600">No linked case</span>
+            )}
+            <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
+          <input
+            type="text"
+            value={searchValue}
+            onChange={(event) => setSearchValue(event.target.value)}
+            placeholder="Search account, project, or description"
+            className="mb-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+          />
+          <div className="max-h-72 space-y-1 overflow-auto pr-1">
+            <button
+              type="button"
+              className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-gray-50 ${value ? "text-gray-700" : "bg-red-50 text-[#E31937]"}`}
+              onClick={() => handleSelect("")}
+            >
+              <span>No linked case</span>
+              {!value ? <Check className="h-4 w-4 shrink-0" /> : null}
+            </button>
+            {filteredCases.length === 0 ? (
+              <div className="px-2 py-3 text-sm text-gray-500">No matching cases</div>
+            ) : (
+              filteredCases.map((caseItem) => {
+                const parts = getRelatedCaseLabelParts(caseItem, accounts, projects);
+                const isSelected = value === caseItem.recordId;
+                return (
+                  <button
+                    key={caseItem.recordId}
+                    type="button"
+                    className={`flex w-full items-start justify-between gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-gray-50 ${isSelected ? "bg-red-50" : ""}`}
+                    onClick={() => handleSelect(caseItem.recordId)}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-1 text-xs font-medium text-gray-600">
+                        <span className="truncate">{parts.account}</span>
+                        <span className="shrink-0 text-gray-300">|</span>
+                        <span className="truncate">{parts.project}</span>
+                      </span>
+                      <span className="mt-1 line-clamp-2 text-sm leading-snug text-gray-900">{parts.description}</span>
+                    </span>
+                    {isSelected ? <Check className="mt-1 h-4 w-4 shrink-0 text-[#E31937]" /> : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }
 
@@ -369,6 +626,58 @@ export function CreateEntityDialog<T extends CreateEntityType>({
   const entityLabel = entityLabels[entityType];
   const defaultTriggerClassName = "inline-flex items-center justify-center gap-2 rounded-lg bg-[#E31937] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#c41230]";
   const triggerClassName = className ?? defaultTriggerClassName;
+  const accountNameById = useMemo(
+    () => new Map(accounts.map((account) => [account.recordId, account.accountName])),
+    [accounts],
+  );
+  const accountSelectOptions = useMemo<SelectOption[]>(
+    () => accounts.map((account) => ({
+      value: account.recordId,
+      label: account.accountName,
+      description: joinDescriptionParts([account.type, account.vertical]),
+    })),
+    [accounts],
+  );
+  const projectSelectOptions = useMemo<SelectOption[]>(
+    () => projects.map((project) => ({
+      value: project.recordId,
+      label: project.projectName,
+      description: joinDescriptionParts([accountNameById.get(project.accountId ?? ""), project.stage]),
+    })),
+    [accountNameById, projects],
+  );
+  const productSelectOptions = useMemo<SelectOption[]>(
+    () => products.map((product) => ({
+      value: product.recordId,
+      label: product.productName,
+      description: joinDescriptionParts([product.productFamily, product.description]),
+    })),
+    [products],
+  );
+  const assignableUserSelectOptions = useMemo<SelectOption[]>(
+    () => activeAssignableUsers.map((assignableUser) => ({
+      value: assignableUser.displayName,
+      label: assignableUser.displayName,
+      description: joinDescriptionParts([assignableUser.email, assignableUser.vertical]),
+    })),
+    [activeAssignableUsers],
+  );
+  const mantisSelectOptions = useMemo<SelectOption[]>(
+    () => mantisRecords.map((mantis) => ({
+      value: mantis.recordId,
+      label: mantis.mantisId || "No Mantis ID",
+      description: joinDescriptionParts([mantis.mantisStatus, mantis.description]),
+    })),
+    [mantisRecords],
+  );
+  const knockSelectOptions = useMemo<SelectOption[]>(
+    () => knocks.map((knock) => ({
+      value: knock.recordId,
+      label: knock.knockId || "No Knock ID",
+      description: joinDescriptionParts([knock.status, knock.description]),
+    })),
+    [knocks],
+  );
 
   const buildInitialFormData = () => {
     const nextFormData = createInitialFormData(defaultCaseSeOwner);
@@ -591,18 +900,14 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     <div>
       <label className={labelClassName}>Account</label>
       <div className="flex gap-2">
-        <select
+        <SearchableSelect
+          label="Account"
           value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className={inputClassName}
-        >
-          <option value="">{emptyLabel}</option>
-          {accounts.map((account) => (
-            <option key={account.recordId} value={account.recordId}>
-              {account.accountName}
-            </option>
-          ))}
-        </select>
+          options={accountSelectOptions}
+          emptyLabel={emptyLabel}
+          searchPlaceholder="Search accounts"
+          onChange={onChange}
+        />
         <button
           type="button"
           onClick={() => {
@@ -704,7 +1009,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       const created = await createMantis({
         description,
         mantisId: nullableString(quickMantisDraft.mantisId),
-        mantisUrl: nullableString(quickMantisDraft.mantisUrl),
+        mantisUrl: nullableString(buildMantisUrl(quickMantisDraft.mantisId)),
         category: nullableString(quickMantisDraft.category),
         mantisStatus: nullableString(quickMantisDraft.mantisStatus),
         mantisRequestDate: nullableString(quickMantisDraft.mantisRequestDate),
@@ -817,18 +1122,14 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           </div>
           <div>
             <label className={labelClassName}>Account</label>
-            <select
+            <SearchableSelect
+              label="Account"
               value={quickProjectDraft.accountId}
-              onChange={(event) => setQuickProjectDraft({ ...quickProjectDraft, accountId: event.target.value })}
-              className={inputClassName}
-            >
-              <option value="">No account</option>
-              {accounts.map((account) => (
-                <option key={account.recordId} value={account.recordId}>
-                  {account.accountName}
-                </option>
-              ))}
-            </select>
+              options={accountSelectOptions}
+              emptyLabel="No account"
+              searchPlaceholder="Search accounts"
+              onChange={(accountId) => setQuickProjectDraft({ ...quickProjectDraft, accountId })}
+            />
           </div>
           <div>
             <label className={labelClassName}>Stage</label>
@@ -864,18 +1165,14 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           </div>
           <div>
             <label className={labelClassName}>SE Owner</label>
-            <select
+            <SearchableSelect
+              label="SE owner"
               value={quickProjectDraft.seOwner}
-              onChange={(event) => setQuickProjectDraft({ ...quickProjectDraft, seOwner: event.target.value })}
-              className={inputClassName}
-            >
-              <option value="">No SE owner</option>
-              {activeAssignableUsers.map((assignableUser) => (
-                <option key={assignableUser.id} value={assignableUser.displayName}>
-                  {assignableUserLabel(assignableUser)}
-                </option>
-              ))}
-            </select>
+              options={assignableUserSelectOptions}
+              emptyLabel="No SE owner"
+              searchPlaceholder="Search users"
+              onChange={(seOwner) => setQuickProjectDraft({ ...quickProjectDraft, seOwner })}
+            />
           </div>
           <div>
             <label className={labelClassName}>SFDC Value (USD)</label>
@@ -984,12 +1281,18 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             <input
               type="text"
               value={quickMantisDraft.mantisId}
-              onChange={(event) => setQuickMantisDraft({ ...quickMantisDraft, mantisId: event.target.value })}
+              onChange={(event) =>
+                setQuickMantisDraft({
+                  ...quickMantisDraft,
+                  mantisId: event.target.value,
+                  mantisUrl: buildMantisUrl(event.target.value),
+                })
+              }
               className={inputClassName}
             />
           </div>
           <div>
-            <label className={labelClassName}>NFR Status</label>
+            <label className={labelClassName}>Status</label>
             <select
               value={quickMantisDraft.mantisStatus}
               onChange={(event) => setQuickMantisDraft({ ...quickMantisDraft, mantisStatus: event.target.value })}
@@ -1021,8 +1324,9 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             <input
               type="url"
               value={quickMantisDraft.mantisUrl}
-              onChange={(event) => setQuickMantisDraft({ ...quickMantisDraft, mantisUrl: event.target.value })}
-              className={inputClassName}
+              readOnly
+              className={`${inputClassName} bg-gray-50 text-gray-700`}
+              placeholder="Generated from Mantis ID"
             />
           </div>
           <div>
@@ -1211,7 +1515,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         const created = await createMantis({
           description: formData.mantis.description.trim(),
           mantisId: nullableString(formData.mantis.mantisId),
-          mantisUrl: nullableString(formData.mantis.mantisUrl),
+          mantisUrl: nullableString(buildMantisUrl(formData.mantis.mantisId)),
           category: nullableString(formData.mantis.category),
           mantisStatus: nullableString(formData.mantis.mantisStatus),
           mantisRequestDate: nullableString(formData.mantis.mantisRequestDate),
@@ -1261,17 +1565,13 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     value: string,
     onChange: (value: string) => void,
   ) => (
-    <div>
-      <label className={labelClassName}>Related Case</label>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className={inputClassName}>
-        <option value="">No linked case</option>
-        {cases.map((caseItem) => (
-          <option key={caseItem.recordId} value={caseItem.recordId}>
-            {caseOptionLabel(caseItem)}
-          </option>
-        ))}
-      </select>
-    </div>
+    <RelatedCaseSelect
+      value={value}
+      cases={cases}
+      accounts={accounts}
+      projects={projects}
+      onChange={onChange}
+    />
   );
 
   const renderCaseFields = () => (
@@ -1338,33 +1638,25 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelClassName}>Assigned To</label>
-          <select
+          <SearchableSelect
+            label="assignee"
             value={formData.case.assignedTo}
-            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, assignedTo: event.target.value } })}
-            className={inputClassName}
-          >
-            <option value="">Unassigned</option>
-            {activeAssignableUsers.map((assignableUser) => (
-              <option key={assignableUser.id} value={assignableUser.displayName}>
-                {assignableUserLabel(assignableUser)}
-              </option>
-            ))}
-          </select>
+            options={assignableUserSelectOptions}
+            emptyLabel="Unassigned"
+            searchPlaceholder="Search users"
+            onChange={(assignedTo) => setFormData({ ...formData, case: { ...formData.case, assignedTo } })}
+          />
         </div>
         <div>
           <label className={labelClassName}>SE Owner</label>
-          <select
+          <SearchableSelect
+            label="SE owner"
             value={formData.case.seOwner}
-            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, seOwner: event.target.value } })}
-            className={inputClassName}
-          >
-            <option value="">No SE owner</option>
-            {activeAssignableUsers.map((assignableUser) => (
-              <option key={assignableUser.id} value={assignableUser.displayName}>
-                {assignableUserLabel(assignableUser)}
-              </option>
-            ))}
-          </select>
+            options={assignableUserSelectOptions}
+            emptyLabel="No SE owner"
+            searchPlaceholder="Search users"
+            onChange={(seOwner) => setFormData({ ...formData, case: { ...formData.case, seOwner } })}
+          />
         </div>
       </div>
 
@@ -1392,18 +1684,14 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <div className={quickProjectOpen ? "sm:col-span-2" : undefined}>
           <label className={labelClassName}>Project</label>
           <div className="flex gap-2">
-            <select
+            <SearchableSelect
+              label="Project"
               value={formData.case.project}
-              onChange={(event) => setFormData({ ...formData, case: { ...formData.case, project: event.target.value } })}
-              className={inputClassName}
-            >
-              <option value="">No linked project</option>
-              {projects.map((project) => (
-                <option key={project.recordId} value={project.recordId}>
-                  {project.projectName}
-                </option>
-              ))}
-            </select>
+              options={projectSelectOptions}
+              emptyLabel="No linked project"
+              searchPlaceholder="Search projects"
+              onChange={(project) => setFormData({ ...formData, case: { ...formData.case, project } })}
+            />
             <button
               type="button"
               onClick={() => {
@@ -1424,18 +1712,14 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <div className={quickProductOpen ? "sm:col-span-2" : undefined}>
           <label className={labelClassName}>Product</label>
           <div className="flex gap-2">
-            <select
+            <SearchableSelect
+              label="Product"
               value={formData.case.product}
-              onChange={(event) => setFormData({ ...formData, case: { ...formData.case, product: event.target.value } })}
-              className={inputClassName}
-            >
-              <option value="">No linked product</option>
-              {products.map((product) => (
-                <option key={product.recordId} value={product.recordId}>
-                  {product.productName}
-                </option>
-              ))}
-            </select>
+              options={productSelectOptions}
+              emptyLabel="No linked product"
+              searchPlaceholder="Search products"
+              onChange={(product) => setFormData({ ...formData, case: { ...formData.case, product } })}
+            />
             <button
               type="button"
               onClick={() => {
@@ -1468,8 +1752,9 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               <MultiRecordDropdown
                 label="Mantis IDs"
                 values={formData.case.mantisIds}
-                options={mantisRecords}
-                getOptionLabel={(mantis) => mantis.mantisId || mantis.description}
+                options={mantisSelectOptions}
+                emptyLabel="Select Mantis IDs"
+                searchPlaceholder="Search Mantis ID, status, or description"
                 onChange={(mantisIds) => setFormData({ ...formData, case: { ...formData.case, mantisIds } })}
               />
             </div>
@@ -1503,8 +1788,9 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               <MultiRecordDropdown
                 label="Knock IDs"
                 values={formData.case.knockIds}
-                options={knocks}
-                getOptionLabel={(knock) => knock.knockId || knock.description}
+                options={knockSelectOptions}
+                emptyLabel="Select Knock IDs"
+                searchPlaceholder="Search Knock ID, status, or description"
                 onChange={(knockIds) => setFormData({ ...formData, case: { ...formData.case, knockIds } })}
               />
             </div>
@@ -1653,18 +1939,14 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       </div>
       <div>
         <label className={labelClassName}>SE Owner</label>
-        <select
+        <SearchableSelect
+          label="SE owner"
           value={formData.project.seOwner}
-          onChange={(event) => setFormData({ ...formData, project: { ...formData.project, seOwner: event.target.value } })}
-          className={inputClassName}
-        >
-          <option value="">No SE owner</option>
-          {activeAssignableUsers.map((assignableUser) => (
-            <option key={assignableUser.id} value={assignableUser.displayName}>
-              {assignableUserLabel(assignableUser)}
-            </option>
-          ))}
-        </select>
+          options={assignableUserSelectOptions}
+          emptyLabel="No SE owner"
+          searchPlaceholder="Search users"
+          onChange={(seOwner) => setFormData({ ...formData, project: { ...formData.project, seOwner } })}
+        />
       </div>
       <div>
         <label className={labelClassName}>Is Closed?</label>
@@ -1784,12 +2066,21 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <input
           type="text"
           value={formData.mantis.mantisId}
-          onChange={(event) => setFormData({ ...formData, mantis: { ...formData.mantis, mantisId: event.target.value } })}
+          onChange={(event) =>
+            setFormData({
+              ...formData,
+              mantis: {
+                ...formData.mantis,
+                mantisId: event.target.value,
+                mantisUrl: buildMantisUrl(event.target.value),
+              },
+            })
+          }
           className={inputClassName}
         />
       </div>
       <div>
-        <label className={labelClassName}>NFR Status</label>
+        <label className={labelClassName}>Status</label>
         <select
           value={formData.mantis.mantisStatus}
           onChange={(event) => setFormData({ ...formData, mantis: { ...formData.mantis, mantisStatus: event.target.value } })}
@@ -1821,8 +2112,9 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <input
           type="url"
           value={formData.mantis.mantisUrl}
-          onChange={(event) => setFormData({ ...formData, mantis: { ...formData.mantis, mantisUrl: event.target.value } })}
-          className={inputClassName}
+          readOnly
+          className={`${inputClassName} bg-gray-50 text-gray-700`}
+          placeholder="Generated from Mantis ID"
         />
       </div>
       <div>
@@ -1950,7 +2242,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         {triggerLabel ?? `Create ${entityLabel}`}
       </button>
 
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className={`max-h-[90vh] overflow-y-auto ${entityType === "case" ? "sm:max-w-4xl" : "sm:max-w-2xl"}`}>
         <DialogHeader>
           <DialogTitle>Create {entityLabel}</DialogTitle>
           <DialogDescription>Add a new {entityLabel.toLowerCase()} record.</DialogDescription>

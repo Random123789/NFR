@@ -13,7 +13,7 @@ import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
 import { useToast } from "../context/ToastContext";
 import { mantisStatusColors } from "../data/recordStyles";
-import { mantisCategories, mantisStatuses } from "../data/mantisOptions";
+import { buildMantisUrl, mantisCategories, mantisStatuses } from "../data/mantisOptions";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
 import { useLinkedCases } from "../hooks/useLinkedCases";
 import { useRecordComments } from "../hooks/useRecordComments";
@@ -24,6 +24,7 @@ import {
   type DetailRouteState,
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
+import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
 
 type MantisColumnKey = "mantisId" | "mantisUrl" | "description" | "category" | "mantisStatus" | "mantisRequestDate" | "mantisTargetDate";
@@ -41,7 +42,7 @@ const MANTIS_TABLE_COLUMNS: MantisTableColumn[] = [
   { key: "mantisUrl", label: "Mantis URL", sortKey: "mantisUrl", searchKey: "mantisUrl" },
   { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
   { key: "category", label: "Category", sortKey: "category", searchKey: "category" },
-  { key: "mantisStatus", label: "NFR Status", sortKey: "mantisStatus" },
+  { key: "mantisStatus", label: "Status", sortKey: "mantisStatus" },
   { key: "mantisRequestDate", label: "NFR Request Date", sortKey: "mantisRequestDate" },
   { key: "mantisTargetDate", label: "NFR Target Date", sortKey: "mantisTargetDate" },
 ];
@@ -61,7 +62,7 @@ export function Mantis() {
   const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { searchTerm } = useSearch();
-  const { mantisRecords, cases, getMantisById, upsertMantis } = useRecords();
+  const { accounts, projects, mantisRecords, cases, getMantisById, upsertMantis } = useRecords();
   const {
     selectedRecord: selectedMantis,
     setSelectedRecord: setSelectedMantis,
@@ -136,7 +137,7 @@ export function Mantis() {
       const saved = await updateMantis(editedMantis.recordId, {
         description: editedMantis.description,
         mantisId: editedMantis.mantisId,
-        mantisUrl: editedMantis.mantisUrl,
+        mantisUrl: buildMantisUrl(editedMantis.mantisId),
         category: editedMantis.category,
         mantisStatus: editedMantis.mantisStatus,
         mantisRequestDate: editedMantis.mantisRequestDate,
@@ -256,15 +257,17 @@ export function Mantis() {
   );
 
   const renderColumnCell = (mantis: typeof mantisRecords[0], column: MantisTableColumn) => {
+    const mantisUrl = mantis.mantisUrl || buildMantisUrl(mantis.mantisId);
+
     switch (column.key) {
       case "mantisId":
         return <td key={column.key} className="px-6 py-4 text-sm text-[#E31937] hover:underline whitespace-nowrap">{mantis.mantisId || "-"}</td>;
       case "mantisUrl":
         return (
           <td key={column.key} className="px-6 py-4 text-sm whitespace-nowrap">
-            {mantis.mantisUrl ? (
+            {mantisUrl ? (
               <a
-                href={mantis.mantisUrl}
+                href={mantisUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-[#E31937] hover:underline"
@@ -454,7 +457,13 @@ export function Mantis() {
                     <input
                       type="text"
                       value={editedMantis.mantisId ?? ""}
-                      onChange={(e) => setEditedMantis({ ...editedMantis, mantisId: e.target.value })}
+                      onChange={(e) =>
+                        setEditedMantis({
+                          ...editedMantis,
+                          mantisId: e.target.value,
+                          mantisUrl: buildMantisUrl(e.target.value),
+                        })
+                      }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -467,12 +476,13 @@ export function Mantis() {
                     <input
                       type="url"
                       value={editedMantis.mantisUrl ?? ""}
-                      onChange={(e) => setEditedMantis({ ...editedMantis, mantisUrl: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      placeholder="Generated from Mantis ID"
                     />
-                  ) : selectedMantis.mantisUrl ? (
-                    <a href={selectedMantis.mantisUrl} target="_blank" rel="noopener noreferrer" className="break-all text-[#E31937] hover:underline inline-flex items-center gap-1">
-                      {selectedMantis.mantisUrl}
+                  ) : selectedMantis.mantisUrl || buildMantisUrl(selectedMantis.mantisId) ? (
+                    <a href={selectedMantis.mantisUrl || buildMantisUrl(selectedMantis.mantisId)} target="_blank" rel="noopener noreferrer" className="break-all text-[#E31937] hover:underline inline-flex items-center gap-1">
+                      {selectedMantis.mantisUrl || buildMantisUrl(selectedMantis.mantisId)}
                       <ExternalLink className="w-3 h-3 shrink-0" />
                     </a>
                   ) : (
@@ -499,14 +509,14 @@ export function Mantis() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">NFR Status</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
                   {isEditing && editedMantis ? (
                     <select
                       value={editedMantis.mantisStatus ?? ""}
                       onChange={(e) => setEditedMantis({ ...editedMantis, mantisStatus: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
-                      <option value="">Select NFR status</option>
+                      <option value="">Select status</option>
                       {mantisStatuses.map((status) => (
                         <option key={status} value={status}>
                           {status}
@@ -574,7 +584,7 @@ export function Mantis() {
                         <option value="">Select a case</option>
                         {availableCases.map((caseItem) => (
                           <option key={caseItem.recordId} value={caseItem.recordId}>
-                            {caseItem.description}
+                            {formatRelatedCaseOption(caseItem, accounts, projects)}
                           </option>
                         ))}
                       </select>

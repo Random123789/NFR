@@ -1,9 +1,10 @@
-import { Bookmark, ExternalLink } from "lucide-react";
+import { Bookmark } from "lucide-react";
 import { useBookmarks } from "../context/BookmarksContext";
+import { useRecords } from "../context/RecordsContext";
 import { useNavigate } from "react-router";
-import { casePriorityColors, caseStatusColors, projectStageColors } from "../data/recordStyles";
 import { createOpenDetailState, getDetailRoute, type DetailEntityType } from "../navigation/detailNavigation";
 import { formatTimestampMinute } from "../utils/dateTime";
+import type { BookmarkedItem } from "../data/apiClient";
 
 const typeIcons: Record<string, string> = {
   'case': '📋',
@@ -23,8 +24,18 @@ const typeColors: Record<string, string> = {
   'product': 'bg-orange-50 border-orange-200',
 };
 
+function textValue(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed || "-";
+}
+
+function formatCaseId(recordId: string) {
+  return recordId.startsWith("REC-") ? recordId.replace("REC-", "CASE-") : recordId;
+}
+
 export function Bookmarked() {
   const { bookmarked, removeBookmark } = useBookmarks();
+  const { getAccountById, getCaseById, getKnockById, getMantisById, getProjectById } = useRecords();
   const navigate = useNavigate();
 
   const handleItemClick = (item: any) => {
@@ -53,6 +64,49 @@ export function Bookmarked() {
     'product': 'Products',
   };
 
+  const getBookmarkDisplay = (item: BookmarkedItem) => {
+    if (item.type === "mantis") {
+      const mantis = getMantisById(item.id);
+      return {
+        displayId: mantis?.mantisId || item.id,
+        title: mantis?.description || item.title,
+        details: mantis?.mantisStatus || item.subtitle,
+      };
+    }
+
+    if (item.type === "knock") {
+      const knock = getKnockById(item.id);
+      return {
+        displayId: knock?.knockId || item.id,
+        title: knock?.description || item.title,
+        details: knock?.status || item.subtitle,
+      };
+    }
+
+    if (item.type === "case") {
+      const caseRecord = getCaseById(item.id);
+      const accountName = getAccountById(caseRecord?.account)?.accountName || caseRecord?.account;
+      const projectName = getProjectById(caseRecord?.project)?.projectName || caseRecord?.project;
+      const relationship = `Account: ${textValue(accountName)} | Project: ${textValue(projectName)}`;
+      const statusLine = caseRecord
+        ? `${textValue(caseRecord.status)} - ${textValue(caseRecord.priority)}`
+        : item.subtitle;
+
+      return {
+        displayId: formatCaseId(item.id),
+        title: caseRecord?.description || item.title,
+        details: relationship,
+        secondaryDetails: statusLine,
+      };
+    }
+
+    return {
+      displayId: item.id,
+      title: item.title,
+      details: item.subtitle,
+    };
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -72,39 +126,45 @@ export function Bookmarked() {
             <div key={type}>
               <h2 className="text-lg font-semibold text-gray-900 mb-3">{typeLabels[type]}</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {items.map((item) => (
-                  <div
-                    key={`${item.type}-${item.id}`}
-                    className={`rounded-lg border p-4 cursor-pointer transition-all hover:shadow-md ${typeColors[item.type]}`}
-                    onClick={() => handleItemClick(item)}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xl">{typeIcons[item.type]}</span>
-                          <p className="font-medium text-gray-900 truncate">{item.id}</p>
+                {items.map((item) => {
+                  const display = getBookmarkDisplay(item);
+                  return (
+                    <div
+                      key={`${item.type}-${item.id}`}
+                      className={`rounded-lg border p-4 cursor-pointer transition-all hover:shadow-md ${typeColors[item.type]}`}
+                      onClick={() => handleItemClick(item)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xl">{typeIcons[item.type]}</span>
+                            <p className="font-medium text-gray-900 truncate">{display.displayId}</p>
+                          </div>
+                          <p className="text-sm text-gray-700 line-clamp-2">{display.title}</p>
+                          {display.details && (
+                            <p className="text-xs text-gray-600 mt-1 line-clamp-1">{display.details}</p>
+                          )}
+                          {display.secondaryDetails && (
+                            <p className="text-xs text-gray-500 mt-1">{display.secondaryDetails}</p>
+                          )}
+                          <p className="text-xs text-gray-500 mt-2">
+                            {formatTimestampMinute(item.timestamp)}
+                          </p>
                         </div>
-                        <p className="text-sm text-gray-700 line-clamp-2">{item.title}</p>
-                        {item.subtitle && (
-                          <p className="text-xs text-gray-600 mt-1">{item.subtitle}</p>
-                        )}
-                        <p className="text-xs text-gray-500 mt-2">
-                          {formatTimestampMinute(item.timestamp)}
-                        </p>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeBookmark(item.id, item.type);
+                          }}
+                          className="flex-shrink-0 text-gray-400 hover:text-red-600 transition-colors"
+                          title="Remove bookmark"
+                        >
+                          <Bookmark className="w-5 h-5 fill-current" />
+                        </button>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeBookmark(item.id, item.type);
-                        }}
-                        className="flex-shrink-0 text-gray-400 hover:text-red-600 transition-colors"
-                        title="Remove bookmark"
-                      >
-                        <Bookmark className="w-5 h-5 fill-current" />
-                      </button>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}

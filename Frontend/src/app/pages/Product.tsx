@@ -22,6 +22,7 @@ import {
   type DetailRouteState,
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
+import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
 
 type ProductColumnKey = "productName" | "productFamily" | "productUrl" | "updatedAt";
@@ -56,7 +57,7 @@ export function Product() {
   const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { searchTerm } = useSearch();
-  const { products, cases, getProductById, upsertProduct } = useRecords();
+  const { accounts, projects, products, cases, getProductById, upsertProduct } = useRecords();
   const {
     selectedRecord: selectedProduct,
     setSelectedRecord: setSelectedProduct,
@@ -483,7 +484,7 @@ export function Product() {
                         <option value="">Select a case</option>
                         {availableCases.map((caseItem) => (
                           <option key={caseItem.recordId} value={caseItem.recordId}>
-                            {caseItem.description}
+                            {formatRelatedCaseOption(caseItem, accounts, projects)}
                           </option>
                         ))}
                       </select>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
+import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, ExternalLink, Save, Bookmark } from "lucide-react";
 import { addProjectHistory, listAssignableUsers, updateProject, type AssignableUser, type ProjectRecord } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList, LinkedCasesList } from "../components/LinkedEntityCard";
@@ -24,6 +24,7 @@ import {
   type DetailRouteState,
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
+import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatUsdInteger, parseUsdIntegerInput } from "../utils/currency";
 import { formatTimestampMinute } from "../utils/dateTime";
 
@@ -52,6 +53,7 @@ const PROJECT_TABLE_COLUMNS: ProjectTableColumn[] = [
 const DEFAULT_PROJECT_COLUMN_KEYS = PROJECT_TABLE_COLUMNS.map((column) => column.key);
 const PROJECT_COLUMN_STORAGE_KEY = "projects.visibleTableColumns";
 const RELATED_CREATE_BUTTON_CLASS = "inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50";
+const SALESFORCE_URL_PREFIX = "https://fortinet.my.salesforce.com/";
 const PROJECT_DETAIL_TABS = [
   { key: "details", label: "Details" },
   { key: "linkedAccounts", label: "Linked Accounts" },
@@ -77,6 +79,13 @@ function createProjectPayload(project: ProjectRecord) {
       : parseUsdIntegerInput(String(project.sfdcValue ?? "")),
     metaData: project.metaData,
   };
+}
+
+function buildSalesforceUrl(sfdc: string | null | undefined) {
+  const trimmed = sfdc?.trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `${SALESFORCE_URL_PREFIX}${encodeURIComponent(trimmed)}`;
 }
 
 export function Projects() {
@@ -311,7 +320,7 @@ export function Projects() {
     ? `grid grid-cols-1 gap-3 sm:grid-cols-2 ${
         isEditing
           ? ""
-          : "[&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 [&>div]:gap-y-1 [&>div]:rounded-lg [&>div]:border [&>div]:border-gray-100 [&>div]:bg-gray-50 [&>div]:px-3 [&>div]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words"
+          : "[&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 [&>div]:gap-y-1 [&>div]:rounded-lg [&>div]:border [&>div]:border-gray-100 [&>div]:bg-gray-50 [&>div]:px-3 [&>div]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words [&_a]:min-w-0 [&_a]:flex-1 [&_a]:break-all"
       }`
     : "hidden";
 
@@ -400,7 +409,24 @@ export function Projects() {
           </td>
         );
       case "sfdc":
-        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{textValue(project.sfdc)}</td>;
+        return (
+          <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">
+            {buildSalesforceUrl(project.sfdc) ? (
+              <a
+                href={buildSalesforceUrl(project.sfdc)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[#E31937] hover:underline"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {project.sfdc}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              textValue(project.sfdc)
+            )}
+          </td>
+        );
       case "sfdcValue":
         return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{formatUsdInteger(project.sfdcValue)}</td>;
       default:
@@ -698,7 +724,19 @@ export function Projects() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
-                    <p className="text-gray-900">{textValue(selectedProject.sfdc)}</p>
+                    buildSalesforceUrl(selectedProject.sfdc) ? (
+                      <a
+                        href={buildSalesforceUrl(selectedProject.sfdc)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[#E31937] hover:underline"
+                      >
+                        {selectedProject.sfdc}
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </a>
+                    ) : (
+                      <p className="text-gray-900">{textValue(selectedProject.sfdc)}</p>
+                    )
                   )}
                 </div>
                 <div>
@@ -786,7 +824,7 @@ export function Projects() {
                           <option value="">Select a case</option>
                           {availableCases.map((caseItem) => (
                             <option key={caseItem.recordId} value={caseItem.recordId}>
-                              {caseItem.description}
+                              {formatRelatedCaseOption(caseItem, accounts, projects)}
                             </option>
                           ))}
                         </select>

@@ -5,14 +5,15 @@ import type {
   AuthUser,
   CreateUserRequest,
   ManagedUser,
+  UpdateManagedUserPasswordRequest,
   UpdateManagedUserRoleRequest,
   UpdateProfileRequest,
 } from './types';
 
-export async function login(email: string, password: string) {
+export async function login(identifier: string, password: string) {
   return fetchJson<AuthResponse>('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email: identifier, password }),
   });
 }
 
@@ -61,6 +62,13 @@ export async function createManagedUser(data: CreateUserRequest) {
 
 export async function updateManagedUserRole(userId: number, data: UpdateManagedUserRoleRequest) {
   return fetchJson<{ user: ManagedUser }>(`/auth/users/${userId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateManagedUserPassword(userId: number, data: UpdateManagedUserPasswordRequest) {
+  return fetchJson<{ success: boolean }>(`/auth/users/${userId}/password`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });

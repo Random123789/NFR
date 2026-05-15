@@ -1,0 +1,32 @@
+
+> @figma/my-make-file@0.0.1 dev
+> vite --host 127.0.0.1 --port 5173 --strictPort
+
+
+  [32m[1mVITE[22m v6.3.5[39m  [2mready in [0m[1m867[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2m5:30:11 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/index.css, /src/app/context/BookmarksContext.tsx, /src/app/context/AuthContext.tsx, /src/app/components/MainLayout.tsx[22m
+[2m5:30:11 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/styles/index.css, /src/app/context/BookmarksContext.tsx, /src/app/context/AuthContext.tsx, /src/app/components/MainLayout.tsx[22m
+[2m5:37:48 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/app/components/MainLayout.tsx, /src/styles/index.css[22m
+[2m5:47:03 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/data/mantisOptions.ts[22m
+[2m5:47:04 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/data/recordStyles.ts[22m
+[2m5:47:12 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m5:47:22 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m5:47:33 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m5:47:47 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m5:50:10 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:02:59 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/utils/caseLabels.ts[22m
+[2m6:03:08 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:03:39 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:03:49 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:08:29 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:08:54 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:09:05 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:09:17 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:09:32 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:09:48 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:09:59 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:10:52 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:11:02 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m
+[2m6:11:32 pm[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc/app/components/CreateEntityDialog.tsx[22m

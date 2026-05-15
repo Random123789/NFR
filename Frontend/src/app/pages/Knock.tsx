@@ -23,6 +23,7 @@ import {
   type DetailRouteState,
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
+import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
 
 type KnockColumnKey = "knockId" | "knockUrl" | "description" | "status" | "requestDate" | "targetDate";
@@ -59,7 +60,7 @@ export function Knock() {
   const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { searchTerm } = useSearch();
-  const { knocks, cases, getKnockById, upsertKnock } = useRecords();
+  const { accounts, projects, knocks, cases, getKnockById, upsertKnock } = useRecords();
   const {
     selectedRecord: selectedKnock,
     setSelectedRecord: setSelectedKnock,
@@ -542,7 +543,7 @@ export function Knock() {
                         <option value="">Select a case</option>
                         {availableCases.map((caseItem) => (
                           <option key={caseItem.recordId} value={caseItem.recordId}>
-                            {caseItem.description}
+                            {formatRelatedCaseOption(caseItem, accounts, projects)}
                           </option>
                         ))}
                       </select>

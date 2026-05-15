@@ -152,7 +152,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("mantis", "m", "mantisId", "Mantis ID"),
             _field("mantis", "m", "mantisUrl", "Mantis URL"),
             _field("mantis", "m", "category", "Mantis Category"),
-            _field("mantis", "m", "mantisStatus", "Mantis NFR Status"),
+            _field("mantis", "m", "mantisStatus", "Mantis Status"),
             _field("mantis", "m", "mantisRequestDate", "Mantis NFR Request Date", "date"),
             _field("mantis", "m", "mantisTargetDate", "Mantis NFR Target Date", "date"),
             _field("mantis", "m", "createdAt", "Mantis Created", "date"),

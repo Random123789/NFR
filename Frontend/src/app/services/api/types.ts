@@ -46,6 +46,10 @@ export interface UpdateManagedUserRoleRequest {
   vertical?: AccountVertical | null;
 }
 
+export interface UpdateManagedUserPasswordRequest {
+  password: string;
+}
+
 export interface BookmarkedItem {
   id: string;
   type: 'case' | 'project' | 'account' | 'mantis' | 'knock' | 'product';

@@ -1,6 +1,7 @@
 import { type MouseEvent, useEffect, useState } from "react";
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
 import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, Home, Info, LogOut, Package, Search, User, X } from "lucide-react";
+import fortinetIconUrl from "../../../FortinetIcon.png";
 import { useSearch } from "../context/SearchContext";
 import { useAuth } from "../context/AuthContext";
 import { formatRoleLabel } from "../data/roleLabels";
@@ -138,8 +139,8 @@ export function MainLayout() {
       <aside className="w-64 bg-[#1a1a1a] border-r border-gray-800 flex flex-col">
         <div className="p-6 border-b border-gray-800">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#E31937] rounded flex items-center justify-center">
-              <span className="text-white font-bold text-xl">F</span>
+            <div className="w-11 h-11 rounded flex items-center justify-center">
+              <img src={fortinetIconUrl} alt="Fortinet" className="w-10 h-10 object-contain" />
             </div>
             <div>
               <h1 className="font-bold text-lg text-white">Fortinet</h1>

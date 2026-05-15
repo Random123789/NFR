@@ -74,6 +74,10 @@ class UpdateUserRoleRequest(BaseModel):
     vertical: Optional[AccountVertical] = None
 
 
+class UpdateUserPasswordRequest(BaseModel):
+    password: str
+
+
 class ManagedUser(BaseModel):
     id: int
     email: str
@@ -91,6 +95,10 @@ class CreateUserResponse(BaseModel):
 
 class UpdateUserRoleResponse(BaseModel):
     user: ManagedUser
+
+
+class UpdateUserPasswordResponse(BaseModel):
+    success: bool
 
 
 def _hash_password(password: str, salt: Optional[str] = None) -> str:
@@ -326,22 +334,30 @@ async def require_admin_user(request: Request) -> dict:
 @router.post("/login", response_model=LoginResponse)
 async def login(data: LoginRequest) -> LoginResponse:
     await ensure_default_user()
-    user = await execute_query(
+    identifier = data.email.strip().lower()
+    use_username = 0 if "@" in identifier else 1
+    matching_users = await execute_query(
         """
         SELECT id, email, displayName, role, vertical, passwordHash, isActive
         FROM users
-        WHERE email = %s
-        LIMIT 1
+        WHERE LOWER(email) = %s
+           OR (%s = 1 AND LOWER(SUBSTRING_INDEX(email, '@', 1)) = %s)
+        ORDER BY CASE WHEN LOWER(email) = %s THEN 0 ELSE 1 END, id ASC
+        LIMIT 2
         """,
-        [data.email.lower()],
-        fetch_one=True,
+        [identifier, use_username, identifier, identifier],
     )
 
-    if not user or not user.get("isActive"):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if len(matching_users) != 1:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    user = matching_users[0]
+
+    if not user.get("isActive"):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
     if not _verify_password(data.password, user["passwordHash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
     token = secrets.token_urlsafe(32)
     expires_at = current_timestamp(datetime.now() + timedelta(days=TOKEN_TTL_DAYS))
@@ -624,3 +640,44 @@ async def update_user_role(request: Request, user_id: int, data: UpdateUserRoleR
     )
 
     return UpdateUserRoleResponse(user=ManagedUser(**refreshed))
+
+
+@router.put("/users/{user_id}/password", response_model=UpdateUserPasswordResponse)
+async def update_user_password(request: Request, user_id: int, data: UpdateUserPasswordRequest) -> UpdateUserPasswordResponse:
+    admin = await require_admin_user(request)
+
+    password = data.password.strip()
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    existing = await execute_query(
+        "SELECT id, email FROM users WHERE id = %s LIMIT 1",
+        [user_id],
+        fetch_one=True,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    now = _now()
+    await execute_mutation(
+        "UPDATE users SET passwordHash = %s, updatedAt = %s WHERE id = %s",
+        [_hash_password(password), now, user_id],
+    )
+
+    await execute_mutation(
+        """
+        INSERT INTO audit_logs (userId, userEmail, action, entityType, entityId, details, createdAt)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        [
+            admin["id"],
+            admin["email"],
+            "RESET_USER_PASSWORD",
+            "users",
+            str(user_id),
+            json.dumps({"targetEmail": existing["email"]}),
+            now,
+        ],
+    )
+
+    return UpdateUserPasswordResponse(success=True)

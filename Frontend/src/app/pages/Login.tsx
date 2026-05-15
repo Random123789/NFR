@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Navigate } from "react-router";
 import { useAuth } from "../context/AuthContext";
+import fortinetLogoUrl from "../../../FortinetLogo.png";
 
 export function Login() {
   const { user, login } = useAuth();
-  const [email, setEmail] = useState("admin@local");
+  const [loginIdentifier, setLoginIdentifier] = useState("admin");
   const [password, setPassword] = useState("Admin123!");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,7 +20,7 @@ export function Login() {
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
+      await login(loginIdentifier, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -31,19 +32,21 @@ export function Login() {
     <div className="min-h-screen bg-gradient-to-br from-gray-100 via-white to-red-50 flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
         <div className="mb-8">
+          <img src={fortinetLogoUrl} alt="Fortinet" className="h-16 w-auto mx-auto mb-7" />
           <h1 className="text-2xl font-bold text-gray-900">CRM Login</h1>
           <p className="text-sm text-gray-600 mt-1">Sign in to load your bookmarks and track your actions.</p>
         </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label htmlFor="login-identifier" className="block text-sm font-medium text-gray-700 mb-1">Username or email</label>
             <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              id="login-identifier"
+              type="text"
+              value={loginIdentifier}
+              onChange={(e) => setLoginIdentifier(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+              autoComplete="username"
               required
             />
           </div>
@@ -72,7 +75,7 @@ export function Login() {
         </form>
 
         <p className="text-xs text-gray-500 mt-6">
-          First run default account: admin@local / Admin123!
+          First run default account: admin or admin@local / Admin123!
         </p>
       </div>
     </div>

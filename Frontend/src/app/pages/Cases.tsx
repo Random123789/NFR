@@ -1357,7 +1357,7 @@ export function Cases() {
                     entities={linkedMantis}
                     fields={[
                       { label: "Mantis ID", key: "mantisId" },
-                      { label: "NFR Status", key: "mantisStatus" },
+                      { label: "Status", key: "mantisStatus" },
                       { label: "Target Date", key: "mantisTargetDate" },
                     ]}
                     onEntityClick={(recordId) => navigateToLinkedEntity("mantis", recordId)}

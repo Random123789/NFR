@@ -23,6 +23,7 @@ import {
   type DetailRouteState,
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
+import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
 
 type AccountColumnKey = "accountName" | "type" | "vertical" | "website";
@@ -571,11 +572,11 @@ export function Accounts() {
                           className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                         >
                           <option value="">Select a case</option>
-                          {availableCases.map((caseItem) => (
-                            <option key={caseItem.recordId} value={caseItem.recordId}>
-                              {caseItem.description}
-                            </option>
-                          ))}
+                            {availableCases.map((caseItem) => (
+                              <option key={caseItem.recordId} value={caseItem.recordId}>
+                                {formatRelatedCaseOption(caseItem, accounts, projects)}
+                              </option>
+                            ))}
                         </select>
                       </div>
                       <button

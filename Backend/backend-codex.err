@@ -1,0 +1,15 @@
+C:\Users\lmin\Documents\GitHub\AI\NFR\Backend\main.py:38: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:__main__:Backend PID: 12168
+INFO:__main__:Starting server on 0.0.0.0:4000
+INFO:__main__:Database: localhost:3306/mantis
+INFO:__main__:CORS Origins: http://localhost:5173, http://localhost:5174, http://127.0.0.1:5173, http://127.0.0.1:5174
+INFO:     Started server process [12168]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:4000 (Press CTRL+C to quit)

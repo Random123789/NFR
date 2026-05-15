@@ -1,6 +1,7 @@
 """Mantis endpoint router."""
 
 from typing import List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
 
@@ -20,6 +21,8 @@ from schemas import HistoryEntryCreate, MantisCreate, MantisRecord
 
 router = APIRouter(prefix="/mantis", tags=["mantis"])
 
+MANTIS_URL_PREFIX = "https://mantis.fortinet.com/bug_view_page.php?bug_id="
+
 MANTIS_CONFIG = EntityCrudConfig(
     table_name="mantis",
     record_prefix="MANTIS",
@@ -31,7 +34,7 @@ MANTIS_CONFIG = EntityCrudConfig(
         "mantisId": "Mantis ID",
         "mantisUrl": "Mantis URL",
         "category": "Category",
-        "mantisStatus": "NFR Status",
+        "mantisStatus": "Status",
         "mantisRequestDate": "NFR Request Date",
         "mantisTargetDate": "NFR Target Date",
         "metaData": "Metadata",
@@ -148,10 +151,22 @@ async def ensure_mantis_schema() -> None:
             WHEN 'Approved' THEN 'Scheduled'
             WHEN 'Rejected' THEN 'Dead'
             WHEN 'Implemented' THEN 'Completed'
+            WHEN 'resolved' THEN 'Resolved'
             ELSE mantisStatus
         END
-        WHERE mantisStatus IN ('new', 'concept commit', 'scheduled', 'completed', 'dead', 'Pending', 'In Review', 'Approved', 'Rejected', 'Implemented')
+        WHERE mantisStatus IN ('new', 'concept commit', 'scheduled', 'resolved', 'completed', 'dead', 'Pending', 'In Review', 'Approved', 'Rejected', 'Implemented')
         """
+    )
+
+    await execute_mutation(
+        """
+        UPDATE mantis
+        SET mantisUrl = CONCAT(%s, TRIM(mantisId))
+        WHERE mantisId IS NOT NULL
+          AND TRIM(mantisId) <> ''
+          AND (mantisUrl IS NULL OR TRIM(mantisUrl) = '')
+        """,
+        [MANTIS_URL_PREFIX],
     )
 
     if await _index_exists("mantis", "uniq_nfrs_mantisId"):
@@ -162,6 +177,14 @@ async def ensure_mantis_schema() -> None:
     await execute_mutation("UPDATE mantis SET moduleId = 'MOD-MANTIS' WHERE moduleId = 'MOD-NFR'")
     if await _table_exists("case_entity_links"):
         await execute_mutation("UPDATE case_entity_links SET entityType = 'mantis' WHERE entityType = 'nfr'")
+
+
+def _mantis_payload_with_url(data: MantisCreate) -> dict[str, object]:
+    payload = data.dict()
+    mantis_id = (data.mantisId or "").strip()
+    payload["mantisId"] = mantis_id or None
+    payload["mantisUrl"] = f"{MANTIS_URL_PREFIX}{quote(mantis_id, safe='')}" if mantis_id else None
+    return payload
 
 
 @router.get("", response_model=List[MantisRecord])
@@ -184,14 +207,14 @@ async def get_mantis(recordId: str) -> MantisRecord:
 async def create_mantis(data: MantisCreate, request: Request) -> MantisRecord:
     """Create a new Mantis record."""
     actor = await require_auth_user(request)
-    return await create_entity(MANTIS_CONFIG, data, actor["displayName"])
+    return await create_entity(MANTIS_CONFIG, _mantis_payload_with_url(data), actor["displayName"])
 
 
 @router.put("/{recordId}", response_model=MantisRecord)
 async def update_mantis(recordId: str, data: MantisCreate, request: Request) -> MantisRecord:
     """Update a Mantis record."""
     actor = await require_auth_user(request)
-    return await update_entity(MANTIS_CONFIG, recordId, data, actor["displayName"])
+    return await update_entity(MANTIS_CONFIG, recordId, _mantis_payload_with_url(data), actor["displayName"])
 
 
 @router.delete("/{recordId}")
