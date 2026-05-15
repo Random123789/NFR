@@ -1,9 +1,14 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { Briefcase, FolderKanban, AlertCircle, Clock3 } from "lucide-react";
+import { Briefcase, FolderKanban, AlertCircle, Clock3, ChevronDown, Plus, Settings2, Trash2, Edit2 } from "lucide-react";
 import { useRecords } from "../context/RecordsContext";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
 import type { AccountRecord, CaseRecord, ProjectRecord } from "../data/apiClient";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+import { Checkbox } from "../components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "../components/ui/dialog";
+import { caseStatuses, casePriorities } from "../data/caseOptions";
 
 type CaseItem = CaseRecord;
 
@@ -27,11 +32,14 @@ function getCasePeople(caseItem: CaseItem) {
   return [caseItem.assignedTo?.trim(), caseItem.seOwner?.trim()].filter(Boolean) as string[];
 }
 
-function caseMatchesOwnerFilter(caseItem: CaseItem, selectedOwner: string) {
-  if (selectedOwner === "All Owners") return true;
+function caseMatchesOwnerFilter(caseItem: CaseItem, selectedOwners: string[]) {
+  if (selectedOwners.length === 0) return true;
 
   const people = getCasePeople(caseItem);
-  return selectedOwner === "Unassigned" ? people.length === 0 : people.includes(selectedOwner);
+  if (people.length === 0) {
+    return selectedOwners.includes("Unassigned");
+  }
+  return people.some(p => selectedOwners.includes(p));
 }
 
 function buildActivityTrend(cases: CaseRecord[], accounts: AccountRecord[], projects: ProjectRecord[]) {
@@ -73,9 +81,83 @@ function buildActivityTrend(cases: CaseRecord[], accounts: AccountRecord[], proj
   }));
 }
 
+export type CustomWidgetConfig = {
+  id: string;
+  title: string;
+  daysToClose?: number | null;
+  statusFilter?: string | null;
+  priorityFilter?: string | null;
+};
+
 export function Home() {
   const { cases, accounts, projects } = useRecords();
-  const [selectedOwner, setSelectedOwner] = useState("All Owners");
+  const [selectedOwners, setSelectedOwners] = useState<string[]>([]);
+  const navigate = useNavigate();
+
+  // Load custom widgets from localStorage
+  const [customWidgets, setCustomWidgets] = useState<CustomWidgetConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem("nfr_custom_widgets_v1");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [isWidgetModalOpen, setIsWidgetModalOpen] = useState(false);
+  const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
+  const [widgetForm, setWidgetForm] = useState({
+    title: "",
+    daysToClose: "",
+    statusFilter: "All",
+    priorityFilter: "All",
+  });
+
+  const saveCustomWidgets = (widgets: CustomWidgetConfig[]) => {
+    setCustomWidgets(widgets);
+    localStorage.setItem("nfr_custom_widgets_v1", JSON.stringify(widgets));
+  };
+
+  const openNewWidgetModal = () => {
+    setEditingWidgetId(null);
+    setWidgetForm({ title: "My Custom Widget", daysToClose: "", statusFilter: "All", priorityFilter: "All" });
+    setIsWidgetModalOpen(true);
+  };
+
+  const openEditWidgetModal = (widget: CustomWidgetConfig, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingWidgetId(widget.id);
+    setWidgetForm({
+      title: widget.title,
+      daysToClose: widget.daysToClose?.toString() || "",
+      statusFilter: widget.statusFilter || "All",
+      priorityFilter: widget.priorityFilter || "All",
+    });
+    setIsWidgetModalOpen(true);
+  };
+
+  const saveWidget = () => {
+    if (!widgetForm.title.trim()) return;
+    const newWidget: CustomWidgetConfig = {
+      id: editingWidgetId || Math.random().toString(36).substring(7),
+      title: widgetForm.title.trim(),
+      daysToClose: widgetForm.daysToClose ? parseInt(widgetForm.daysToClose, 10) : null,
+      statusFilter: widgetForm.statusFilter !== "All" ? widgetForm.statusFilter : null,
+      priorityFilter: widgetForm.priorityFilter !== "All" ? widgetForm.priorityFilter : null,
+    };
+    
+    if (editingWidgetId) {
+      saveCustomWidgets(customWidgets.map(w => w.id === editingWidgetId ? newWidget : w));
+    } else {
+      saveCustomWidgets([...customWidgets, newWidget]);
+    }
+    setIsWidgetModalOpen(false);
+  };
+
+  const removeWidget = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    saveCustomWidgets(customWidgets.filter(w => w.id !== id));
+  };
 
   const casesByStatus = [
     { id: "home-status-new", name: "New", value: cases.filter(c => c.status === "New").length },
@@ -91,16 +173,16 @@ export function Home() {
   const sortedCases = [...cases].sort((left, right) => right.recordId.localeCompare(left.recordId));
 
   const recentCases = sortedCases.slice(0, 8);
-  const ownerFilters = ["All Owners", ...new Set(recentCases.flatMap((caseItem) => {
+  const ownerFilters = [...new Set(recentCases.flatMap((caseItem) => {
     const people = getCasePeople(caseItem);
     return people.length > 0 ? people : ["Unassigned"];
   }))];
-  const filteredRecentCases = recentCases.filter((caseItem) => caseMatchesOwnerFilter(caseItem, selectedOwner));
+  const filteredRecentCases = recentCases.filter((caseItem) => caseMatchesOwnerFilter(caseItem, selectedOwners));
 
   const filteredNewCases = filteredRecentCases.filter((caseItem) => caseItem.status === "New").length;
+  const filteredAckCases = filteredRecentCases.filter((caseItem) => caseItem.status === "Acknowledged").length;
   const filteredEscalatedCases = filteredRecentCases.filter((caseItem) => caseItem.status === "Escalated").length;
-  const filteredAssignedCases = filteredRecentCases.filter((caseItem) => Boolean(caseItem.assignedTo)).length;
-  const filteredClosedCases = filteredRecentCases.filter((caseItem) => caseItem.status === "Closed-Resolved" || caseItem.status === "Closed-Dead").length;
+  const filteredMonitoringCases = filteredRecentCases.filter((caseItem) => caseItem.status === "Monitoring").length;
 
   const stats = [
     {
@@ -109,7 +191,17 @@ export function Home() {
       change: "Needs attention",
       trend: "up",
       icon: Briefcase,
-      color: "bg-[#E31937]"
+      color: "bg-[#E31937]",
+      filterState: { statusFilter: "New" }
+    },
+    {
+      label: "Acknowledged Cases",
+      value: filteredAckCases.toString(),
+      change: "In progress",
+      trend: "neutral",
+      icon: FolderKanban,
+      color: "bg-[#2c3e50]",
+      filterState: { statusFilter: "Acknowledged" }
     },
     {
       label: "Escalated Cases",
@@ -117,36 +209,99 @@ export function Home() {
       change: "Requires follow-up",
       trend: "down",
       icon: AlertCircle,
-      color: "bg-[#c41230]"
+      color: "bg-[#c41230]",
+      filterState: { statusFilter: "Escalated" }
     },
     {
-      label: "Assigned Cases",
-      value: filteredAssignedCases.toString(),
-      change: "Has assignee",
+      label: "Monitoring Cases",
+      value: filteredMonitoringCases.toString(),
+      change: "Pending resolution",
       trend: "neutral",
       icon: Clock3,
-      color: "bg-[#2c3e50]"
-    },
-    {
-      label: "Closed Cases",
-      value: filteredClosedCases.toString(),
-      change: "Completed",
-      trend: "neutral",
-      icon: FolderKanban,
-      color: "bg-[#666666]"
+      color: "bg-[#666666]",
+      filterState: { statusFilter: "Monitoring" }
     },
   ];
 
+  const dynamicWidgets = customWidgets.map((widget) => {
+    const matchingCases = filteredRecentCases.filter(c => {
+      let match = true;
+      if (widget.statusFilter && c.status !== widget.statusFilter) match = false;
+      if (widget.priorityFilter && c.priority !== widget.priorityFilter) match = false;
+      if (widget.daysToClose && widget.daysToClose > 0) {
+          if (!c.closeDate) {
+              match = false;
+          } else {
+              const daysDiff = (new Date(c.closeDate).getTime() - Date.now()) / (1000 * 3600 * 24);
+              if (daysDiff < 0 || daysDiff > widget.daysToClose) match = false;
+          }
+      }
+      return match;
+    });
+
+    let customFilterState: any = {};
+    if (widget.statusFilter) customFilterState.statusFilter = widget.statusFilter;
+    if (widget.priorityFilter) customFilterState.priorityFilter = widget.priorityFilter;
+    if (widget.daysToClose) customFilterState.daysToCloseFilter = widget.daysToClose;
+
+    let subMsg = "Custom filter";
+    if (widget.daysToClose) subMsg = `Next ${widget.daysToClose} days`;
+    else if (widget.priorityFilter) subMsg = `${widget.priorityFilter} Priority`;
+
+    return {
+      id: widget.id,
+      label: widget.title,
+      value: matchingCases.length.toString(),
+      change: subMsg,
+      trend: "neutral" as const,
+      icon: Settings2,
+      color: "bg-[#0f172a]",
+      isCustom: true,
+      originalWidget: widget,
+      filterState: customFilterState
+    };
+  });
+
+  const allStats = [...stats, ...dynamicWidgets];
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Home</h1>
-        <p className="text-gray-600 mt-1">Overview of your metrics and activity</p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Home</h1>
+          <p className="text-gray-600 mt-1">Overview of your metrics and activity</p>
+        </div>
+        <button 
+          onClick={openNewWidgetModal}
+          className="flex items-center gap-2 rounded-md bg-[#E31937] px-4 py-2 text-sm font-medium text-white hover:bg-[#c41230] focus:outline-none focus:ring-2 focus:ring-[#E31937] focus:ring-offset-2 transition-colors"
+        >
+          <Plus className="h-4 w-4" /> Add Widget
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {stats.map((stat) => (
-          <div key={stat.label} className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+        {allStats.map((stat) => (
+          <div 
+            key={stat.label + (stat.id || "")} 
+            className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 cursor-pointer hover:shadow-md transition-shadow relative group"
+            onClick={() => navigate('/cases', { state: stat.filterState })}
+          >
+            {'isCustom' in stat && stat.isCustom && (
+              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button 
+                  onClick={(e) => openEditWidgetModal((stat as any).originalWidget, e)}
+                  className="p-1 text-gray-400 hover:text-blue-600 focus:outline-none"
+                >
+                  <Edit2 className="h-4 w-4" />
+                </button>
+                <button 
+                  onClick={(e) => removeWidget(stat.id, e)}
+                  className="p-1 text-gray-400 hover:text-red-600 focus:outline-none"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div className="flex-1">
                 <p className="text-sm text-gray-600">{stat.label}</p>
@@ -210,20 +365,32 @@ export function Home() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {ownerFilters.map((owner) => (
-              <button
-                key={owner}
-                type="button"
-                onClick={() => setSelectedOwner(owner)}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                  selectedOwner === owner
-                    ? "bg-[#E31937] text-white shadow-sm"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                }`}
-              >
-                {owner}
-              </button>
-            ))}
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#E31937]">
+                  Filter Owners <ChevronDown className="h-4 w-4" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-56 p-2 bg-white rounded-md shadow-md border border-gray-200">
+                <div className="space-y-1 max-h-64 overflow-y-auto">
+                  {ownerFilters.map((owner) => (
+                    <label key={owner} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer p-2 hover:bg-gray-50 rounded">
+                      <Checkbox 
+                         checked={selectedOwners.includes(owner)}
+                         onCheckedChange={(checked) => {
+                           if (checked) {
+                             setSelectedOwners(prev => [...prev, owner]);
+                           } else {
+                             setSelectedOwners(prev => prev.filter(o => o !== owner));
+                           }
+                         }}
+                      />
+                      {owner}
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -240,7 +407,11 @@ export function Home() {
             <tbody className="divide-y divide-gray-200">
               {filteredRecentCases.length > 0 ? (
                 filteredRecentCases.map((caseItem) => (
-                  <tr key={caseItem.recordId} className="hover:bg-gray-50 transition-colors">
+                  <tr 
+                    key={caseItem.recordId} 
+                    className="hover:bg-gray-50 transition-colors cursor-pointer"
+                    onClick={() => navigate('/cases', { state: { openDetail: { entityType: 'case', recordId: caseItem.recordId } } })}
+                  >
                     <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={caseItem.description}>
                       {caseItem.description}
                     </td>
@@ -269,6 +440,84 @@ export function Home() {
           </table>
         </div>
       </div>
+
+      {isWidgetModalOpen && (
+        <Dialog open={isWidgetModalOpen} onOpenChange={setIsWidgetModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{editingWidgetId ? "Edit Custom Widget" : "Create Custom Widget"}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Widget Title <span className="text-red-500">*</span></label>
+                <input 
+                  type="text" 
+                  value={widgetForm.title}
+                  onChange={e => setWidgetForm({ ...widgetForm, title: e.target.value })}
+                  placeholder="e.g. Critical Bug Cases"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Status Filter</label>
+                <select 
+                  value={widgetForm.statusFilter}
+                  onChange={e => setWidgetForm({ ...widgetForm, statusFilter: e.target.value })}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+                >
+                  <option value="All">All Statuses</option>
+                  {caseStatuses.map(status => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Priority Filter</label>
+                <select 
+                  value={widgetForm.priorityFilter}
+                  onChange={e => setWidgetForm({ ...widgetForm, priorityFilter: e.target.value })}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"
+                >
+                  <option value="All">All Priorities</option>
+                  {casePriorities.map(priority => (
+                    <option key={priority} value={priority}>{priority}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Closing Within (Days)</label>
+                <input 
+                  type="number" 
+                  min="0"
+                  value={widgetForm.daysToClose}
+                  onChange={e => setWidgetForm({ ...widgetForm, daysToClose: e.target.value })}
+                  placeholder="e.g. 60"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <button 
+                onClick={() => setIsWidgetModalOpen(false)}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={saveWidget}
+                disabled={!widgetForm.title.trim()}
+                className="rounded-md bg-[#E31937] px-4 py-2 text-sm font-medium text-white hover:bg-[#c41230] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save Widget
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
     </div>
   );
 }

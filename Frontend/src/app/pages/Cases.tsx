@@ -252,8 +252,10 @@ export function Cases() {
   });
 
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string>("All");
-  const [priorityFilter, setPriorityFilter] = useState<string>("All");
+  const locationState = location.state as any;
+  const [statusFilter, setStatusFilter] = useState<string>(locationState?.statusFilter || "All");
+  const [priorityFilter, setPriorityFilter] = useState<string>(locationState?.priorityFilter || "All");
+  const [daysToCloseFilter, setDaysToCloseFilter] = useState<number | null>(locationState?.daysToCloseFilter ?? null);
   const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
   const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useStoredColumnKeys<CaseColumnKey>(CASE_COLUMN_STORAGE_KEY, DEFAULT_CASE_COLUMN_KEYS);
   const [caseLinks, setCaseLinks] = useState<CaseLinksResponse | null>(null);
@@ -408,6 +410,12 @@ export function Cases() {
   const filteredCases = cases.filter((caseItem) => {
     if (statusFilter !== "All" && caseItem.status !== statusFilter) return false;
     if (priorityFilter !== "All" && caseItem.priority !== priorityFilter) return false;
+    
+    if (daysToCloseFilter !== null) {
+      if (!caseItem.closeDate) return false;
+      const daysDiff = (new Date(caseItem.closeDate).getTime() - Date.now()) / (1000 * 3600 * 24);
+      if (daysDiff < 0 || daysDiff > daysToCloseFilter) return false;
+    }
 
     const mantisMatch = caseItem.mantisId ? getMantisByMantisId(caseItem.mantisId) : null;
     const knockMatch = caseItem.knockId ? getKnockByKnockId(caseItem.knockId) : null;
@@ -663,7 +671,7 @@ export function Cases() {
     ? `grid grid-cols-1 gap-3 sm:grid-cols-2 ${
         isEditing
           ? ""
-          : "[&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 [&>div]:gap-y-1 [&>div]:rounded-lg [&>div]:border [&>div]:border-gray-100 [&>div]:bg-gray-50 [&>div]:px-3 [&>div]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words"
+          : "[&>.detail-cell]:flex [&>.detail-cell]:min-w-0 [&>.detail-cell]:items-baseline [&>.detail-cell]:gap-x-2 [&>.detail-cell]:gap-y-1 [&>.detail-cell]:rounded-lg [&>.detail-cell]:border [&>.detail-cell]:border-gray-100 [&>.detail-cell]:bg-gray-50 [&>.detail-cell]:px-3 [&>.detail-cell]:py-2 [&_label]:mb-0 [&_label]:shrink-0 [&_label]:font-semibold [&_label]:after:content-[':'] [&_p]:min-w-0 [&_p]:flex-1 [&_p]:break-words"
       }`
     : "hidden";
 
@@ -853,29 +861,50 @@ export function Cases() {
                 <DetailTabs tabs={CASE_DETAIL_TABS} activeTab={activeDetailTab} onChange={setActiveDetailTab} />
 
               <div className={detailGridClassName}>
-                <div className="order-1">
-                  <label className="mb-1 block text-sm font-medium text-gray-600">Status</label>
-                  {isEditing && editedCase ? (
-                    <select
-                      value={editedCase.status || ""}
-                      onChange={(event) => setEditedCase({ ...editedCase, status: event.target.value })}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">No status</option>
-                      <option value="New">New</option>
-                      <option value="Acknowledged">Acknowledged</option>
-                      <option value="Escalated">Escalated</option>
-                      <option value="Monitoring">Monitoring</option>
-                      <option value="Closed-Resolved">Closed-Resolved</option>
-                      <option value="Closed-Dead">Closed-Dead</option>
-                    </select>
-                  ) : (
-                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${caseStatusColors[selectedCase.status || ""] ?? "bg-gray-100 text-gray-700"}`}>
-                      {textValue(selectedCase.status)}
-                    </span>
-                  )}
+                <div className="order-1 sm:col-span-2 rounded-xl border border-gray-200 bg-gray-50/50 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className={`detail-cell ${!isEditing ? "flex items-center gap-2 whitespace-nowrap" : ""}`}>
+                    <label className={`${!isEditing ? "mb-0 shrink-0 font-semibold after:content-[':']" : "mb-1 block"} text-sm font-medium text-gray-600`}>Escalation Status</label>
+                    {isEditing && editedCase ? (
+                      <select
+                        value={editedCase.status || ""}
+                        onChange={(event) => setEditedCase({ ...editedCase, status: event.target.value })}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      >
+                        <option value="">No status</option>
+                        <option value="New">New</option>
+                        <option value="Acknowledged">Acknowledged</option>
+                        <option value="Escalated">Escalated</option>
+                        <option value="Monitoring">Monitoring</option>
+                        <option value="Closed-Resolved">Closed-Resolved</option>
+                        <option value="Closed-Dead">Closed-Dead</option>
+                      </select>
+                    ) : (
+                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${caseStatusColors[selectedCase.status || ""] ?? "bg-gray-100 text-gray-700"}`}>
+                        {textValue(selectedCase.status)}
+                      </span>
+                    )}
+                  </div>
+                  <div className={`detail-cell ${!isEditing ? "flex items-center gap-2 whitespace-nowrap" : ""}`}>
+                    <label className={`${!isEditing ? "mb-0 shrink-0 font-semibold after:content-[':']" : "mb-1 block"} text-sm font-medium text-gray-600`}>Assigned To</label>
+                    {isEditing && editedCase ? (
+                      <select
+                        value={editedCase.assignedTo || ""}
+                        onChange={(event) => setEditedCase({ ...editedCase, assignedTo: event.target.value })}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      >
+                        <option value="">Unassigned</option>
+                        {assignableUsers.map((assignableUser) => (
+                          <option key={assignableUser.id} value={assignableUser.displayName}>
+                            {assigneeLabel(assignableUser)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <AssignedToBadge value={selectedCase.assignedTo} />
+                    )}
+                  </div>
                 </div>
-                <div className="order-2">
+                <div className="order-2 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Priority</label>
                   {isEditing && editedCase ? (
                     <select
@@ -896,26 +925,7 @@ export function Cases() {
                     </span>
                   )}
                 </div>
-                <div className="order-3">
-                  <label className="mb-1 block text-sm font-medium text-gray-600">Assigned To</label>
-                  {isEditing && editedCase ? (
-                    <select
-                      value={editedCase.assignedTo || ""}
-                      onChange={(event) => setEditedCase({ ...editedCase, assignedTo: event.target.value })}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">Unassigned</option>
-                      {assignableUsers.map((assignableUser) => (
-                        <option key={assignableUser.id} value={assignableUser.displayName}>
-                          {assigneeLabel(assignableUser)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <AssignedToBadge value={selectedCase.assignedTo} />
-                  )}
-                </div>
-                <div className="order-4">
+                <div className="order-4 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">SE Owner</label>
                   {isEditing && editedCase ? (
                     <select
@@ -934,7 +944,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(selectedCase.seOwner)}</p>
                   )}
                 </div>
-                <div className="order-5">
+                <div className="order-5 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Account</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -965,7 +975,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(account?.accountName || selectedCase.account)}</p>
                   )}
                 </div>
-                <div className="order-6">
+                <div className="order-6 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Product</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -996,7 +1006,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(product?.productName || selectedCase.product)}</p>
                   )}
                 </div>
-                <div className="order-7">
+                <div className="order-7 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Project</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1028,7 +1038,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(project?.projectName || selectedCase.project)}</p>
                   )}
                 </div>
-                <div className="order-8">
+                <div className="order-8 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Knock IDs</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1057,7 +1067,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(linkedKnocks.length > 0 ? linkedKnocks.map((item) => item.knockId).filter(Boolean).join(", ") : knock?.knockId || selectedCase.knockId)}</p>
                   )}
                 </div>
-                <div className="order-9">
+                <div className="order-9 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Mantis IDs</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1086,7 +1096,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(linkedMantis.length > 0 ? linkedMantis.map((item) => item.mantisId).filter(Boolean).join(", ") : mantis?.mantisId || selectedCase.mantisId)}</p>
                   )}
                 </div>
-                <div className="order-10">
+                <div className="order-10 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Category</label>
                   {isEditing && editedCase ? (
                     <select
@@ -1105,7 +1115,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(selectedCase.category)}</p>
                   )}
                 </div>
-                <div className="order-11">
+                <div className="order-11 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Close Date</label>
                   {isEditing && editedCase ? (
                     <input
@@ -1118,7 +1128,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(selectedCase.closeDate)}</p>
                   )}
                 </div>
-                <div className="order-12">
+                <div className="order-12 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Escalation Type</label>
                   {isEditing && editedCase ? (
                     <select
