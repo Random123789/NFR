@@ -94,8 +94,10 @@ The backend connects through a pooled MySQL connector using these environment va
 The frontend API base is:
 
 ```text
-VITE_API_URL, or http://localhost:4000/api when not set
+VITE_API_URL, or /api when not set
 ```
+
+In local Vite development, `/api` is proxied to `http://localhost:4000`. In Apache deployment, Apache serves the frontend and proxies `/api` to the same backend.
 
 ### Backend Entry Points
 
@@ -525,7 +527,7 @@ Get-Content .\sql\seed.sql | mysql -u root -p crm
 
 | Symptom | Checks |
 | --- | --- |
-| Frontend cannot reach API | Confirm backend is running on port `4000` and `VITE_API_URL` points to `http://localhost:4000/api`. |
+| Frontend cannot reach API | Confirm backend is running on port `4000`. In Vite dev, `/api` should proxy to that backend; in Apache, the virtual host should proxy `/api` to `127.0.0.1:4000`. |
 | Login fails on first run | Confirm MySQL is reachable and startup hooks created the default user. |
 | `/health` says database disconnected | Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME`. |
 | Empty pages after login | Check backend logs and browser console for failed initialization calls. |

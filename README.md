@@ -12,7 +12,8 @@ For a fuller system guide covering services, frontend/backend interactions, APIs
 
 1. The frontend calls the backend API using `VITE_API_URL`.
 2. If `VITE_API_URL` is not set, the frontend defaults to:
-   - `http://localhost:4000/api`
+   - `/api`
+3. During local Vite development, `/api` is proxied to `http://localhost:4000`.
 3. The FastAPI app acts as a local API gateway and mounts Python service modules such as `accountService`, `authService`, `caseService`, and `reportsService`.
 4. Each service owns its API routes and uses the shared MySQL connection layer.
 5. MySQL stores all records (`accounts`, `cases`, `projects`, `products`, `mantis`, `knocks`, `users`).
@@ -34,7 +35,7 @@ Frontend UI updates
 ## Important Configuration Notes
 
 - Frontend API base is in `Frontend/src/app/services/api/http.ts` and re-exported through `Frontend/src/app/data/apiClient.ts`.
-- Frontend default API URL is `http://localhost:4000/api`.
+- Frontend default API URL is `/api`; Vite proxies it to `http://localhost:4000` in development.
 - Python backend default port is `4000`.
 - Backend services are mounted in `Backend/service_registry.py`.
 - Python backend DB env variables use:
@@ -131,6 +132,8 @@ If needed, add a `.env` in `Frontend/`:
 ```env
 VITE_API_URL=http://localhost:4000/api
 ```
+
+This is optional for normal local development because `npm run dev` proxies `/api` to the backend.
 
 ### 4) MySQL Import Commands by OS
 

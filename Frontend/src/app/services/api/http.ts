@@ -1,6 +1,6 @@
 import { normalizeApiTimestamps } from "../../utils/dateTime";
 
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+export const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
 
 const AUTH_TOKEN_KEY = 'mantis_auth_token';
 
