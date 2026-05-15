@@ -39,8 +39,9 @@ Frontend UI updates
 - Backend services are mounted in `Backend/service_registry.py`.
 - Python backend DB env variables use:
   - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-- SQL schema currently creates database **`mantis`** (`Backend/sql/schema.sql`).
-- The Python backend default database name is also **`mantis`**. If a local `.env` still refers to an older database name, update it or import the SQL into that database intentionally.
+- SQL schema currently creates database **`crm`** (`Backend/sql/schema.sql`).
+- The Python backend default database name is also **`crm`**. If a local `.env` still refers to the older `mantis` database name, update it or import the SQL into that database intentionally.
+- The Mantis application component and its table remain named `mantis`; only the database name/credentials use `crm`.
 
 ## Quick Start (Local)
 
@@ -133,20 +134,20 @@ VITE_API_URL=http://localhost:4000/api
 
 ### 4) MySQL Import Commands by OS
 
-Use a consistent database name in SQL import and backend env vars (recommended: `mantis`).
+Use a consistent database name in SQL import and backend env vars (recommended: `crm`).
 
 Windows (PowerShell):
 
 ```bash
 Get-Content .\sql\schema.sql | mysql -u root -p
-Get-Content .\sql\seed.sql | mysql -u root -p mantis
+Get-Content .\sql\seed.sql | mysql -u root -p crm
 ```
 
 Linux/macOS (bash/zsh):
 
 ```bash
 mysql -u root -p < sql/schema.sql
-mysql -u root -p mantis < sql/seed.sql
+mysql -u root -p crm < sql/seed.sql
 ```
 
 ## API and Health Check

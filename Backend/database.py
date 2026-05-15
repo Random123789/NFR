@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Create connection pool
 try:
     db_pool = pooling.MySQLConnectionPool(
-        pool_name="mantis_pool",
+        pool_name="crm_pool",
         pool_size=5,
         pool_reset_session=True,
         host=settings.db_host,

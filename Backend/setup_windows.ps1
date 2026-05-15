@@ -1,6 +1,6 @@
 param(
     [string]$PythonCommand = "py -3.12",
-    [string]$DatabaseName = "mantis",
+    [string]$DatabaseName = "crm",
     [string]$MysqlUser = "root"
 )
 
@@ -17,7 +17,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 Write-Host "Applying schema..."
-Get-Content .\sql\schema.sql | mysql -u $MysqlUser -p $DatabaseName
+Get-Content .\sql\schema.sql | mysql -u $MysqlUser -p
 
 Write-Host "Applying seed data..."
 Get-Content .\sql\seed.sql | mysql -u $MysqlUser -p $DatabaseName

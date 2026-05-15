@@ -64,7 +64,7 @@ The backend is a FastAPI app in `Backend/main.py`.
 
 ### Database
 
-The database is MySQL. The default database name is `mantis`.
+The database is MySQL. The default database name is `crm`. The Mantis record feature still uses the `mantis` table and `/api/mantis` routes.
 
 The backend connects through a pooled MySQL connector using these environment variables:
 
@@ -74,7 +74,7 @@ The backend connects through a pooled MySQL connector using these environment va
 | `DB_PORT` | `3306` |
 | `DB_USER` | `root` |
 | `DB_PASSWORD` | empty |
-| `DB_NAME` | `mantis` |
+| `DB_NAME` | `crm` |
 | `HOST` | `0.0.0.0` |
 | `PORT` | `4000` |
 | `CORS_ORIGIN` | `http://localhost:5173` |
@@ -481,7 +481,7 @@ Import schema and seed data:
 ```bash
 cd Backend
 mysql -u root -p < sql/schema.sql
-mysql -u root -p mantis < sql/seed.sql
+mysql -u root -p crm < sql/seed.sql
 ```
 
 On Windows PowerShell:
@@ -489,7 +489,7 @@ On Windows PowerShell:
 ```powershell
 cd Backend
 Get-Content .\sql\schema.sql | mysql -u root -p
-Get-Content .\sql\seed.sql | mysql -u root -p mantis
+Get-Content .\sql\seed.sql | mysql -u root -p crm
 ```
 
 ## 13. Extending the System

@@ -6,7 +6,7 @@ This is the quick path for running the Mantis app on Ubuntu. It focuses only on 
 
 - Frontend: React + Vite at `http://localhost:5173`
 - Backend: FastAPI at `http://localhost:4000`
-- Database: MySQL database named `mantis`
+- Database: MySQL database named `crm`
 
 ## 1. Install System Dependencies
 
@@ -54,9 +54,9 @@ From the repository root:
 
 ```bash
 sudo mysql <<'SQL'
-CREATE DATABASE IF NOT EXISTS mantis;
-CREATE USER IF NOT EXISTS 'mantis_user'@'localhost' IDENTIFIED BY 'mantis_password';
-GRANT ALL PRIVILEGES ON mantis.* TO 'mantis_user'@'localhost';
+CREATE DATABASE IF NOT EXISTS crm;
+CREATE USER IF NOT EXISTS 'crm_user'@'localhost' IDENTIFIED BY 'crm_password';
+GRANT ALL PRIVILEGES ON crm.* TO 'crm_user'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 ```
@@ -65,8 +65,10 @@ Import the schema and seed data:
 
 ```bash
 sudo mysql < Backend/sql/schema.sql
-sudo mysql mantis < Backend/sql/seed.sql
+sudo mysql crm < Backend/sql/seed.sql
 ```
+
+The Mantis record component/table remains named `mantis`; these `crm` values are only for the MySQL database and login.
 
 ## 4. Set Up the Backend
 
@@ -86,9 +88,9 @@ Create `Backend/.env`:
 cat > .env <<'EOF'
 DB_HOST=localhost
 DB_PORT=3306
-DB_USER=mantis_user
-DB_PASSWORD=mantis_password
-DB_NAME=mantis
+DB_USER=crm_user
+DB_PASSWORD=crm_password
+DB_NAME=crm
 
 HOST=0.0.0.0
 PORT=4000
