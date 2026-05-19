@@ -24,10 +24,13 @@ import {
   Maximize2,
   Minimize2,
   PencilLine,
+  Package,
   Plus,
   Save,
+  Search,
   Table2,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -48,6 +51,8 @@ import {
   type ReportQuerySpec,
   type ReportRunResult,
 } from "../data/apiClient";
+import { useAuth } from "../context/AuthContext";
+import { useRecords } from "../context/RecordsContext";
 import { chartColors } from "../data/recordStyles";
 
 type ReportPageFilters = {
@@ -82,9 +87,65 @@ const REPORT_DATE_RANGE_OPTIONS: Array<{ value: ReportPageFilters["dateRange"]; 
 
 const REPORT_STATUS_OPTIONS = ["New", "Acknowledged", "Escalated", "Monitoring", "Closed-Resolved", "Closed-Dead"];
 const REPORT_PRIORITY_OPTIONS = ["Very Low", "Low", "Medium", "High", "Very High"];
+const KEYWORD_FILTER_FIELD = "__keyword";
+const KEYWORD_FILTER_OPTION: ReportBuilderFieldOption = {
+  key: KEYWORD_FILTER_FIELD,
+  label: "Any keyword (selected data)",
+  source: "__keyword",
+  type: "text",
+};
+
+type SalesEngineerReportTemplateId = "product-case-list" | "cases-by-product" | "escalations-by-account" | "my-open-cases" | "nfr-targets";
+
+const PRODUCT_CASE_TABLE_FIELDS = [
+  "cases.recordId",
+  "cases.description",
+  "cases.status",
+  "cases.priority",
+  "cases.assignedTo",
+  "cases.seOwner",
+  "cases.closeDate",
+  "products.productName",
+  "products.productFamily",
+  "accounts.accountName",
+  "projects.projectName",
+];
+
+const SALES_ENGINEER_REPORT_TEMPLATES = [
+  {
+    id: "product-case-list" as const,
+    title: "Product Case List",
+    detail: "Cases joined to products, accounts, and projects.",
+    icon: Search,
+  },
+  {
+    id: "cases-by-product" as const,
+    title: "Cases by Product",
+    detail: "Grouped case volume by linked product.",
+    icon: Package,
+  },
+  {
+    id: "escalations-by-account" as const,
+    title: "Escalations by Account",
+    detail: "Escalated cases with account context.",
+    icon: Search,
+  },
+  {
+    id: "my-open-cases" as const,
+    title: "My Open Cases",
+    detail: "Open case list for the current SE owner.",
+    icon: UserRound,
+  },
+  {
+    id: "nfr-targets" as const,
+    title: "NFR Target Dates",
+    detail: "Mantis asks grouped by target date.",
+    icon: Table2,
+  },
+];
 
 const TABLE_FIELD_PRESETS: Record<string, string[]> = {
-  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.assignedTo", "cases.seOwner", "cases.closeDate", "cases.mantisId", "cases.knockId"],
+  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.assignedTo", "cases.seOwner", "cases.closeDate"],
   accounts: ["accounts.accountName", "accounts.type", "accounts.vertical", "accounts.website"],
   projects: ["projects.projectName", "projects.accountId", "projects.startDate", "projects.closeDate", "projects.seOwner", "projects.isClosed", "projects.stage", "projects.sfdc", "projects.sfdcValue"],
   products: ["products.recordId", "products.productName", "products.productFamily", "products.description", "products.createdAt", "products.updatedAt"],
@@ -151,9 +212,10 @@ function getField(schema: ReportBuilderSchema | null, key: string) {
 
 function getScopedFields(schema: ReportBuilderSchema | null, spec: ReportQuerySpec): ReportBuilderFieldOption[] {
   const activeSources = new Set([spec.base, ...spec.joins.map((join) => join.source)]);
-  return (schema?.sources ?? [])
+  const fields = (schema?.sources ?? [])
     .filter((source) => activeSources.has(source.key))
     .flatMap((source) => source.fields);
+  return [KEYWORD_FILTER_OPTION, ...fields];
 }
 
 function getDefaultGroupBy(schema: ReportBuilderSchema | null, base: string) {
@@ -259,6 +321,132 @@ function buildCustomReportPayload(report: CustomReportRecord): CustomReportInput
   };
 }
 
+function createSalesEngineerReportDraft(templateId: SalesEngineerReportTemplateId, ownerName: string): CustomReportInput {
+  if (templateId === "product-case-list") {
+    return {
+      ...createDefaultDraft(),
+      title: "Product Case List",
+      chartType: "table",
+      metric: "table",
+      layoutSpan: 2,
+      querySpec: {
+        base: "cases",
+        joins: [
+          { source: "products", joinType: "inner" },
+          { source: "accounts", joinType: "left" },
+          { source: "projects", joinType: "left" },
+        ],
+        mode: "table",
+        fields: PRODUCT_CASE_TABLE_FIELDS,
+        filters: [{ field: KEYWORD_FILTER_FIELD, operator: "contains", value: "" }],
+        groupBy: null,
+        metric: { type: "count" },
+        limit: 100,
+        sortBy: "cases.closeDate",
+        sortDirection: "asc",
+      },
+    };
+  }
+
+  if (templateId === "escalations-by-account") {
+    return {
+      ...createDefaultDraft(),
+      title: "Escalations by Account",
+      chartType: "bar",
+      layoutSpan: 2,
+      querySpec: {
+        base: "cases",
+        joins: [
+          { source: "accounts", joinType: "left" },
+          { source: "products", joinType: "left" },
+        ],
+        mode: "aggregate",
+        fields: ["cases.recordId", "cases.status", "accounts.accountName", "products.productName"],
+        filters: [{ field: "cases.status", operator: "eq", value: "Escalated" }],
+        groupBy: "accounts.accountName",
+        metric: { type: "count" },
+        limit: 25,
+        sortBy: "value",
+        sortDirection: "desc",
+      },
+    };
+  }
+
+  if (templateId === "my-open-cases") {
+    const filters: ReportFilterRule[] = [
+      { field: "cases.status", operator: "neq", value: "Closed-Resolved" },
+      { field: "cases.status", operator: "neq", value: "Closed-Dead" },
+    ];
+    if (ownerName.trim()) {
+      filters.push({ field: "cases.seOwner", operator: "contains", value: ownerName.trim() });
+    }
+
+    return {
+      ...createDefaultDraft(),
+      title: ownerName.trim() ? `Open Cases - ${ownerName.trim()}` : "My Open Cases",
+      chartType: "table",
+      metric: "table",
+      layoutSpan: 2,
+      querySpec: {
+        base: "cases",
+        joins: [
+          { source: "accounts", joinType: "left" },
+          { source: "products", joinType: "left" },
+          { source: "projects", joinType: "left" },
+        ],
+        mode: "table",
+        fields: PRODUCT_CASE_TABLE_FIELDS,
+        filters,
+        groupBy: null,
+        metric: { type: "count" },
+        limit: 100,
+        sortBy: "cases.closeDate",
+        sortDirection: "asc",
+      },
+    };
+  }
+
+  if (templateId === "nfr-targets") {
+    return {
+      ...createDefaultDraft(),
+      title: "Mantis NFR Target Dates",
+      chartType: "bar",
+      layoutSpan: 2,
+      querySpec: {
+        base: "mantis",
+        joins: [{ source: "cases", joinType: "left" }],
+        mode: "aggregate",
+        fields: ["mantis.recordId", "mantis.mantisId", "mantis.mantisStatus", "mantis.mantisTargetDate", "cases.recordId"],
+        filters: [{ field: "mantis.mantisTargetDate", operator: "notEmpty" }],
+        groupBy: "mantis.mantisTargetDate",
+        metric: { type: "count" },
+        limit: 50,
+        sortBy: "label",
+        sortDirection: "asc",
+      },
+    };
+  }
+
+  return {
+    ...createDefaultDraft(),
+    title: "Cases by Product",
+    chartType: "bar",
+    layoutSpan: 2,
+    querySpec: {
+      base: "cases",
+      joins: [{ source: "products", joinType: "inner" }],
+      mode: "aggregate",
+      fields: ["cases.recordId", "products.productName", "cases.status", "cases.priority"],
+      filters: [],
+      groupBy: "products.productName",
+      metric: { type: "count" },
+      limit: 25,
+      sortBy: "value",
+      sortDirection: "desc",
+    },
+  };
+}
+
 function toChartRows(result: ReportRunResult) {
   return result.rows.map((row, index) => ({
     id: String(row.label ?? index),
@@ -270,6 +458,16 @@ function toChartRows(result: ReportRunResult) {
 function formatCell(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
+}
+
+function getFilterValuePlaceholder(fieldKey: string) {
+  if (fieldKey === KEYWORD_FILTER_FIELD) return "firewall, account, MANT-123";
+  if (fieldKey === "products.description") return "firewall, SD-WAN, VPN";
+  if (fieldKey === "products.productName") return "FortiGate, FortiClient";
+  if (fieldKey === "products.productFamily") return "Network Security";
+  if (fieldKey === "accounts.accountName") return "Account name";
+  if (fieldKey === "cases.assignedTo" || fieldKey === "cases.seOwner") return "Owner name";
+  return "Value";
 }
 
 function ReportVisualization({ chartType, result }: { chartType: ReportChartType; result?: ReportRunResult }) {
@@ -365,6 +563,8 @@ function ReportVisualization({ chartType, result }: { chartType: ReportChartType
 }
 
 export function Reports() {
+  const { user } = useAuth();
+  const { products } = useRecords();
   const [schema, setSchema] = useState<ReportBuilderSchema | null>(null);
   const [customReports, setCustomReports] = useState<CustomReportRecord[]>([]);
   const [draftReport, setDraftReport] = useState<CustomReportInput>(createDefaultDraft);
@@ -385,6 +585,11 @@ export function Reports() {
   const orderedReports = useMemo(() => sortCustomReports(customReports), [customReports]);
   const reportPageFiltersActive = hasReportPageFilters(reportPageFilters);
   const reportPageFilterDraftChanged = !areReportPageFiltersEqual(reportPageFilterDraft, reportPageFilters);
+  const ownerName = user?.displayName?.trim() ?? "";
+  const productOptions = useMemo(
+    () => [...products].sort((left, right) => left.productName.localeCompare(right.productName)),
+    [products],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -450,6 +655,36 @@ export function Reports() {
     };
   }, [customReports, reportPageFilters]);
 
+  useEffect(() => {
+    if (!draftReport.querySpec) return;
+
+    let cancelled = false;
+    const previewTimer = window.setTimeout(async () => {
+      setLoadingPreview(true);
+      try {
+        const result = await previewReportQuery(applyReportPageFilters(draftReport.querySpec!, reportPageFilters));
+        if (!cancelled) {
+          setPreviewResult(result);
+          setError(null);
+        }
+      } catch (previewError) {
+        if (!cancelled) {
+          setPreviewResult(null);
+          setError(previewError instanceof Error ? previewError.message : "Failed to preview report");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingPreview(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(previewTimer);
+    };
+  }, [draftReport.querySpec, reportPageFilters]);
+
   const updateSpec = (updater: (spec: ReportQuerySpec) => ReportQuerySpec) => {
     setDraftReport((current) => {
       const nextSpec = updater(current.querySpec ?? createDefaultQuerySpec());
@@ -477,6 +712,16 @@ export function Reports() {
     setReportPageFilterDraft(DEFAULT_REPORT_PAGE_FILTERS);
     setReportPageFilters(DEFAULT_REPORT_PAGE_FILTERS);
     setPreviewResult(null);
+  };
+
+  const loadDraftReport = (report: CustomReportInput) => {
+    setEditingReportId(null);
+    setDraftReport(report);
+    setPreviewResult(null);
+  };
+
+  const loadSalesEngineerTemplate = (templateId: SalesEngineerReportTemplateId) => {
+    loadDraftReport(createSalesEngineerReportDraft(templateId, ownerName));
   };
 
   const handleBaseChange = (base: string) => {
@@ -531,6 +776,23 @@ export function Reports() {
       ...spec,
       filters: [...spec.filters, { field, operator: "eq", value: "" }],
     }));
+  };
+
+  const handleAddKeywordFilter = () => {
+    if (currentSpec.base !== "cases" && currentSpec.base !== "products") {
+      loadSalesEngineerTemplate("product-case-list");
+      return;
+    }
+
+    updateSpec((spec) => {
+      const shouldJoinProducts = spec.base === "cases" && !spec.joins.some((join) => join.source === "products");
+      return {
+        ...spec,
+        joins: shouldJoinProducts ? [...spec.joins, { source: "products", joinType: "inner" as const }] : spec.joins,
+        fields: spec.mode === "table" ? uniqueFields([...spec.fields, ...getDefaultJoinFields(schema, "products")]) : spec.fields,
+        filters: [...spec.filters, { field: KEYWORD_FILTER_FIELD, operator: "contains", value: "" }],
+      };
+    });
   };
 
   const handleRemoveFilter = (index: number) => {
@@ -709,7 +971,7 @@ export function Reports() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
             <Filter className="h-4 w-4 text-[#E31937]" />
-            Page Filters
+            Global Case Filters
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -815,6 +1077,29 @@ export function Reports() {
                   className="w-full border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                 />
               </label>
+
+              <div className="border border-gray-200 bg-gray-50 p-3">
+                <div className="mb-3 text-sm font-semibold text-gray-900">SE starting points</div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                  {SALES_ENGINEER_REPORT_TEMPLATES.map((template) => {
+                    const Icon = template.icon;
+                    return (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => loadSalesEngineerTemplate(template.id)}
+                        className="flex items-start gap-2 border border-gray-200 bg-white p-2 text-left hover:border-[#E31937] hover:bg-red-50/40"
+                      >
+                        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[#E31937]" />
+                        <span>
+                          <span className="block text-sm font-medium text-gray-900">{template.title}</span>
+                          <span className="mt-0.5 block text-xs text-gray-500">{template.detail}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
@@ -988,14 +1273,24 @@ export function Reports() {
                     <Filter className="h-4 w-4" />
                     Report Filters
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleAddFilter}
-                    className="inline-flex items-center gap-1 border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAddKeywordFilter}
+                      className="inline-flex items-center gap-1 border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      Any keyword
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAddFilter}
+                      className="inline-flex items-center gap-1 border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -1006,10 +1301,19 @@ export function Reports() {
                   {currentSpec.filters.map((filter, index) => {
                     const needsValue = filter.operator !== "empty" && filter.operator !== "notEmpty";
                     return (
-                      <div key={`${filter.field}-${index}`} className="grid grid-cols-[1fr_120px] gap-2">
+                      <div key={`${filter.field}-${index}`} className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_120px_minmax(0,1fr)_44px]">
                         <select
                           value={filter.field}
-                          onChange={(event) => handleFilterChange(index, { ...filter, field: event.target.value })}
+                          onChange={(event) => {
+                            const nextField = event.target.value;
+                            const shouldUseExactOperator = nextField === "products.recordId" || nextField === "cases.status" || nextField === "cases.priority";
+                            handleFilterChange(index, {
+                              ...filter,
+                              field: nextField,
+                              operator: nextField === KEYWORD_FILTER_FIELD ? "contains" : shouldUseExactOperator ? "eq" : filter.operator,
+                              value: "",
+                            });
+                          }}
                           className="border border-gray-300 bg-white px-2 py-2 text-sm"
                         >
                           {scopedFields.map((field) => (
@@ -1030,12 +1334,54 @@ export function Reports() {
                           ))}
                         </select>
                         {needsValue ? (
-                          <input
-                            type="text"
-                            value={filter.value ?? ""}
-                            onChange={(event) => handleFilterChange(index, { ...filter, value: event.target.value })}
-                            className="border border-gray-300 px-2 py-2 text-sm"
-                          />
+                          filter.field === "products.recordId" ? (
+                            <select
+                              value={filter.value ?? ""}
+                              onChange={(event) => handleFilterChange(index, { ...filter, value: event.target.value })}
+                              className="border border-gray-300 bg-white px-2 py-2 text-sm"
+                            >
+                              <option value="">Select product</option>
+                              {productOptions.map((product) => (
+                                <option key={product.recordId} value={product.recordId}>
+                                  {product.productName}{product.productFamily ? ` | ${product.productFamily}` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          ) : filter.field === "cases.status" ? (
+                            <select
+                              value={filter.value ?? ""}
+                              onChange={(event) => handleFilterChange(index, { ...filter, value: event.target.value })}
+                              className="border border-gray-300 bg-white px-2 py-2 text-sm"
+                            >
+                              <option value="">Select status</option>
+                              {REPORT_STATUS_OPTIONS.map((status) => (
+                                <option key={status} value={status}>
+                                  {status}
+                                </option>
+                              ))}
+                            </select>
+                          ) : filter.field === "cases.priority" ? (
+                            <select
+                              value={filter.value ?? ""}
+                              onChange={(event) => handleFilterChange(index, { ...filter, value: event.target.value })}
+                              className="border border-gray-300 bg-white px-2 py-2 text-sm"
+                            >
+                              <option value="">Select priority</option>
+                              {REPORT_PRIORITY_OPTIONS.map((priority) => (
+                                <option key={priority} value={priority}>
+                                  {priority}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={filter.value ?? ""}
+                              onChange={(event) => handleFilterChange(index, { ...filter, value: event.target.value })}
+                              placeholder={getFilterValuePlaceholder(filter.field)}
+                              className="border border-gray-300 px-2 py-2 text-sm"
+                            />
+                          )
                         ) : (
                           <div />
                         )}
@@ -1089,14 +1435,14 @@ export function Reports() {
 
               <div className="flex flex-wrap gap-2 border-t border-gray-200 pt-5">
                 <button
-                  type="button"
-                  onClick={handlePreview}
-                  disabled={loadingPreview}
-                  className="inline-flex items-center gap-2 border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  <Eye className="h-4 w-4" />
-                  Preview
-                </button>
+              type="button"
+              onClick={handlePreview}
+              disabled={loadingPreview}
+              className="inline-flex items-center gap-2 border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <Eye className="h-4 w-4" />
+                  {loadingPreview ? "Updating" : "Refresh"}
+            </button>
                 <button
                   type="button"
                   onClick={handleCreateOrUpdateReport}

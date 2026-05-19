@@ -179,7 +179,6 @@ async def delete_account(recordId: str, request: Request) -> dict[str, str]:
     """Delete an account."""
     actor = await require_auth_user(request)
     await _get_visible_account_or_404(recordId, actor)
-    await execute_mutation("UPDATE cases SET account = NULL WHERE account = %s", [recordId])
     await execute_mutation("UPDATE projects SET accountId = NULL WHERE accountId = %s", [recordId])
     await execute_mutation(
         "DELETE FROM case_entity_links WHERE entityType = 'account' AND entityRecordId = %s",

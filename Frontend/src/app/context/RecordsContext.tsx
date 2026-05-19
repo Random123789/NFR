@@ -149,14 +149,19 @@ export function RecordsProvider({ children }: { children: React.ReactNode }) {
       if (!id) return undefined;
       return cases.find((caseRecord) => caseRecord.recordId === id);
     },
-    getCasesByAccountId: (accountId) => cases.filter((caseRecord) => caseRecord.account === accountId),
-    getCasesByProductId: (productId) => cases.filter((caseRecord) => caseRecord.product === productId),
+    getCasesByAccountId: (accountId) => cases.filter((caseRecord) => (caseRecord.accountIds ?? []).includes(accountId)),
+    getCasesByProductId: (productId) => cases.filter((caseRecord) => (caseRecord.productIds ?? []).includes(productId)),
     getCasesByProjectId: (projectId) => cases.filter((caseRecord) => caseRecord.project === projectId),
-    getCasesByMantisId: (mantisId) => cases.filter((caseRecord) => caseRecord.mantisId === mantisId),
-    getCasesByKnockId: (knockId) => cases.filter((caseRecord) => caseRecord.knockId === knockId),
+    getCasesByMantisId: (mantisId) => {
+      const mantis = mantisRecords.find((item) => item.mantisId === mantisId);
+      return cases.filter((caseRecord) => Boolean(mantis && (caseRecord.mantisRecordIds ?? []).includes(mantis.recordId)));
+    },
+    getCasesByKnockId: (knockId) => {
+      const knock = knocks.find((item) => item.knockId === knockId);
+      return cases.filter((caseRecord) => Boolean(knock && (caseRecord.knockRecordIds ?? []).includes(knock.recordId)));
+    },
     getCasesByMantisRecordId: (mantisRecordId) => {
-      const mantis = mantisRecords.find((item) => item.recordId === mantisRecordId);
-      return cases.filter((caseRecord) => Boolean(mantis && caseRecord.mantisId === mantis.mantisId));
+      return cases.filter((caseRecord) => (caseRecord.mantisRecordIds ?? []).includes(mantisRecordId));
     },
     getProjectsByAccountId: (accountId) => projects.filter((project) => project.accountId === accountId),
   }), [accounts, cases, isLoading, knocks, mantisRecords, products, projects, refreshRecords]);

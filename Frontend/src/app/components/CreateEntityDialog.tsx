@@ -14,7 +14,6 @@ import {
   addCaseLink,
   createAccount,
   createCase,
-  getCase,
   createKnock,
   createMantis,
   createProduct,
@@ -57,9 +56,9 @@ type FormData = {
     status: string;
     assignedTo: string;
     seOwner: string;
-    account: string;
+    accountIds: string[];
     project: string;
-    product: string;
+    productIds: string[];
     closeDate: string;
     escalationType: string;
     escalationNote: string;
@@ -159,9 +158,9 @@ function createInitialFormData(userName?: string | null): FormData {
       status: "New",
       assignedTo: "",
       seOwner: userName ?? "",
-      account: "",
+      accountIds: [],
       project: "",
-      product: "",
+      productIds: [],
       closeDate: "",
       escalationType: "",
       escalationNote: "",
@@ -889,25 +888,27 @@ export function CreateEntityDialog<T extends CreateEntityType>({
   };
 
   const renderAccountSelect = ({
-    value,
+    values,
     onChange,
     emptyLabel,
   }: {
-    value: string;
-    onChange: (recordId: string) => void;
+    values: string[];
+    onChange: (recordIds: string[]) => void;
     emptyLabel: string;
   }) => (
     <div>
-      <label className={labelClassName}>Account</label>
+      <label className={labelClassName}>Linked Accounts</label>
       <div className="flex gap-2">
-        <SearchableSelect
-          label="Account"
-          value={value}
-          options={accountSelectOptions}
-          emptyLabel={emptyLabel}
-          searchPlaceholder="Search accounts"
-          onChange={onChange}
-        />
+        <div className="min-w-0 flex-1">
+          <MultiRecordDropdown
+            label="Accounts"
+            values={values}
+            options={accountSelectOptions}
+            emptyLabel={emptyLabel}
+            searchPlaceholder="Search accounts"
+            onChange={onChange}
+          />
+        </div>
         <button
           type="button"
           onClick={() => {
@@ -919,7 +920,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           New
         </button>
       </div>
-      {renderQuickAccountFields(onChange)}
+      {renderQuickAccountFields((recordId) => onChange(values.includes(recordId) ? values : [...values, recordId]))}
     </div>
   );
 
@@ -1445,35 +1446,22 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       if (entityType === "case") {
         const selectedMantisIds = formData.case.mantisIds;
         const selectedKnockIds = formData.case.knockIds;
-        const primaryMantis = selectedMantisIds[0]
-          ? mantisRecords.find((mantis) => mantis.recordId === selectedMantisIds[0])
-          : undefined;
-        const primaryKnock = selectedKnockIds[0]
-          ? knocks.find((knock) => knock.recordId === selectedKnockIds[0])
-          : undefined;
-        let created = await createCase({
+        const created = await createCase({
           description: formData.case.description.trim(),
           status: nullableString(formData.case.status),
           priority: nullableString(formData.case.priority),
           category: nullableString(formData.case.category),
           assignedTo: nullableString(formData.case.assignedTo),
           seOwner: nullableString(formData.case.seOwner),
-          account: nullableString(formData.case.account),
+          accountIds: formData.case.accountIds,
           project: nullableString(formData.case.project),
-          product: nullableString(formData.case.product),
+          productIds: formData.case.productIds,
           closeDate: nullableString(formData.case.closeDate),
           escalationType: nullableString(formData.case.escalationType),
           escalationNote: nullableString(formData.case.escalationNote),
-          knockId: primaryKnock?.knockId ?? null,
-          mantisId: primaryMantis?.mantisId ?? null,
+          knockRecordIds: selectedKnockIds,
+          mantisRecordIds: selectedMantisIds,
         });
-        for (const mantisId of selectedMantisIds) {
-          await addCaseLink(created.recordId, "mantis", mantisId);
-        }
-        for (const knockId of selectedKnockIds) {
-          await addCaseLink(created.recordId, "knock", knockId);
-        }
-        created = await getCase(created.recordId);
         upsertCase(created);
         createdRecord = created;
       } else if (entityType === "account") {
@@ -1677,9 +1665,9 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           </select>
         </div>
         {renderAccountSelect({
-          value: formData.case.account,
-          onChange: (account) => setFormData({ ...formData, case: { ...formData.case, account } }),
-          emptyLabel: "No linked account",
+          values: formData.case.accountIds,
+          onChange: (accountIds) => setFormData({ ...formData, case: { ...formData.case, accountIds } }),
+          emptyLabel: "Select linked accounts",
         })}
         <div className={quickProjectOpen ? "sm:col-span-2" : undefined}>
           <label className={labelClassName}>Project</label>
@@ -1697,7 +1685,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               onClick={() => {
                 setQuickProjectDraft((current) => ({
                   ...current,
-                  accountId: current.accountId || formData.case.account,
+                  accountId: current.accountId || (formData.case.accountIds.length === 1 ? formData.case.accountIds[0] : ""),
                 }));
                 setQuickProjectOpen(true);
                 setQuickProjectError("");
@@ -1710,16 +1698,18 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           {renderQuickProjectFields((project) => setFormData({ ...formData, case: { ...formData.case, project } }))}
         </div>
         <div className={quickProductOpen ? "sm:col-span-2" : undefined}>
-          <label className={labelClassName}>Product</label>
+          <label className={labelClassName}>Linked Products</label>
           <div className="flex gap-2">
-            <SearchableSelect
-              label="Product"
-              value={formData.case.product}
-              options={productSelectOptions}
-              emptyLabel="No linked product"
-              searchPlaceholder="Search products"
-              onChange={(product) => setFormData({ ...formData, case: { ...formData.case, product } })}
-            />
+            <div className="min-w-0 flex-1">
+              <MultiRecordDropdown
+                label="Products"
+                values={formData.case.productIds}
+                options={productSelectOptions}
+                emptyLabel="Select linked products"
+                searchPlaceholder="Search products"
+                onChange={(productIds) => setFormData({ ...formData, case: { ...formData.case, productIds } })}
+              />
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -1731,7 +1721,17 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               New
             </button>
           </div>
-          {renderQuickProductFields((product) => setFormData({ ...formData, case: { ...formData.case, product } }))}
+          {renderQuickProductFields((recordId) =>
+            setFormData({
+              ...formData,
+              case: {
+                ...formData.case,
+                productIds: formData.case.productIds.includes(recordId)
+                  ? formData.case.productIds
+                  : [...formData.case.productIds, recordId],
+              },
+            }),
+          )}
         </div>
       </div>
 

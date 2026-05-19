@@ -16,20 +16,16 @@ logger = logging.getLogger(__name__)
 
 CASE_FIELDS = [
     "recordId",
-    "account",
     "project",
     "category",
     "escalationType",
     "escalationNote",
-    "product",
     "closeDate",
     "description",
     "seOwner",
     "assignedTo",
     "priority",
     "status",
-    "knockId",
-    "mantisId",
 ]
 CASE_DATA_FIELDS = [field for field in CASE_FIELDS if field != "recordId"]
 CASE_SELECT = ", ".join(f"`{field}`" for field in [*CASE_FIELDS, "history"])
@@ -37,27 +33,28 @@ SEARCH_FIELDS = CASE_FIELDS
 CASE_LINK_TARGET_TABLES = {
     "account": "accounts",
     "product": "products",
-    "project": "projects",
     "mantis": "mantis",
     "knock": "knocks",
 }
-CASE_LINK_ENTITY_TYPES = set(CASE_LINK_TARGET_TABLES)
-SINGLE_CASE_LINK_ENTITY_TYPES = {"project"}
+CASE_LINK_ENTITY_TYPES = {*CASE_LINK_TARGET_TABLES, "project"}
 CASE_FIELD_LABELS = {
-    "account": "Account",
     "project": "Project",
     "category": "Category",
     "escalationType": "Escalation Type",
     "escalationNote": "Escalation Note",
-    "product": "Product",
     "closeDate": "Close Date",
     "description": "Description",
     "seOwner": "SE Owner",
     "assignedTo": "Assigned To",
     "priority": "Priority",
     "status": "Status",
-    "knockId": "Knock ID",
-    "mantisId": "Mantis ID",
+}
+
+CASE_LINK_ARRAY_FIELDS = {
+    "account": "accountIds",
+    "product": "productIds",
+    "mantis": "mantisRecordIds",
+    "knock": "knockRecordIds",
 }
 
 
@@ -178,21 +175,33 @@ def _blank_to_none(value):
 
 def _case_payload(data: CaseCreate) -> dict:
     return {
-        "account": _blank_to_none(data.account),
         "project": _blank_to_none(data.project),
         "category": _blank_to_none(data.category),
         "escalationType": _blank_to_none(data.escalationType),
         "escalationNote": _blank_to_none(data.escalationNote),
-        "product": _blank_to_none(data.product),
         "closeDate": _blank_to_none(data.closeDate),
         "description": data.description,
         "seOwner": _blank_to_none(data.seOwner),
         "assignedTo": _blank_to_none(data.assignedTo),
         "priority": _blank_to_none(data.priority),
         "status": _blank_to_none(data.status),
-        "knockId": _blank_to_none(data.knockId),
-        "mantisId": _blank_to_none(data.mantisId),
     }
+
+
+def _unique_clean_ids(values: Optional[list[str]]) -> list[str]:
+    if not values:
+        return []
+
+    cleaned: list[str] = []
+    seen = set()
+    for value in values:
+        if not value:
+            continue
+        normalized = value.strip()
+        if normalized and normalized not in seen:
+            cleaned.append(normalized)
+            seen.add(normalized)
+    return cleaned
 
 
 def _history_from_record(record: dict) -> list[dict]:
@@ -203,36 +212,18 @@ def _history_from_record(record: dict) -> list[dict]:
 
 async def _normalize_foreign_key_values() -> None:
     for table_name, column_name in (
-        ("cases", "account"),
-        ("cases", "product"),
         ("cases", "project"),
-        ("cases", "mantisId"),
-        ("cases", "knockId"),
         ("cases", "assignedTo"),
         ("projects", "accountId"),
         ("mantis", "mantisId"),
         ("knocks", "knockId"),
     ):
+        if not await _column_exists(table_name, column_name):
+            continue
         await execute_mutation(
             f"UPDATE {table_name} SET {column_name} = NULL WHERE {column_name} IS NOT NULL AND TRIM({column_name}) = ''"
         )
 
-    await execute_mutation(
-        """
-        UPDATE cases c
-        LEFT JOIN accounts a ON c.account = a.recordId
-        SET c.account = NULL
-        WHERE c.account IS NOT NULL AND a.recordId IS NULL
-        """
-    )
-    await execute_mutation(
-        """
-        UPDATE cases c
-        LEFT JOIN products p ON c.product = p.recordId
-        SET c.product = NULL
-        WHERE c.product IS NOT NULL AND p.recordId IS NULL
-        """
-    )
     await execute_mutation(
         """
         UPDATE cases c
@@ -289,13 +280,9 @@ async def ensure_case_schema() -> None:
 
     await _normalize_foreign_key_values()
 
-    await _add_index_if_missing("cases", "idx_cases_account", "CREATE INDEX idx_cases_account ON cases (account)")
-    await _add_index_if_missing("cases", "idx_cases_product", "CREATE INDEX idx_cases_product ON cases (product)")
     await _add_index_if_missing("cases", "idx_cases_project", "CREATE INDEX idx_cases_project ON cases (project)")
     await _add_index_if_missing("cases", "idx_cases_seOwner", "CREATE INDEX idx_cases_seOwner ON cases (seOwner)")
     await _add_index_if_missing("cases", "idx_cases_assignedTo", "CREATE INDEX idx_cases_assignedTo ON cases (assignedTo)")
-    await _add_index_if_missing("cases", "idx_cases_mantisId", "CREATE INDEX idx_cases_mantisId ON cases (mantisId)")
-    await _add_index_if_missing("cases", "idx_cases_knockId", "CREATE INDEX idx_cases_knockId ON cases (knockId)")
     await _add_index_if_missing("mantis", "uniq_mantis_mantisId", "CREATE UNIQUE INDEX uniq_mantis_mantisId ON mantis (mantisId)")
     await _add_index_if_missing("knocks", "uniq_knocks_knockId", "CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId)")
 
@@ -309,6 +296,14 @@ async def ensure_case_schema() -> None:
           ON UPDATE CASCADE
         """,
     )
+
+
+async def drop_legacy_case_link_columns() -> None:
+    for index_name in ("idx_cases_account", "idx_cases_product", "idx_cases_mantisId", "idx_cases_knockId"):
+        await _drop_index_if_present("cases", index_name)
+
+    for column_name in ("account", "product", "mantisId", "knockId"):
+        await _drop_column_if_present("cases", column_name)
     await _add_foreign_key_if_missing(
         "fk_cases_project",
         """
@@ -352,54 +347,52 @@ async def ensure_case_link_tables() -> None:
         """,
     )
 
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'account', account, %s, seOwner
-        FROM cases
-        WHERE account IS NOT NULL AND TRIM(account) <> ''
-        """,
-        [backfill_created_at],
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'product', product, %s, seOwner
-        FROM cases
-        WHERE product IS NOT NULL AND TRIM(product) <> ''
-        """,
-        [backfill_created_at],
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT recordId, 'project', project, %s, seOwner
-        FROM cases
-        WHERE project IS NOT NULL AND TRIM(project) <> ''
-        """,
-        [backfill_created_at],
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT c.recordId, 'mantis', m.recordId, %s, c.seOwner
-        FROM cases c
-        INNER JOIN mantis m ON m.mantisId = c.mantisId
-        WHERE c.mantisId IS NOT NULL AND TRIM(c.mantisId) <> ''
-        """,
-        [backfill_created_at],
-    )
-    await execute_mutation(
-        """
-        INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
-        SELECT c.recordId, 'knock', k.recordId, %s, c.seOwner
-        FROM cases c
-        INNER JOIN knocks k ON k.knockId = c.knockId
-        WHERE c.knockId IS NOT NULL AND TRIM(c.knockId) <> ''
-        """,
-        [backfill_created_at],
-    )
-    await cleanup_single_case_entity_links()
+    if await _column_exists("cases", "account"):
+        await execute_mutation(
+            """
+            INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+            SELECT c.recordId, 'account', c.account, %s, c.seOwner
+            FROM cases c
+            INNER JOIN accounts a ON a.recordId = c.account
+            WHERE c.account IS NOT NULL AND TRIM(c.account) <> ''
+            """,
+            [backfill_created_at],
+        )
+    if await _column_exists("cases", "product"):
+        await execute_mutation(
+            """
+            INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+            SELECT c.recordId, 'product', c.product, %s, c.seOwner
+            FROM cases c
+            INNER JOIN products p ON p.recordId = c.product
+            WHERE c.product IS NOT NULL AND TRIM(c.product) <> ''
+            """,
+            [backfill_created_at],
+        )
+    if await _column_exists("cases", "mantisId"):
+        await execute_mutation(
+            """
+            INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+            SELECT c.recordId, 'mantis', m.recordId, %s, c.seOwner
+            FROM cases c
+            INNER JOIN mantis m ON m.mantisId = c.mantisId
+            WHERE c.mantisId IS NOT NULL AND TRIM(c.mantisId) <> ''
+            """,
+            [backfill_created_at],
+        )
+    if await _column_exists("cases", "knockId"):
+        await execute_mutation(
+            """
+            INSERT IGNORE INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
+            SELECT c.recordId, 'knock', k.recordId, %s, c.seOwner
+            FROM cases c
+            INNER JOIN knocks k ON k.knockId = c.knockId
+            WHERE c.knockId IS NOT NULL AND TRIM(c.knockId) <> ''
+            """,
+            [backfill_created_at],
+        )
+
+    await drop_legacy_case_link_columns()
 
 
 async def cleanup_case_entity_links() -> None:
@@ -414,7 +407,7 @@ async def cleanup_case_entity_links() -> None:
     await execute_mutation(
         """
         DELETE FROM case_entity_links
-        WHERE entityType NOT IN ('account', 'product', 'project', 'mantis', 'knock')
+        WHERE entityType NOT IN ('account', 'product', 'mantis', 'knock')
         """
     )
 
@@ -428,26 +421,6 @@ async def cleanup_case_entity_links() -> None:
               AND target_entity.recordId IS NULL
             """,
             [entity_type],
-        )
-
-
-async def cleanup_single_case_entity_links() -> None:
-    for entity_type in SINGLE_CASE_LINK_ENTITY_TYPES:
-        await execute_mutation(
-            """
-            DELETE cel
-            FROM case_entity_links cel
-            INNER JOIN case_entity_links newer
-              ON newer.caseRecordId = cel.caseRecordId
-             AND newer.entityType = cel.entityType
-             AND newer.entityType = %s
-             AND (
-                  newer.createdAt > cel.createdAt
-               OR (newer.createdAt = cel.createdAt AND newer.entityRecordId > cel.entityRecordId)
-             )
-            WHERE cel.entityType = %s
-            """,
-            [entity_type, entity_type],
         )
 
 
@@ -476,15 +449,6 @@ async def _lookup_knock_record_id(knock_id: Optional[str]) -> Optional[str]:
 
 
 async def _upsert_case_entity_link(record_id: str, entity_type: str, entity_record_id: str, actor_display_name: str) -> None:
-    if entity_type in SINGLE_CASE_LINK_ENTITY_TYPES:
-        await execute_mutation(
-            """
-            DELETE FROM case_entity_links
-            WHERE caseRecordId = %s AND entityType = %s AND entityRecordId <> %s
-            """,
-            [record_id, entity_type, entity_record_id],
-        )
-
     await execute_mutation(
         """
         INSERT INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
@@ -495,40 +459,59 @@ async def _upsert_case_entity_link(record_id: str, entity_type: str, entity_reco
     )
 
 
-async def _remove_cleared_case_links(record_id: str, payload: dict) -> None:
-    for entity_type, payload_field in (
-        ("account", "account"),
-        ("product", "product"),
-        ("project", "project"),
-        ("mantis", "mantisId"),
-        ("knock", "knockId"),
-    ):
-        if payload.get(payload_field):
+async def _case_link_ids_from_data(data: CaseCreate) -> dict[str, list[str]]:
+    account_ids = _unique_clean_ids(data.accountIds)
+    if data.account:
+        account_ids = _unique_clean_ids([*account_ids, data.account])
+
+    product_ids = _unique_clean_ids(data.productIds)
+    if data.product:
+        product_ids = _unique_clean_ids([*product_ids, data.product])
+
+    mantis_ids = _unique_clean_ids(data.mantisRecordIds)
+    legacy_mantis_record_id = await _lookup_mantis_record_id(data.mantisId)
+    if legacy_mantis_record_id:
+        mantis_ids = _unique_clean_ids([*mantis_ids, legacy_mantis_record_id])
+
+    knock_ids = _unique_clean_ids(data.knockRecordIds)
+    legacy_knock_record_id = await _lookup_knock_record_id(data.knockId)
+    if legacy_knock_record_id:
+        knock_ids = _unique_clean_ids([*knock_ids, legacy_knock_record_id])
+
+    return {
+        "account": account_ids,
+        "product": product_ids,
+        "mantis": mantis_ids,
+        "knock": knock_ids,
+    }
+
+
+def _case_link_field_was_provided(data: CaseCreate, entity_type: str) -> bool:
+    fields = data.__fields_set__
+    if entity_type == "account":
+        return "accountIds" in fields or "account" in fields
+    if entity_type == "product":
+        return "productIds" in fields or "product" in fields
+    if entity_type == "mantis":
+        return "mantisRecordIds" in fields or "mantisId" in fields
+    if entity_type == "knock":
+        return "knockRecordIds" in fields or "knockId" in fields
+    return False
+
+
+async def _replace_case_links_from_data(record_id: str, data: CaseCreate, actor_display_name: str, replace_all: bool) -> None:
+    link_ids = await _case_link_ids_from_data(data)
+
+    for entity_type, entity_record_ids in link_ids.items():
+        if not replace_all and not _case_link_field_was_provided(data, entity_type):
             continue
 
         await execute_mutation(
-            """
-            DELETE FROM case_entity_links
-            WHERE caseRecordId = %s AND entityType = %s
-            """,
+            "DELETE FROM case_entity_links WHERE caseRecordId = %s AND entityType = %s",
             [record_id, entity_type],
         )
-
-
-async def _add_case_links_from_payload(record_id: str, payload: dict, actor_display_name: str) -> None:
-    link_values = [
-        ("account", payload.get("account")),
-        ("product", payload.get("product")),
-        ("project", payload.get("project")),
-        ("mantis", await _lookup_mantis_record_id(payload.get("mantisId"))),
-        ("knock", await _lookup_knock_record_id(payload.get("knockId"))),
-    ]
-
-    for entity_type, entity_record_id in link_values:
-        if not entity_record_id:
-            continue
-
-        await _upsert_case_entity_link(record_id, entity_type, entity_record_id, actor_display_name)
+        for entity_record_id in entity_record_ids:
+            await _upsert_case_entity_link(record_id, entity_type, entity_record_id, actor_display_name)
 
 
 async def get_case_or_404(record_id: str) -> dict:
@@ -542,81 +525,44 @@ async def get_case_or_404(record_id: str) -> dict:
     return case_row
 
 
-async def sync_case_primary_links(record_id: str, actor_display_name: str) -> None:
-    account_link = await execute_query(
-        """
-        SELECT entityRecordId FROM case_entity_links
-        WHERE caseRecordId = %s AND entityType = 'account'
-        ORDER BY createdAt DESC
-        LIMIT 1
-        """,
-        [record_id],
-        fetch_one=True,
-    )
-    product_link = await execute_query(
-        """
-        SELECT entityRecordId FROM case_entity_links
-        WHERE caseRecordId = %s AND entityType = 'product'
-        ORDER BY createdAt DESC
-        LIMIT 1
-        """,
-        [record_id],
-        fetch_one=True,
-    )
-    project_link = await execute_query(
-        """
-        SELECT entityRecordId FROM case_entity_links
-        WHERE caseRecordId = %s AND entityType = 'project'
-        ORDER BY createdAt DESC
-        LIMIT 1
-        """,
-        [record_id],
-        fetch_one=True,
-    )
-    mantis_link = await execute_query(
-        """
-        SELECT m.mantisId
-        FROM case_entity_links cel
-        INNER JOIN mantis m ON m.recordId = cel.entityRecordId
-        WHERE cel.caseRecordId = %s AND cel.entityType = 'mantis'
-        ORDER BY cel.createdAt DESC
-        LIMIT 1
-        """,
-        [record_id],
-        fetch_one=True,
-    )
-    knock_link = await execute_query(
-        """
-        SELECT k.knockId
-        FROM case_entity_links cel
-        INNER JOIN knocks k ON k.recordId = cel.entityRecordId
-        WHERE cel.caseRecordId = %s AND cel.entityType = 'knock'
-        ORDER BY cel.createdAt DESC
-        LIMIT 1
-        """,
-        [record_id],
-        fetch_one=True,
-    )
+async def enrich_case_records(case_rows: list[dict]) -> list[dict]:
+    normalized_rows = [normalize_record(row) for row in case_rows]
+    case_ids = [row["recordId"] for row in normalized_rows if row.get("recordId")]
 
-    await execute_mutation(
-        """
-        UPDATE cases
-        SET account = %s,
-            product = %s,
-            project = %s,
-            mantisId = %s,
-            knockId = %s
-        WHERE recordId = %s
+    for row in normalized_rows:
+        for array_field in CASE_LINK_ARRAY_FIELDS.values():
+            row[array_field] = []
+
+    if not case_ids:
+        return normalized_rows
+
+    placeholders = ", ".join(["%s"] * len(case_ids))
+    link_rows = await execute_query(
+        f"""
+        SELECT caseRecordId, entityType, entityRecordId
+        FROM case_entity_links
+        WHERE caseRecordId IN ({placeholders})
+          AND entityType IN ('account', 'product', 'mantis', 'knock')
+        ORDER BY createdAt ASC
         """,
-        [
-            account_link["entityRecordId"] if account_link else None,
-            product_link["entityRecordId"] if product_link else None,
-            project_link["entityRecordId"] if project_link else None,
-            mantis_link["mantisId"] if mantis_link else None,
-            knock_link["knockId"] if knock_link else None,
-            record_id,
-        ],
+        case_ids,
     )
+    by_case = {row["recordId"]: row for row in normalized_rows}
+    for link in link_rows:
+        array_field = CASE_LINK_ARRAY_FIELDS.get(link.get("entityType"))
+        case_record = by_case.get(link.get("caseRecordId"))
+        entity_record_id = link.get("entityRecordId")
+        if not array_field or not case_record or not entity_record_id:
+            continue
+        if entity_record_id not in case_record[array_field]:
+            case_record[array_field].append(entity_record_id)
+
+    return normalized_rows
+
+
+async def enrich_case_record(case_row: dict) -> dict:
+    rows = await enrich_case_records([case_row])
+    return rows[0]
 
 
 async def build_case_links_payload(record_id: str) -> dict:
@@ -643,10 +589,9 @@ async def build_case_links_payload(record_id: str) -> dict:
     linked_projects = await execute_query(
         """
         SELECT p.*
-        FROM case_entity_links cel
-        INNER JOIN projects p ON p.recordId = cel.entityRecordId
-        WHERE cel.caseRecordId = %s AND cel.entityType = 'project'
-        ORDER BY cel.createdAt DESC
+        FROM cases c
+        INNER JOIN projects p ON p.recordId = c.project
+        WHERE c.recordId = %s
         """,
         [record_id],
     )
@@ -681,22 +626,33 @@ async def build_case_links_payload(record_id: str) -> dict:
 
 
 async def build_linked_cases_payload(entity_type: str, entity_record_id: str, actor: dict) -> list[dict]:
-    cases_rows = await execute_query(
-        f"""
-        SELECT {CASE_SELECT}
-        FROM case_entity_links cel
-        INNER JOIN cases c ON c.recordId = cel.caseRecordId
-        WHERE cel.entityType = %s AND cel.entityRecordId = %s
-        ORDER BY c.recordId DESC
-        """,
-        [entity_type, entity_record_id],
-    )
+    if entity_type == "project":
+        cases_rows = await execute_query(
+            f"""
+            SELECT {CASE_SELECT}
+            FROM cases c
+            WHERE c.project = %s
+            ORDER BY c.recordId DESC
+            """,
+            [entity_record_id],
+        )
+    else:
+        cases_rows = await execute_query(
+            f"""
+            SELECT {CASE_SELECT}
+            FROM case_entity_links cel
+            INNER JOIN cases c ON c.recordId = cel.caseRecordId
+            WHERE cel.entityType = %s AND cel.entityRecordId = %s
+            ORDER BY c.recordId DESC
+            """,
+            [entity_type, entity_record_id],
+        )
 
     visible_cases = []
     for row in cases_rows:
         if await _case_is_visible_to_actor(row, actor):
-            visible_cases.append(normalize_record(row))
-    return visible_cases
+            visible_cases.append(row)
+    return await enrich_case_records(visible_cases)
 
 
 def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, list[str]]:
@@ -716,25 +672,17 @@ def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, lis
     if actor_vertical:
         conditions.append(
             f"""
-            (
-              EXISTS (
-                SELECT 1
-                FROM accounts visible_account
-                WHERE visible_account.recordId = {qualifier}`account`
-                  AND visible_account.vertical = %s
-              )
-              OR EXISTS (
+            EXISTS (
                 SELECT 1
                 FROM case_entity_links visible_link
                 INNER JOIN accounts linked_account ON linked_account.recordId = visible_link.entityRecordId
                 WHERE visible_link.caseRecordId = {qualifier}`recordId`
                   AND visible_link.entityType = 'account'
                   AND linked_account.vertical = %s
-              )
             )
             """
         )
-        params.extend([actor_vertical, actor_vertical])
+        params.append(actor_vertical)
 
     if not conditions:
         return "1=0", []
@@ -755,20 +703,6 @@ async def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
     actor_vertical = (actor.get("vertical") or "").strip()
     if not actor_vertical:
         return False
-
-    visible_account = await execute_query(
-        """
-        SELECT 1
-        FROM accounts a
-        WHERE a.recordId = %s
-          AND a.vertical = %s
-        LIMIT 1
-        """,
-        [case_record.get("account"), actor_vertical],
-        fetch_one=True,
-    )
-    if visible_account:
-        return True
 
     visible_linked_account = await execute_query(
         """
@@ -824,7 +758,7 @@ async def list_cases(
     params.extend([limit, offset])
 
     results = await execute_query(sql, params)
-    return [normalize_record(row) for row in results]
+    return await enrich_case_records(results)
 
 
 @router.get("/linked")
@@ -854,7 +788,7 @@ async def get_case(recordId: str, request: Request) -> CaseRecord:
     if not await _case_is_visible_to_actor(result, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    return normalize_record(result)
+    return await enrich_case_record(result)
 
 
 @router.post("", response_model=CaseRecord)
@@ -869,18 +803,18 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
 
     sql = f"""
         INSERT INTO cases (
-            recordId, account, project, category, escalationType, escalationNote,
-            product, closeDate, description, seOwner, assignedTo, priority, status, knockId, mantisId, history
+            recordId, project, category, escalationType, escalationNote,
+            closeDate, description, seOwner, assignedTo, priority, status, history
         ) VALUES ({', '.join(['%s'] * (len(CASE_FIELDS) + 1))})
     """
     history = [build_history_entry("Created", "Case created", user=actor["displayName"])]
     params = [record_id, *[payload[field] for field in CASE_DATA_FIELDS], json.dumps(history)]
 
     await execute_mutation(sql, params)
-    await _add_case_links_from_payload(record_id, payload, actor["displayName"])
+    await _replace_case_links_from_data(record_id, data, actor["displayName"], replace_all=True)
 
     result = await get_case_or_404(record_id)
-    return normalize_record(result)
+    return await enrich_case_record(result)
 
 
 @router.put("/{recordId}", response_model=CaseRecord)
@@ -911,11 +845,10 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
     params.append(recordId)
 
     await execute_mutation(sql, params)
-    await _remove_cleared_case_links(recordId, payload)
-    await _add_case_links_from_payload(recordId, payload, actor["displayName"])
+    await _replace_case_links_from_data(recordId, data, actor["displayName"], replace_all=False)
 
     result = await get_case_or_404(recordId)
-    return normalize_record(result)
+    return await enrich_case_record(result)
 
 
 @router.post("/{recordId}/history", response_model=CaseRecord)
@@ -945,7 +878,7 @@ async def add_case_history(recordId: str, entry: HistoryEntryCreate, request: Re
     )
 
     result = await get_case_or_404(recordId)
-    return normalize_record(result)
+    return await enrich_case_record(result)
 
 
 @router.delete("/{recordId}")
@@ -971,7 +904,6 @@ async def get_case_links(recordId: str, request: Request) -> dict:
     if not await _case_is_visible_to_actor(case_row, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    await sync_case_primary_links(recordId, actor["displayName"])
     return await build_case_links_payload(recordId)
 
 
@@ -1009,9 +941,11 @@ async def add_case_link(recordId: str, request: Request, payload: CaseLinkReques
     if not target:
         raise HTTPException(status_code=404, detail="Linked entity not found")
 
-    await _upsert_case_entity_link(recordId, entity_type, entity_record_id, actor["displayName"])
+    if entity_type == "project":
+        await execute_mutation("UPDATE cases SET project = %s WHERE recordId = %s", [entity_record_id, recordId])
+    else:
+        await _upsert_case_entity_link(recordId, entity_type, entity_record_id, actor["displayName"])
 
-    await sync_case_primary_links(recordId, actor["displayName"])
     return await build_case_links_payload(recordId)
 
 
@@ -1030,13 +964,18 @@ async def remove_case_link(recordId: str, entityType: str, entityRecordId: str, 
     if entity_type not in CASE_LINK_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported entity type")
 
-    await execute_mutation(
-        """
-        DELETE FROM case_entity_links
-        WHERE caseRecordId = %s AND entityType = %s AND entityRecordId = %s
-        """,
-        [recordId, entity_type, entityRecordId],
-    )
+    if entity_type == "project":
+        await execute_mutation(
+            "UPDATE cases SET project = NULL WHERE recordId = %s AND project = %s",
+            [recordId, entityRecordId],
+        )
+    else:
+        await execute_mutation(
+            """
+            DELETE FROM case_entity_links
+            WHERE caseRecordId = %s AND entityType = %s AND entityRecordId = %s
+            """,
+            [recordId, entity_type, entityRecordId],
+        )
 
-    await sync_case_primary_links(recordId, actor["displayName"])
     return await build_case_links_payload(recordId)

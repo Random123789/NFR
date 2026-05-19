@@ -101,20 +101,20 @@ CaseStatus = Literal["New", "Acknowledged", "Escalated", "Monitoring", "Closed-R
 class CaseRecord(BaseModel):
     """Case/opportunity entity."""
     recordId: str
-    account: Optional[str] = None
     project: Optional[str] = None
     category: Optional[CaseCategory] = None
     escalationType: Optional[CaseEscalationType] = None
     escalationNote: Optional[str] = None
-    product: Optional[str] = None
     closeDate: Optional[str] = None
     description: str
     seOwner: Optional[str] = None
     assignedTo: Optional[str] = None
     priority: Optional[CasePriority] = None
     status: Optional[CaseStatus] = None
-    knockId: Optional[str] = None
-    mantisId: Optional[str] = None
+    accountIds: List[str] = Field(default_factory=list)
+    productIds: List[str] = Field(default_factory=list)
+    mantisRecordIds: List[str] = Field(default_factory=list)
+    knockRecordIds: List[str] = Field(default_factory=list)
     history: List[HistoryEntry] = Field(default_factory=list)
 
 
@@ -269,12 +269,16 @@ class KnockCreate(BaseModel):
 
 
 class CaseCreate(BaseModel):
+    # account/product/mantisId/knockId are accepted as legacy input only; the
+    # canonical relationships are the list fields below and case_entity_links.
     account: Optional[str] = None
+    accountIds: Optional[List[str]] = None
     project: Optional[str] = None
     category: Optional[CaseCategory] = None
     escalationType: Optional[CaseEscalationType] = None
     escalationNote: Optional[str] = None
     product: Optional[str] = None
+    productIds: Optional[List[str]] = None
     closeDate: Optional[str] = None
     description: str
     seOwner: Optional[str] = None
@@ -282,7 +286,9 @@ class CaseCreate(BaseModel):
     priority: Optional[CasePriority] = None
     status: Optional[CaseStatus] = None
     knockId: Optional[str] = None
+    knockRecordIds: Optional[List[str]] = None
     mantisId: Optional[str] = None
+    mantisRecordIds: Optional[List[str]] = None
 
 
 class HistoryEntryCreate(BaseModel):

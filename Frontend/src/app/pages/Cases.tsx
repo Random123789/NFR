@@ -77,18 +77,18 @@ type CaseTableColumn = {
 
 const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
   { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
-  { key: "account", label: "Account", sortKey: "account", searchKey: "account" },
+  { key: "account", label: "Accounts", sortKey: "account", searchKey: "account" },
   { key: "project", label: "Project", sortKey: "project", searchKey: "project" },
   { key: "category", label: "Category", sortKey: "category", searchKey: "category" },
   { key: "escalationType", label: "Escalation Type", sortKey: "escalationType", searchKey: "escalationType" },
-  { key: "product", label: "Product", sortKey: "product", searchKey: "product" },
+  { key: "product", label: "Products", sortKey: "product", searchKey: "product" },
   { key: "closeDate", label: "Close Date", sortKey: "closeDate", searchKey: "closeDate" },
   { key: "seOwner", label: "SE Owner", sortKey: "seOwner", searchKey: "seOwner" },
   { key: "assignedTo", label: "Assigned To", sortKey: "assignedTo", searchKey: "assignedTo" },
   { key: "priority", label: "Priority", sortKey: "priority" },
   { key: "status", label: "Status", sortKey: "status" },
-  { key: "knockId", label: "Knock ID", sortKey: "knockId", searchKey: "knockId" },
-  { key: "mantisId", label: "Mantis ID", sortKey: "mantisId", searchKey: "mantisId" },
+  { key: "knockId", label: "Knock IDs", sortKey: "knockId", searchKey: "knockId" },
+  { key: "mantisId", label: "Mantis IDs", sortKey: "mantisId", searchKey: "mantisId" },
   { key: "escalationNote", label: "Escalation Note", sortKey: "escalationNote", searchKey: "escalationNote" },
 ];
 
@@ -138,6 +138,10 @@ function uniqueNonEmptyValues(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
+function isPresent<T>(value: T | null | undefined): value is T {
+  return Boolean(value);
+}
+
 export function Cases() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -155,8 +159,8 @@ export function Cases() {
     getAccountById,
     getProductById,
     getProjectById,
-    getMantisByMantisId,
-    getKnockByKnockId,
+    getMantisById,
+    getKnockById,
     getCaseById,
     upsertCase,
   } = useRecords();
@@ -273,24 +277,24 @@ export function Cases() {
 
     const linkedMantisIds = uniqueNonEmptyValues(caseLinks?.mantis.map((item) => item.recordId) ?? []);
     const linkedKnockIds = uniqueNonEmptyValues(caseLinks?.knocks.map((item) => item.recordId) ?? []);
-    const fallbackMantisId = selectedCase.mantisId ? mantisRecords.find((item) => item.mantisId === selectedCase.mantisId)?.recordId ?? selectedCase.mantisId : "";
-    const fallbackKnockId = selectedCase.knockId ? knocks.find((item) => item.knockId === selectedCase.knockId)?.recordId ?? selectedCase.knockId : "";
+    const fallbackMantisIds = uniqueNonEmptyValues(selectedCase.mantisRecordIds ?? []);
+    const fallbackKnockIds = uniqueNonEmptyValues(selectedCase.knockRecordIds ?? []);
 
-    setEditedMantisIds(linkedMantisIds.length > 0 ? linkedMantisIds : fallbackMantisId ? [fallbackMantisId] : []);
-    setEditedKnockIds(linkedKnockIds.length > 0 ? linkedKnockIds : fallbackKnockId ? [fallbackKnockId] : []);
-  }, [caseLinks, isEditing, knocks, mantisRecords, selectedCase]);
+    setEditedMantisIds(linkedMantisIds.length > 0 ? linkedMantisIds : fallbackMantisIds);
+    setEditedKnockIds(linkedKnockIds.length > 0 ? linkedKnockIds : fallbackKnockIds);
+  }, [caseLinks, isEditing, selectedCase]);
 
-  const account = selectedCase ? getAccountById(selectedCase.account) : null;
-  const product = selectedCase ? getProductById(selectedCase.product) : null;
   const project = selectedCase ? getProjectById(selectedCase.project) : null;
-  const mantis = selectedCase ? (getMantisByMantisId(selectedCase.mantisId) ?? null) : null;
-  const knock = selectedCase ? (getKnockByKnockId(selectedCase.knockId) ?? null) : null;
+  const fallbackAccounts = selectedCase ? (selectedCase.accountIds ?? []).map(getAccountById).filter(isPresent) : [];
+  const fallbackProducts = selectedCase ? (selectedCase.productIds ?? []).map(getProductById).filter(isPresent) : [];
+  const fallbackMantis = selectedCase ? (selectedCase.mantisRecordIds ?? []).map(getMantisById).filter(isPresent) : [];
+  const fallbackKnocks = selectedCase ? (selectedCase.knockRecordIds ?? []).map(getKnockById).filter(isPresent) : [];
 
-  const linkedAccounts = caseLinks?.accounts ?? (account ? [account] : []);
-  const linkedProducts = caseLinks?.products ?? (product ? [product] : []);
+  const linkedAccounts = caseLinks?.accounts ?? fallbackAccounts;
+  const linkedProducts = caseLinks?.products ?? fallbackProducts;
   const linkedProjects = caseLinks?.projects ?? (project ? [project] : []);
-  const linkedMantis = caseLinks?.mantis ?? (mantis ? [mantis] : []);
-  const linkedKnocks = caseLinks?.knocks ?? (knock ? [knock] : []);
+  const linkedMantis = caseLinks?.mantis ?? fallbackMantis;
+  const linkedKnocks = caseLinks?.knocks ?? fallbackKnocks;
   const linkedAccountRecordIds = new Set(linkedAccounts.map((item) => item.recordId).filter(Boolean));
   const linkedProductRecordIds = new Set(linkedProducts.map((item) => item.recordId).filter(Boolean));
   const linkedProjectRecordIds = new Set(linkedProjects.map((item) => item.recordId).filter(Boolean));
@@ -330,11 +334,15 @@ export function Cases() {
   const getCaseValue = (caseItem: CaseRecord, key: CaseColumnKey) => {
     switch (key) {
       case "account":
-        return getAccountById(caseItem.account)?.accountName || caseItem.account || "";
+        return (caseItem.accountIds ?? []).map((accountId) => getAccountById(accountId)?.accountName || accountId).join(", ");
       case "product":
-        return getProductById(caseItem.product)?.productName || caseItem.product || "";
+        return (caseItem.productIds ?? []).map((productId) => getProductById(productId)?.productName || productId).join(", ");
       case "project":
         return getProjectById(caseItem.project)?.projectName || caseItem.project || "";
+      case "knockId":
+        return (caseItem.knockRecordIds ?? []).map((recordId) => getKnockById(recordId)?.knockId || recordId).join(", ");
+      case "mantisId":
+        return (caseItem.mantisRecordIds ?? []).map((recordId) => getMantisById(recordId)?.mantisId || recordId).join(", ");
       default:
         return caseItem[key] || "";
     }
@@ -352,16 +360,14 @@ export function Cases() {
       if (daysDiff < 0 || daysDiff > daysToCloseFilter) return false;
     }
 
-    const mantisMatch = caseItem.mantisId ? getMantisByMantisId(caseItem.mantisId) : null;
-    const knockMatch = caseItem.knockId ? getKnockByKnockId(caseItem.knockId) : null;
+    const mantisMatches = (caseItem.mantisRecordIds ?? []).map(getMantisById).filter(isPresent);
+    const knockMatches = (caseItem.knockRecordIds ?? []).map(getKnockById).filter(isPresent);
 
     if (normalizedSearchTerm) {
       const values = [
         ...CASE_TABLE_COLUMNS.map((column) => getCaseValue(caseItem, column.key)),
-        mantisMatch?.description,
-        mantisMatch?.mantisId,
-        knockMatch?.description,
-        knockMatch?.knockId,
+        ...mantisMatches.flatMap((record) => [record.description, record.mantisId]),
+        ...knockMatches.flatMap((record) => [record.description, record.knockId]),
       ];
 
       if (!values.some((value) => (value ?? "").toLowerCase().includes(normalizedSearchTerm))) return false;
@@ -397,43 +403,26 @@ export function Cases() {
     try {
       const nextMantisIds = editedMantisIds.filter(Boolean);
       const nextKnockIds = editedKnockIds.filter(Boolean);
-      const currentMantisIds = caseLinks?.mantis.map((item) => item.recordId).filter(Boolean) ?? [];
-      const currentKnockIds = caseLinks?.knocks.map((item) => item.recordId).filter(Boolean) ?? [];
-      const nextMantisValue = nextMantisIds.length > 0 ? mantisRecords.find((item) => item.recordId === nextMantisIds[0])?.mantisId ?? null : null;
-      const nextKnockValue = nextKnockIds.length > 0 ? knocks.find((item) => item.recordId === nextKnockIds[0])?.knockId ?? null : null;
 
       const saved = await updateCase(editedCase.recordId, {
-        account: editedCase.account,
+        accountIds: uniqueNonEmptyValues(editedCase.accountIds ?? []),
         project: editedCase.project,
         category: editedCase.category,
         escalationType: editedCase.escalationType,
         escalationNote: editedCase.escalationNote,
-        product: editedCase.product,
+        productIds: uniqueNonEmptyValues(editedCase.productIds ?? []),
         closeDate: editedCase.closeDate,
         description: editedCase.description,
         seOwner: editedCase.seOwner,
         assignedTo: editedCase.assignedTo,
         priority: editedCase.priority,
         status: editedCase.status,
-        knockId: nextKnockValue,
-        mantisId: nextMantisValue,
+        knockRecordIds: uniqueNonEmptyValues(nextKnockIds),
+        mantisRecordIds: uniqueNonEmptyValues(nextMantisIds),
       });
 
       upsertCase(saved);
       applySavedRecord(saved);
-
-      for (const recordId of currentMantisIds.filter((id) => !nextMantisIds.includes(id))) {
-        await removeCaseLink(saved.recordId, "mantis", recordId);
-      }
-      for (const recordId of currentKnockIds.filter((id) => !nextKnockIds.includes(id))) {
-        await removeCaseLink(saved.recordId, "knock", recordId);
-      }
-      for (const recordId of nextMantisIds.filter((id) => !currentMantisIds.includes(id))) {
-        await addCaseLink(saved.recordId, "mantis", recordId);
-      }
-      for (const recordId of nextKnockIds.filter((id) => !currentKnockIds.includes(id))) {
-        await addCaseLink(saved.recordId, "knock", recordId);
-      }
 
       await refreshCaseLinks(saved.recordId);
       await refreshSelectedCase(saved.recordId);
@@ -592,9 +581,10 @@ export function Cases() {
           </td>
         );
       case "account":
-        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getAccountById(caseItem.account)?.accountName || caseItem.account)}</td>;
       case "product":
-        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getProductById(caseItem.product)?.productName || caseItem.product)}</td>;
+      case "knockId":
+      case "mantisId":
+        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getCaseValue(caseItem, column.key))}</td>;
       case "project":
         return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getProjectById(caseItem.project)?.projectName || caseItem.project)}</td>;
       case "assignedTo":
@@ -604,7 +594,7 @@ export function Cases() {
           </td>
         );
       default:
-        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(caseItem[column.key])}</td>;
+        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getCaseValue(caseItem, column.key))}</td>;
     }
   };
 
@@ -883,21 +873,21 @@ export function Cases() {
                   )}
                 </div>
                 <div className="order-5 detail-cell">
-                  <label className="mb-1 block text-sm font-medium text-gray-600">Account</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Accounts</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
                       <div className="min-w-0 flex-1">
-                        <SearchableSelect
-                          label="account"
-                          value={editedCase.account || ""}
+                        <MultiRecordDropdown
+                          label="accounts"
+                          values={editedCase.accountIds ?? []}
                           options={accounts.map((item) => ({
                             value: item.recordId,
                             label: item.accountName,
                             description: [item.type, item.vertical].filter(Boolean).join(" | "),
                           }))}
-                          emptyLabel="No account"
+                          emptyLabel="No linked accounts"
                           searchPlaceholder="Search accounts"
-                          onChange={(account) => setEditedCase({ ...editedCase, account })}
+                          onChange={(accountIds) => setEditedCase({ ...editedCase, accountIds })}
                         />
                       </div>
                       <CreateEntityDialog
@@ -907,32 +897,37 @@ export function Cases() {
                         hideLinkedCaseSelect
                         className={RELATED_CREATE_BUTTON_CLASS}
                         onCreated={(created) => {
-                          setEditedCase((current) => current ? { ...current, account: created.recordId } : current);
+                          setEditedCase((current) => current ? {
+                            ...current,
+                            accountIds: (current.accountIds ?? []).includes(created.recordId)
+                              ? current.accountIds
+                              : [...(current.accountIds ?? []), created.recordId],
+                          } : current);
                         }}
                       />
                     </div>
                   ) : (
                     <p className="text-gray-900">
-                      {textValue(linkedAccounts.length > 0 ? linkedAccounts.map((item) => item.accountName).filter(Boolean).join(", ") : account?.accountName || selectedCase.account)}
+                      {textValue(linkedAccounts.map((item) => item.accountName).filter(Boolean).join(", "))}
                     </p>
                   )}
                 </div>
                 <div className="order-6 detail-cell">
-                  <label className="mb-1 block text-sm font-medium text-gray-600">Product</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Products</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
                       <div className="min-w-0 flex-1">
-                        <SearchableSelect
-                          label="product"
-                          value={editedCase.product || ""}
+                        <MultiRecordDropdown
+                          label="products"
+                          values={editedCase.productIds ?? []}
                           options={products.map((item) => ({
                             value: item.recordId,
                             label: item.productName,
                             description: item.productFamily,
                           }))}
-                          emptyLabel="No product"
+                          emptyLabel="No linked products"
                           searchPlaceholder="Search products"
-                          onChange={(product) => setEditedCase({ ...editedCase, product })}
+                          onChange={(productIds) => setEditedCase({ ...editedCase, productIds })}
                         />
                       </div>
                       <CreateEntityDialog
@@ -942,13 +937,18 @@ export function Cases() {
                         hideLinkedCaseSelect
                         className={RELATED_CREATE_BUTTON_CLASS}
                         onCreated={(created) => {
-                          setEditedCase((current) => current ? { ...current, product: created.recordId } : current);
+                          setEditedCase((current) => current ? {
+                            ...current,
+                            productIds: (current.productIds ?? []).includes(created.recordId)
+                              ? current.productIds
+                              : [...(current.productIds ?? []), created.recordId],
+                          } : current);
                         }}
                       />
                     </div>
                   ) : (
                     <p className="text-gray-900">
-                      {textValue(linkedProducts.length > 0 ? linkedProducts.map((item) => item.productName).filter(Boolean).join(", ") : product?.productName || selectedCase.product)}
+                      {textValue(linkedProducts.map((item) => item.productName).filter(Boolean).join(", "))}
                     </p>
                   )}
                 </div>
@@ -974,7 +974,7 @@ export function Cases() {
                         entityType="project"
                         triggerLabel="New"
                         triggerTitle="Create project"
-                        initialValues={editedCase.account ? { accountId: editedCase.account } : undefined}
+                        initialValues={(editedCase.accountIds ?? []).length === 1 ? { accountId: editedCase.accountIds[0] } : undefined}
                         hideLinkedCaseSelect
                         className={RELATED_CREATE_BUTTON_CLASS}
                         onCreated={(created) => {
@@ -1016,7 +1016,7 @@ export function Cases() {
                       />
                     </div>
                   ) : (
-                    <p className="text-gray-900">{textValue(linkedKnocks.length > 0 ? linkedKnocks.map((item) => item.knockId).filter(Boolean).join(", ") : knock?.knockId || selectedCase.knockId)}</p>
+                    <p className="text-gray-900">{textValue(linkedKnocks.map((item) => item.knockId).filter(Boolean).join(", "))}</p>
                   )}
                 </div>
                 <div className="order-9 detail-cell">
@@ -1049,7 +1049,7 @@ export function Cases() {
                       />
                     </div>
                   ) : (
-                    <p className="text-gray-900">{textValue(linkedMantis.length > 0 ? linkedMantis.map((item) => item.mantisId).filter(Boolean).join(", ") : mantis?.mantisId || selectedCase.mantisId)}</p>
+                    <p className="text-gray-900">{textValue(linkedMantis.map((item) => item.mantisId).filter(Boolean).join(", "))}</p>
                   )}
                 </div>
                 <div className="order-10 detail-cell">
@@ -1135,9 +1135,9 @@ export function Cases() {
                 <h3 className="mb-4 text-lg font-semibold text-gray-900">
                   {CASE_DETAIL_TABS.find((tab) => tab.key === activeDetailTab)?.label}
                 </h3>
-                {(activeDetailTab === "linkedMantisRecords" || activeDetailTab === "linkedKnocks") && (
+                {activeDetailTab.startsWith("linked") && activeDetailTab !== "linkedProjects" && (
                   <p className="mb-4 text-sm text-gray-500">
-                    Add multiple Mantis and Knock links here. The case editor above stays synced to the same linked records.
+                    Add multiple links here. The case editor above stays synced to the same linked records.
                   </p>
                 )}
                 <div className="space-y-4">
@@ -1262,7 +1262,7 @@ export function Cases() {
                       triggerLabel="New"
                       triggerTitle="Create project"
                       initialValues={{
-                        accountId: selectedCase.account ?? "",
+                        accountId: (selectedCase.accountIds ?? []).length === 1 ? selectedCase.accountIds[0] : "",
                         linkedCase: selectedCase.recordId,
                       }}
                       hideLinkedCaseSelect

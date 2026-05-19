@@ -87,9 +87,11 @@ export function Bookmarked() {
 
     if (item.type === "case") {
       const caseRecord = getCaseById(item.id);
-      const accountName = getAccountById(caseRecord?.account)?.accountName || caseRecord?.account;
+      const accountName = (caseRecord?.accountIds ?? [])
+        .map((accountId) => getAccountById(accountId)?.accountName || accountId)
+        .join(", ");
       const projectName = getProjectById(caseRecord?.project)?.projectName || caseRecord?.project;
-      const relationship = `Account: ${textValue(accountName)} | Project: ${textValue(projectName)}`;
+      const relationship = `Accounts: ${textValue(accountName)} | Project: ${textValue(projectName)}`;
       const statusLine = caseRecord
         ? `${textValue(caseRecord.status)} - ${textValue(caseRecord.priority)}`
         : item.subtitle;

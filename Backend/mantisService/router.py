@@ -221,8 +221,6 @@ async def update_mantis(recordId: str, data: MantisCreate, request: Request) -> 
 async def delete_mantis(recordId: str) -> dict[str, str]:
     """Delete a Mantis record."""
     existing = await get_entity_or_404(MANTIS_CONFIG, recordId)
-    if existing.get("mantisId"):
-        await execute_mutation("UPDATE cases SET mantisId = NULL WHERE mantisId = %s", [existing["mantisId"]])
     await execute_mutation(
         "DELETE FROM case_entity_links WHERE entityType = 'mantis' AND entityRecordId = %s",
         [recordId],

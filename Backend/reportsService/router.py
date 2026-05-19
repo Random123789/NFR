@@ -1,6 +1,7 @@
 """Reports aggregation endpoint router."""
 
 import json
+import logging
 from typing import List
 from datetime import datetime
 
@@ -21,6 +22,7 @@ from schemas import (
 from utils import current_timestamp, format_datetime_minute, trim_timestamp_seconds
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+logger = logging.getLogger(__name__)
 
 
 async def ensure_custom_report_tables() -> None:
@@ -106,6 +108,22 @@ def _build_custom_report_record(row: dict) -> CustomReportRecord:
         return str(trim_timestamp_seconds(dt))
 
     filters = _deserialize_filters(row.get("filters"))
+    try:
+        report_filters = ReportFilters(**filters)
+    except Exception:
+        logger.warning("Invalid saved report filters for report %s; using defaults", row.get("id"), exc_info=True)
+        report_filters = ReportFilters()
+
+    raw_query_spec = _deserialize_query_spec(row.get("querySpec"), row["metric"], filters)
+    try:
+        query_spec = ReportQuerySpec(**raw_query_spec)
+    except Exception:
+        logger.warning("Invalid saved report query spec for report %s; using legacy fallback", row.get("id"), exc_info=True)
+        try:
+            query_spec = ReportQuerySpec(**build_legacy_query_spec(row["metric"], filters))
+        except Exception:
+            logger.warning("Legacy report fallback failed for report %s; using default spec", row.get("id"), exc_info=True)
+            query_spec = ReportQuerySpec()
 
     return CustomReportRecord(
         id=row["id"],
@@ -115,8 +133,8 @@ def _build_custom_report_record(row: dict) -> CustomReportRecord:
         metric=row["metric"],
         layoutSpan=row.get("layoutSpan", 1),
         sortOrder=row.get("sortOrder", 0),
-        filters=ReportFilters(**filters),
-        querySpec=ReportQuerySpec(**_deserialize_query_spec(row.get("querySpec"), row["metric"], filters)),
+        filters=report_filters,
+        querySpec=query_spec,
         createdAt=_fmt(row.get("createdAt")),
         updatedAt=_fmt(row.get("updatedAt")),
     )
@@ -188,11 +206,11 @@ async def get_cases_by_product() -> List[ReportValue]:
     """Get case count breakdown by product."""
     
     sql = """
-        SELECT c.product, p.productName as name, COUNT(*) as value
-        FROM cases c
-        LEFT JOIN products p ON c.product = p.recordId
-        WHERE c.product IS NOT NULL
-        GROUP BY c.product
+        SELECT p.recordId AS product, p.productName as name, COUNT(DISTINCT cel.caseRecordId) as value
+        FROM case_entity_links cel
+        INNER JOIN products p ON p.recordId = cel.entityRecordId
+        WHERE cel.entityType = 'product'
+        GROUP BY p.recordId, p.productName
     """
     results = await execute_query(sql)
     
@@ -255,7 +273,16 @@ async def get_report_builder_schema() -> dict:
 @router.post("/preview", response_model=ReportRunResult)
 async def preview_report(request: Request, payload: ReportQuerySpec) -> ReportRunResult:
     actor = await require_auth_user(request)
-    return await execute_report_query(payload, actor)
+    try:
+        return await execute_report_query(payload, actor)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Report preview failed for user %s", actor.get("id"))
+        raise HTTPException(
+            status_code=400,
+            detail="Report query failed. Check the selected dataset, related data, fields, and filters.",
+        ) from exc
 
 
 @router.post("/custom", response_model=CustomReportRecord)
@@ -387,7 +414,16 @@ async def run_custom_report(reportId: int, request: Request) -> ReportRunResult:
         raise HTTPException(status_code=404, detail="Custom report not found")
 
     report = _build_custom_report_record(row)
-    return await execute_report_query(report.querySpec, actor)
+    try:
+        return await execute_report_query(report.querySpec, actor)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Saved report %s failed for user %s", reportId, actor.get("id"))
+        raise HTTPException(
+            status_code=400,
+            detail="Saved report query failed. Edit the report and check its related data, fields, and filters.",
+        ) from exc
 
 
 @router.delete("/custom/{reportId}")

@@ -112,7 +112,6 @@ async def update_product(recordId: str, data: ProductCreate, request: Request) -
 @router.delete("/{recordId}")
 async def delete_product(recordId: str) -> dict[str, str]:
     """Delete a product."""
-    await execute_mutation("UPDATE cases SET product = NULL WHERE product = %s", [recordId])
     await execute_mutation(
         "DELETE FROM case_entity_links WHERE entityType = 'product' AND entityRecordId = %s",
         [recordId],

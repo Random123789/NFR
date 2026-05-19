@@ -4,11 +4,21 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, FolderKanban, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
 import { useRecords } from "../context/RecordsContext";
 import { useAuth } from "../context/AuthContext";
-import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
-import type { AccountRecord, CaseRecord, ProjectRecord } from "../data/apiClient";
+import { casePriorityColors, caseStatusColors, knockStatusColors, mantisStatusColors, projectStageColors } from "../data/recordStyles";
+import type { AccountRecord, CaseRecord, KnockRecord, MantisRecord, ProjectRecord } from "../data/apiClient";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Checkbox } from "../components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
+import { accountVerticals, type AccountVertical } from "../data/accountOptions";
 import { caseStatuses, casePriorities } from "../data/caseOptions";
 import { createDetailPath } from "../navigation/detailNavigation";
 import { formatUsdInteger } from "../utils/currency";
@@ -93,9 +103,44 @@ export type CustomWidgetConfig = {
 };
 
 const CLOSED_CASE_STATUSES = new Set(["Closed-Resolved", "Closed-Dead"]);
+const CLOSED_MANTIS_STATUSES = new Set(["resolved", "completed", "dead", "implemented", "rejected"]);
+const CLOSED_KNOCK_STATUSES = new Set(["completed", "cancelled"]);
 
 function isOpenCase(caseItem: CaseRecord) {
   return !CLOSED_CASE_STATUSES.has(caseItem.status ?? "");
+}
+
+function isOpenMantis(record: MantisRecord) {
+  return !CLOSED_MANTIS_STATUSES.has((record.mantisStatus ?? "").trim().toLowerCase());
+}
+
+function isOpenKnock(record: KnockRecord) {
+  return !CLOSED_KNOCK_STATUSES.has((record.status ?? "").trim().toLowerCase());
+}
+
+function priorityWeight(value: string | null | undefined) {
+  if (value === "Very High") return 5;
+  if (value === "High") return 4;
+  if (value === "Medium") return 3;
+  if (value === "Low") return 2;
+  return 1;
+}
+
+function caseUrgencyScore(caseItem: CaseRecord) {
+  const daysToClose = getDaysUntil(caseItem.closeDate);
+  const deadlinePressure = daysToClose === null ? 0 : daysToClose < 0 ? 5 : daysToClose <= 7 ? 4 : daysToClose <= 14 ? 2 : 0;
+  return (
+    priorityWeight(caseItem.priority) +
+    (caseItem.status === "Escalated" ? 6 : 0) +
+    (caseItem.status === "New" ? 2 : 0) +
+    deadlinePressure
+  );
+}
+
+function isCaseOwnedBy(caseItem: CaseRecord, displayName: string | null | undefined) {
+  const owner = (displayName ?? "").trim().toLowerCase();
+  if (!owner) return false;
+  return [caseItem.seOwner, caseItem.assignedTo].some((value) => (value ?? "").trim().toLowerCase() === owner);
 }
 
 function getDaysUntil(dateString: string | null | undefined) {
@@ -116,12 +161,84 @@ function getAccountName(accounts: AccountRecord[], accountId: string | null | un
   return accounts.find((account) => account.recordId === accountId)?.accountName ?? "No account";
 }
 
+function getProjectName(projects: ProjectRecord[], projectId: string | null | undefined) {
+  return projects.find((project) => project.recordId === projectId)?.projectName ?? "No project";
+}
+
+function getProjectForCase(projects: ProjectRecord[], caseItem: CaseRecord) {
+  return projects.find((project) => project.recordId === caseItem.project);
+}
+
+function getAccountNamesForCase(accounts: AccountRecord[], caseItem: CaseRecord, project?: ProjectRecord) {
+  const linkedAccountNames = (caseItem.accountIds ?? [])
+    .map((accountId) => accounts.find((account) => account.recordId === accountId)?.accountName)
+    .filter(Boolean);
+
+  return linkedAccountNames.length > 0 ? linkedAccountNames.join(", ") : getAccountName(accounts, project?.accountId);
+}
+
+function formatDaysLabel(days: number | null) {
+  if (days === null) return "No date";
+  if (days < 0) return `${Math.abs(days)}d overdue`;
+  if (days === 0) return "Today";
+  return `${days}d`;
+}
+
+function countLinkedCasesForMantis(cases: CaseRecord[], record: MantisRecord) {
+  return cases.filter((caseItem) => (caseItem.mantisRecordIds ?? []).includes(record.recordId)).length;
+}
+
+function countLinkedCasesForKnock(cases: CaseRecord[], record: KnockRecord) {
+  return cases.filter((caseItem) => (caseItem.knockRecordIds ?? []).includes(record.recordId)).length;
+}
+
 function ManagerHome() {
   const { cases, accounts, projects } = useRecords();
   const navigate = useNavigate();
+  const [selectedVerticals, setSelectedVerticals] = useState<AccountVertical[]>([]);
 
-  const openCases = cases.filter(isOpenCase);
-  const openProjects = projects.filter((project) => !project.isClosed);
+  const hasVerticalFilter = selectedVerticals.length > 0;
+  const selectedVerticalSet = new Set<AccountVertical>(selectedVerticals);
+  const accountsById = new Map(accounts.map((account) => [account.recordId, account]));
+  const projectsById = new Map(projects.map((project) => [project.recordId, project]));
+  const verticalFilterLabel = selectedVerticals.length === 0
+    ? "All verticals"
+    : selectedVerticals.length === 1
+      ? selectedVerticals[0]
+      : `${selectedVerticals.length} verticals`;
+
+  const toggleVertical = (vertical: AccountVertical) => {
+    setSelectedVerticals((current) =>
+      current.includes(vertical)
+        ? current.filter((selectedVertical) => selectedVertical !== vertical)
+        : [...current, vertical]
+    );
+  };
+
+  const projectMatchesVerticalFilter = (project: ProjectRecord) => {
+    if (!hasVerticalFilter) return true;
+    const account = project.accountId ? accountsById.get(project.accountId) : undefined;
+    return Boolean(account?.vertical && selectedVerticalSet.has(account.vertical));
+  };
+
+  const caseMatchesVerticalFilter = (caseItem: CaseRecord) => {
+    if (!hasVerticalFilter) return true;
+
+    const hasMatchingLinkedAccount = (caseItem.accountIds ?? []).some((accountId) => {
+      const vertical = accountsById.get(accountId)?.vertical;
+      return Boolean(vertical && selectedVerticalSet.has(vertical));
+    });
+    if (hasMatchingLinkedAccount) return true;
+
+    const project = caseItem.project ? projectsById.get(caseItem.project) : undefined;
+    const projectAccount = project?.accountId ? accountsById.get(project.accountId) : undefined;
+    return Boolean(projectAccount?.vertical && selectedVerticalSet.has(projectAccount.vertical));
+  };
+
+  const filteredCases = cases.filter(caseMatchesVerticalFilter);
+  const filteredProjects = projects.filter(projectMatchesVerticalFilter);
+  const openCases = filteredCases.filter(isOpenCase);
+  const openProjects = filteredProjects.filter((project) => !project.isClosed);
   const totalOpenPipeline = openProjects.reduce((sum, project) => sum + projectValue(project), 0);
   const highRiskCases = openCases.filter((caseItem) =>
     caseItem.status === "Escalated" || caseItem.priority === "High" || caseItem.priority === "Very High"
@@ -159,7 +276,7 @@ function ManagerHome() {
 
   const topFocusProjects = [...openProjects]
     .map((project) => {
-      const relatedCases = cases.filter((caseItem) => caseItem.project === project.recordId && isOpenCase(caseItem));
+      const relatedCases = openCases.filter((caseItem) => caseItem.project === project.recordId);
       const escalated = relatedCases.filter((caseItem) => caseItem.status === "Escalated").length;
       const veryHigh = relatedCases.filter((caseItem) => caseItem.priority === "Very High").length;
       const daysToClose = getDaysUntil(project.closeDate);
@@ -222,9 +339,48 @@ function ManagerHome() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Manager Dashboard</h1>
-        <p className="mt-1 text-gray-600">Pipeline, risk, and focus areas for the SE team.</p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Manager Dashboard</h1>
+          <p className="mt-1 text-gray-600">Pipeline, risk, and focus areas for the SE team.</p>
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Filter manager dashboard by vertical"
+              className="inline-flex w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#E31937] md:w-auto md:min-w-44"
+            >
+              <span className="truncate">{verticalFilterLabel}</span>
+              <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel>Verticals</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {accountVerticals.map((vertical) => (
+              <DropdownMenuCheckboxItem
+                key={vertical}
+                checked={selectedVerticals.includes(vertical)}
+                onCheckedChange={() => toggleVertical(vertical)}
+                onSelect={(event) => event.preventDefault()}
+              >
+                {vertical}
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={!hasVerticalFilter}
+              onSelect={(event) => {
+                event.preventDefault();
+                setSelectedVerticals([]);
+              }}
+            >
+              Overall view
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -391,7 +547,415 @@ export function Home() {
     return <ManagerHome />;
   }
 
-  return <TeamHome />;
+  return <SalesEngineerHome />;
+}
+
+function SalesEngineerHome() {
+  const { user } = useAuth();
+  const { cases, accounts, projects, mantisRecords, knocks } = useRecords();
+  const navigate = useNavigate();
+  const userName = (user?.displayName ?? "").trim().toLowerCase();
+
+  const visibleOpenCases = cases.filter(isOpenCase);
+  const ownedOpenCases = visibleOpenCases.filter((caseItem) => isCaseOwnedBy(caseItem, user?.displayName));
+  const focusCases = user?.role === "user" && ownedOpenCases.length > 0 ? ownedOpenCases : visibleOpenCases;
+  const focusCaseProjectIds = new Set(focusCases.map((caseItem) => caseItem.project).filter(Boolean) as string[]);
+
+  const openProjects = projects.filter((project) => !project.isClosed);
+  const ownedOpenProjects = openProjects.filter((project) => {
+    const projectOwner = (project.seOwner ?? "").trim().toLowerCase();
+    return (userName && projectOwner === userName) || focusCaseProjectIds.has(project.recordId);
+  });
+  const focusProjects = user?.role === "user" && ownedOpenProjects.length > 0 ? ownedOpenProjects : openProjects;
+
+  const highRiskCases = focusCases.filter((caseItem) =>
+    caseItem.status === "Escalated" || caseItem.priority === "High" || caseItem.priority === "Very High"
+  );
+  const newCases = focusCases.filter((caseItem) => caseItem.status === "New");
+  const overdueCases = focusCases.filter((caseItem) => {
+    const days = getDaysUntil(caseItem.closeDate);
+    return days !== null && days < 0;
+  });
+
+  const activeMantis = mantisRecords.filter(isOpenMantis);
+  const activeKnocks = knocks.filter(isOpenKnock);
+  const soonMantis = activeMantis.filter((record) => {
+    const days = getDaysUntil(record.mantisTargetDate);
+    return days !== null && days <= 30;
+  });
+  const soonKnocks = activeKnocks.filter((record) => {
+    const days = getDaysUntil(record.targetDate);
+    return days !== null && days <= 30;
+  });
+
+  const pressureProjects = focusProjects
+    .map((project) => {
+      const relatedCases = focusCases.filter((caseItem) => caseItem.project === project.recordId);
+      const escalated = relatedCases.filter((caseItem) => caseItem.status === "Escalated").length;
+      const highPriority = relatedCases.filter((caseItem) => caseItem.priority === "High" || caseItem.priority === "Very High").length;
+      const daysToClose = getDaysUntil(project.closeDate);
+      const closePressure = daysToClose === null ? 0 : daysToClose < 0 ? 5 : daysToClose <= 30 ? 4 : daysToClose <= 60 ? 2 : 0;
+      return {
+        ...project,
+        accountName: getAccountName(accounts, project.accountId),
+        daysToClose,
+        escalated,
+        highPriority,
+        openCaseCount: relatedCases.length,
+        pressureScore: closePressure + escalated * 5 + highPriority * 3 + relatedCases.length,
+      };
+    })
+    .sort((left, right) => right.pressureScore - left.pressureScore || projectValue(right) - projectValue(left))
+    .slice(0, 6);
+
+  const pipelineInPlay = focusProjects.reduce((sum, project) => sum + projectValue(project), 0);
+  const pipelineAtRisk = pressureProjects.reduce((sum, project) => sum + projectValue(project), 0);
+
+  const attentionCases = [...focusCases]
+    .sort((left, right) => caseUrgencyScore(right) - caseUrgencyScore(left) || right.recordId.localeCompare(left.recordId))
+    .slice(0, 7);
+
+  const productAskFollowUps = [
+    ...activeMantis.map((record) => {
+      const daysToTarget = getDaysUntil(record.mantisTargetDate);
+      const linkedCases = countLinkedCasesForMantis(cases, record);
+      return {
+        id: record.recordId,
+        type: "mantis" as const,
+        label: "Mantis",
+        publicId: record.mantisId || record.recordId,
+        description: record.description,
+        status: record.mantisStatus || "No status",
+        daysToTarget,
+        linkedCases,
+        score: (daysToTarget !== null && daysToTarget <= 30 ? 6 : 0) + (daysToTarget !== null && daysToTarget < 0 ? 8 : 0) + Math.min(linkedCases, 4),
+      };
+    }),
+    ...activeKnocks.map((record) => {
+      const daysToTarget = getDaysUntil(record.targetDate);
+      const linkedCases = countLinkedCasesForKnock(cases, record);
+      return {
+        id: record.recordId,
+        type: "knock" as const,
+        label: "Knock",
+        publicId: record.knockId || record.recordId,
+        description: record.description,
+        status: record.status || "No status",
+        daysToTarget,
+        linkedCases,
+        score: (daysToTarget !== null && daysToTarget <= 30 ? 6 : 0) + (daysToTarget !== null && daysToTarget < 0 ? 8 : 0) + Math.min(linkedCases, 4),
+      };
+    }),
+  ]
+    .sort((left, right) => right.score - left.score || (left.daysToTarget ?? 999) - (right.daysToTarget ?? 999))
+    .slice(0, 7);
+
+  const accountImpact = accounts
+    .map((account) => {
+      const accountProjects = focusProjects.filter((project) => project.accountId === account.recordId);
+      const accountCases = focusCases.filter((caseItem) =>
+        (caseItem.accountIds ?? []).includes(account.recordId) || Boolean(caseItem.project && accountProjects.some((project) => project.recordId === caseItem.project))
+      );
+      const urgentCases = accountCases.filter((caseItem) => caseItem.status === "Escalated" || caseItem.priority === "High" || caseItem.priority === "Very High");
+      const value = accountProjects.reduce((sum, project) => sum + projectValue(project), 0);
+      return {
+        ...account,
+        openCaseCount: accountCases.length,
+        urgentCaseCount: urgentCases.length,
+        projectCount: accountProjects.length,
+        value,
+      };
+    })
+    .filter((account) => account.openCaseCount > 0 || account.value > 0)
+    .sort((left, right) => right.urgentCaseCount - left.urgentCaseCount || right.value - left.value)
+    .slice(0, 5);
+
+  const caseStatusData = [
+    { id: "case-status-new", name: "New", value: focusCases.filter((caseItem) => caseItem.status === "New").length },
+    { id: "case-status-ack", name: "Acknowledged", value: focusCases.filter((caseItem) => caseItem.status === "Acknowledged").length },
+    { id: "case-status-escalated", name: "Escalated", value: focusCases.filter((caseItem) => caseItem.status === "Escalated").length },
+    { id: "case-status-monitoring", name: "Monitoring", value: focusCases.filter((caseItem) => caseItem.status === "Monitoring").length },
+  ].filter((item) => item.value > 0);
+
+  const askStatusData = [
+    { id: "ask-status-mantis", name: "Mantis", active: activeMantis.length, dueSoon: soonMantis.length },
+    { id: "ask-status-knock", name: "Knock", active: activeKnocks.length, dueSoon: soonKnocks.length },
+  ];
+
+  const stats = [
+    {
+      label: "Open Cases",
+      value: focusCases.length.toString(),
+      detail: `${newCases.length} new, ${overdueCases.length} overdue`,
+      icon: Briefcase,
+      color: "bg-[#E31937]",
+      onClick: () => navigate("/cases"),
+    },
+    {
+      label: "Critical Cases",
+      value: highRiskCases.length.toString(),
+      detail: "escalated or high priority",
+      icon: AlertCircle,
+      color: "bg-[#c41230]",
+      onClick: () => navigate("/cases", { state: { priorityFilter: "Very High" } }),
+    },
+    {
+      label: "Pipeline in Play",
+      value: formatUsdInteger(pipelineInPlay),
+      detail: `${formatUsdInteger(pipelineAtRisk)} needs focus`,
+      icon: DollarSign,
+      color: "bg-[#2c3e50]",
+      onClick: () => navigate("/projects"),
+    },
+    {
+      label: "Product Asks",
+      value: String(activeMantis.length + activeKnocks.length),
+      detail: `${soonMantis.length + soonKnocks.length} due in 30d`,
+      icon: FolderKanban,
+      color: "bg-[#4b5563]",
+      onClick: () => navigate("/mantis"),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">SE Focus</h1>
+          <p className="mt-1 text-gray-600">
+            {user?.role === "user" && ownedOpenCases.length > 0
+              ? `${user.displayName}'s active cases, projects, and product asks.`
+              : "Active cases, projects, and product asks across your visible accounts."}
+          </p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 shadow-sm">
+          {focusProjects.length} active projects · {activeMantis.length} Mantis · {activeKnocks.length} Knocks
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {stats.map((stat) => (
+          <button
+            key={stat.label}
+            type="button"
+            onClick={stat.onClick}
+            className="rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-600">{stat.label}</p>
+                <p className="mt-2 truncate text-3xl font-semibold text-gray-900">{stat.value}</p>
+                <p className="mt-1 text-sm text-gray-500">{stat.detail}</p>
+              </div>
+              <div className={`${stat.color} flex h-12 w-12 shrink-0 items-center justify-center rounded-lg`}>
+                <stat.icon className="h-6 w-6 text-white" />
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Attention Queue</h2>
+            <p className="mt-1 text-sm text-gray-500">Ranked by escalation, priority, and deadline pressure.</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {attentionCases.map((caseItem) => {
+              const project = getProjectForCase(projects, caseItem);
+              const accountName = getAccountNamesForCase(accounts, caseItem, project);
+              return (
+                <button
+                  key={caseItem.recordId}
+                  type="button"
+                  onClick={() => navigate(createDetailPath("case", caseItem.recordId), { state: { openDetail: { entityType: "case", recordId: caseItem.recordId } } })}
+                  className="block w-full px-5 py-4 text-left hover:bg-gray-50"
+                >
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <p className="line-clamp-2 text-sm font-medium text-gray-900">{caseItem.description}</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {accountName} · {project?.projectName ?? "No project"} · {caseItem.seOwner || caseItem.assignedTo || "Unassigned"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${caseStatusColors[caseItem.status ?? ""] ?? "bg-gray-100 text-gray-700"}`}>
+                        {caseItem.status || "-"}
+                      </span>
+                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${casePriorityColors[caseItem.priority ?? ""] ?? "bg-gray-100 text-gray-700"}`}>
+                        {caseItem.priority || "-"}
+                      </span>
+                      <span className="inline-flex rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
+                        {formatDaysLabel(getDaysUntil(caseItem.closeDate))}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+            {attentionCases.length === 0 && (
+              <p className="px-5 py-10 text-center text-sm text-gray-500">No open cases need attention right now.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Deal Pressure</h2>
+            <p className="mt-1 text-sm text-gray-500">Open opportunities with case load or close-date pressure.</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {pressureProjects.map((project) => (
+              <button
+                key={project.recordId}
+                type="button"
+                onClick={() => navigate(createDetailPath("project", project.recordId))}
+                className="block w-full px-5 py-4 text-left hover:bg-gray-50"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-gray-900">{project.projectName}</p>
+                    <p className="mt-1 text-xs text-gray-500">{project.accountName} · {formatUsdInteger(project.sfdcValue)}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${projectStageColors[project.stage ?? ""] ?? "bg-gray-100 text-gray-700"}`}>
+                    {project.stage || "No stage"}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-600">
+                  <div>
+                    <span className="block text-gray-400">Close</span>
+                    <span className="font-medium text-gray-900">{formatDaysLabel(project.daysToClose)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-gray-400">Cases</span>
+                    <span className="font-medium text-gray-900">{project.openCaseCount}</span>
+                  </div>
+                  <div>
+                    <span className="block text-gray-400">Risk</span>
+                    <span className="font-medium text-gray-900">{project.escalated} esc, {project.highPriority} high</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+            {pressureProjects.length === 0 && (
+              <p className="px-5 py-10 text-center text-sm text-gray-500">No open projects with pressure signals.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Open Case Mix</h2>
+              <p className="text-sm text-gray-500">Current workload by case state.</p>
+            </div>
+            <Target className="h-5 w-5 text-gray-400" />
+          </div>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={caseStatusData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <XAxis dataKey="name" stroke="#6B7280" />
+              <YAxis stroke="#6B7280" allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="value" fill="#E31937" radius={[6, 6, 0, 0]} name="Cases" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Product Ask Load</h2>
+              <p className="text-sm text-gray-500">Active Mantis and Knock items, including near-term targets.</p>
+            </div>
+            <Clock3 className="h-5 w-5 text-gray-400" />
+          </div>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={askStatusData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <XAxis dataKey="name" stroke="#6B7280" />
+              <YAxis stroke="#6B7280" allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="active" fill="#2c3e50" radius={[6, 6, 0, 0]} name="Active" />
+              <Bar dataKey="dueSoon" fill="#E31937" radius={[6, 6, 0, 0]} name="Due in 30d" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Mantis and Knock Follow-Ups</h2>
+            <p className="mt-1 text-sm text-gray-500">Active product asks sorted by target pressure and case linkage.</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {productAskFollowUps.map((ask) => (
+              <button
+                key={`${ask.type}-${ask.id}`}
+                type="button"
+                onClick={() => navigate(createDetailPath(ask.type, ask.id))}
+                className="block w-full px-5 py-4 text-left hover:bg-gray-50"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium uppercase text-gray-500">{ask.label} · {ask.publicId}</p>
+                    <p className="mt-1 line-clamp-2 text-sm font-medium text-gray-900">{ask.description}</p>
+                    <p className="mt-1 text-xs text-gray-500">{ask.linkedCases} linked cases · target {formatDaysLabel(ask.daysToTarget)}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                    ask.type === "mantis"
+                      ? mantisStatusColors[ask.status] ?? "bg-gray-100 text-gray-700"
+                      : knockStatusColors[ask.status] ?? "bg-gray-100 text-gray-700"
+                  }`}>
+                    {ask.status}
+                  </span>
+                </div>
+              </button>
+            ))}
+            {productAskFollowUps.length === 0 && (
+              <p className="px-5 py-10 text-center text-sm text-gray-500">No active Mantis or Knock follow-ups.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Customer Impact</h2>
+            <p className="mt-1 text-sm text-gray-500">Accounts with open cases, high-risk work, or active project value.</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {accountImpact.map((account) => (
+              <button
+                key={account.recordId}
+                type="button"
+                onClick={() => navigate(createDetailPath("account", account.recordId))}
+                className="block w-full px-5 py-4 text-left hover:bg-gray-50"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-gray-900">{account.accountName}</p>
+                    <p className="mt-1 text-xs text-gray-500">{account.vertical || "No vertical"} · {account.projectCount} active projects</p>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold text-gray-900">{formatUsdInteger(account.value)}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">{account.openCaseCount} open cases</span>
+                  <span className="rounded-full bg-[#E31937] px-2.5 py-0.5 text-xs font-medium text-white">{account.urgentCaseCount} high risk</span>
+                </div>
+              </button>
+            ))}
+            {accountImpact.length === 0 && (
+              <p className="px-5 py-10 text-center text-sm text-gray-500">No account pressure signals right now.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function TeamHome() {

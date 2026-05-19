@@ -75,8 +75,6 @@ async def update_knock(recordId: str, data: KnockCreate, request: Request) -> Kn
 async def delete_knock(recordId: str) -> dict[str, str]:
     """Delete a knock."""
     existing = await get_entity_or_404(KNOCK_CONFIG, recordId)
-    if existing.get("knockId"):
-        await execute_mutation("UPDATE cases SET knockId = NULL WHERE knockId = %s", [existing["knockId"]])
     await execute_mutation(
         "DELETE FROM case_entity_links WHERE entityType = 'knock' AND entityRecordId = %s",
         [recordId],

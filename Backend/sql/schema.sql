@@ -102,32 +102,22 @@ CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId);
 
 CREATE TABLE IF NOT EXISTS cases (
   recordId VARCHAR(32) PRIMARY KEY,
-  -- Backward-compatible primary/display link. Full case-account links live in case_entity_links.
-  account VARCHAR(32),
   project VARCHAR(32),
   category VARCHAR(120),
   escalationType VARCHAR(120),
   escalationNote TEXT,
-  -- Backward-compatible primary/display link. Full case-product links live in case_entity_links.
-  product VARCHAR(32),
   closeDate VARCHAR(32),
   description TEXT NOT NULL,
   seOwner VARCHAR(120),
   assignedTo VARCHAR(120),
   priority VARCHAR(120),
   status VARCHAR(120),
-  knockId VARCHAR(120),
-  mantisId VARCHAR(120),
   history JSON
 );
 
-CREATE INDEX idx_cases_account ON cases (account);
-CREATE INDEX idx_cases_product ON cases (product);
 CREATE INDEX idx_cases_project ON cases (project);
 CREATE INDEX idx_cases_seOwner ON cases (seOwner);
 CREATE INDEX idx_cases_assignedTo ON cases (assignedTo);
-CREATE INDEX idx_cases_mantisId ON cases (mantisId);
-CREATE INDEX idx_cases_knockId ON cases (knockId);
 CREATE INDEX idx_projects_accountId ON projects (accountId);
 
 ALTER TABLE projects

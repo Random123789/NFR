@@ -138,20 +138,20 @@ export interface KnockRecord extends BaseRecord {
 
 export interface CaseRecord {
   recordId: string;
-  account: string | null;
+  accountIds: string[];
   project: string | null;
   category: CaseCategory | null;
   escalationType: CaseEscalationType | null;
   escalationNote: string | null;
-  product: string | null;
+  productIds: string[];
   closeDate: string | null;
   description: string;
   seOwner: string | null;
   assignedTo: string | null;
   priority: CasePriority | null;
   status: CaseStatus | null;
-  knockId: string | null;
-  mantisId: string | null;
+  knockRecordIds: string[];
+  mantisRecordIds: string[];
   history: HistoryEntry[];
 }
 

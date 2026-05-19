@@ -65,20 +65,16 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("cases", "c", "assignedTo", "Assigned To"),
             _field("cases", "c", "seOwner", "SE Owner"),
             _field("cases", "c", "closeDate", "Case Close Date", "date"),
-            _field("cases", "c", "account", "Account ID"),
             _field("cases", "c", "project", "Project ID"),
-            _field("cases", "c", "product", "Product ID"),
-            _field("cases", "c", "mantisId", "Mantis ID"),
-            _field("cases", "c", "knockId", "Knock ID"),
             _field("cases", "c", "escalationType", "Escalation Type"),
             _field("cases", "c", "escalationNote", "Escalation Note"),
         ),
         joins=(
-            ReportJoin("accounts", "Accounts", "JOIN accounts a ON c.account = a.recordId"),
+            ReportJoin("accounts", "Accounts", "JOIN case_entity_links cel_accounts ON cel_accounts.caseRecordId = c.recordId AND cel_accounts.entityType = 'account' JOIN accounts a ON a.recordId = cel_accounts.entityRecordId"),
             ReportJoin("projects", "Projects", "JOIN projects p ON c.project = p.recordId"),
-            ReportJoin("products", "Products", "JOIN products prd ON c.product = prd.recordId"),
-            ReportJoin("mantis", "Mantis", "JOIN mantis m ON c.mantisId = m.mantisId"),
-            ReportJoin("knocks", "Knocks", "JOIN knocks k ON c.knockId = k.knockId"),
+            ReportJoin("products", "Products", "JOIN case_entity_links cel_products ON cel_products.caseRecordId = c.recordId AND cel_products.entityType = 'product' JOIN products prd ON prd.recordId = cel_products.entityRecordId"),
+            ReportJoin("mantis", "Mantis", "JOIN case_entity_links cel_mantis ON cel_mantis.caseRecordId = c.recordId AND cel_mantis.entityType = 'mantis' JOIN mantis m ON m.recordId = cel_mantis.entityRecordId"),
+            ReportJoin("knocks", "Knocks", "JOIN case_entity_links cel_knocks ON cel_knocks.caseRecordId = c.recordId AND cel_knocks.entityType = 'knock' JOIN knocks k ON k.recordId = cel_knocks.entityRecordId"),
         ),
     ),
     "accounts": ReportSource(
@@ -94,7 +90,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("accounts", "a", "website", "Website"),
         ),
         joins=(
-            ReportJoin("cases", "Cases", "JOIN cases c ON c.account = a.recordId"),
+            ReportJoin("cases", "Cases", "JOIN case_entity_links cel_account_cases ON cel_account_cases.entityRecordId = a.recordId AND cel_account_cases.entityType = 'account' JOIN cases c ON c.recordId = cel_account_cases.caseRecordId"),
             ReportJoin("projects", "Projects", "JOIN projects p ON p.accountId = a.recordId"),
         ),
     ),
@@ -138,7 +134,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("products", "prd", "createdAt", "Product Created", "date"),
             _field("products", "prd", "updatedAt", "Product Updated", "date"),
         ),
-        joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.product = prd.recordId"),),
+        joins=(ReportJoin("cases", "Cases", "JOIN case_entity_links cel_product_cases ON cel_product_cases.entityRecordId = prd.recordId AND cel_product_cases.entityType = 'product' JOIN cases c ON c.recordId = cel_product_cases.caseRecordId"),),
     ),
     "mantis": ReportSource(
         key="mantis",
@@ -158,7 +154,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("mantis", "m", "createdAt", "Mantis Created", "date"),
             _field("mantis", "m", "updatedAt", "Mantis Updated", "date"),
         ),
-        joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.mantisId = m.mantisId"),),
+        joins=(ReportJoin("cases", "Cases", "JOIN case_entity_links cel_mantis_cases ON cel_mantis_cases.entityRecordId = m.recordId AND cel_mantis_cases.entityType = 'mantis' JOIN cases c ON c.recordId = cel_mantis_cases.caseRecordId"),),
     ),
     "knocks": ReportSource(
         key="knocks",
@@ -176,7 +172,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("knocks", "k", "createdAt", "Knock Created", "date"),
             _field("knocks", "k", "updatedAt", "Knock Updated", "date"),
         ),
-        joins=(ReportJoin("cases", "Cases", "JOIN cases c ON c.knockId = k.knockId"),),
+        joins=(ReportJoin("cases", "Cases", "JOIN case_entity_links cel_knock_cases ON cel_knock_cases.entityRecordId = k.recordId AND cel_knock_cases.entityType = 'knock' JOIN cases c ON c.recordId = cel_knock_cases.caseRecordId"),),
     ),
 }
 
@@ -201,6 +197,7 @@ FILTER_OPERATORS = {
 }
 
 JOIN_TYPES = {"left": "LEFT JOIN", "inner": "INNER JOIN"}
+KEYWORD_FILTER_FIELD = "__keyword"
 
 
 def build_report_schema() -> dict:
@@ -265,7 +262,7 @@ def build_legacy_query_spec(metric: str, filters: dict) -> dict:
         ("status", "cases.status"),
         ("priority", "cases.priority"),
         ("category", "cases.category"),
-        ("product", "cases.product"),
+        ("product", "products.recordId"),
     ):
         value = filters.get(legacy_key)
         if value:
@@ -327,7 +324,7 @@ def _build_join_sql(base: ReportSource, joins: List[ReportJoinSpec]) -> Tuple[Li
         if not join_type:
             raise HTTPException(status_code=400, detail="Unsupported join type")
 
-        join_sql.append(join.sql.replace("JOIN", join_type, 1))
+        join_sql.append(join.sql.replace("JOIN", join_type))
         active_sources.add(selected.source)
 
     return join_sql, active_sources
@@ -344,6 +341,43 @@ def _build_filter_sql(spec: ReportQuerySpec, active_sources: Set[str]) -> Tuple[
     params: List[Any] = []
 
     for rule in spec.filters:
+        if rule.field == KEYWORD_FILTER_FIELD:
+            operator = rule.operator
+            if operator not in {"eq", "neq", "contains", "startsWith", "endsWith"}:
+                raise HTTPException(status_code=400, detail="Keyword search supports text comparison operators")
+
+            value = (rule.value or "").strip()
+            if not value:
+                continue
+
+            keyword_fields = [
+                field
+                for source in SOURCE_DEFS.values()
+                for field in source.fields
+                if field.source in active_sources and field.type == "text"
+            ]
+            if not keyword_fields:
+                where_parts.append("1=0")
+                continue
+
+            if operator == "eq":
+                comparisons = [f"CAST({field.expression} AS CHAR) = %s" for field in keyword_fields]
+                params.extend([value] * len(keyword_fields))
+            elif operator == "neq":
+                comparisons = [f"(CAST({field.expression} AS CHAR) IS NULL OR CAST({field.expression} AS CHAR) <> %s)" for field in keyword_fields]
+                params.extend([value] * len(keyword_fields))
+            else:
+                pattern = f"%{value}%"
+                if operator == "startsWith":
+                    pattern = f"{value}%"
+                elif operator == "endsWith":
+                    pattern = f"%{value}"
+                comparisons = [f"CAST({field.expression} AS CHAR) LIKE %s" for field in keyword_fields]
+                params.extend([pattern] * len(keyword_fields))
+
+            where_parts.append(f"({' OR '.join(comparisons)})")
+            continue
+
         field = _get_field(rule.field)
         _validate_sources([field], active_sources)
 
@@ -405,25 +439,17 @@ def _apply_case_visibility(where_parts: List[str], params: List[Any], active_sou
     if actor_vertical:
         conditions.append(
             """
-            (
-              EXISTS (
-                SELECT 1
-                FROM accounts visible_account
-                WHERE visible_account.recordId = c.account
-                  AND visible_account.vertical = %s
-              )
-              OR EXISTS (
+            EXISTS (
                 SELECT 1
                 FROM case_entity_links visible_link
                 INNER JOIN accounts linked_account ON linked_account.recordId = visible_link.entityRecordId
                 WHERE visible_link.caseRecordId = c.recordId
                   AND visible_link.entityType = 'account'
                   AND linked_account.vertical = %s
-              )
             )
             """
         )
-        params.extend([actor_vertical, actor_vertical])
+        params.append(actor_vertical)
 
     where_parts.append(f"({' OR '.join(conditions)})" if conditions else "1=0")
 
@@ -452,7 +478,7 @@ async def execute_report_query(spec: ReportQuerySpec, actor: Optional[dict] = No
 
     selected_fields = [_get_field(field_key) for field_key in spec.fields]
     group_field = _get_field(spec.groupBy or "cases.status") if mode == "aggregate" else None
-    filter_fields = [_get_field(rule.field) for rule in spec.filters]
+    filter_fields = [_get_field(rule.field) for rule in spec.filters if rule.field != KEYWORD_FILTER_FIELD]
     required_sources = {field.source for field in selected_fields + filter_fields}
     if group_field:
         required_sources.add(group_field.source)

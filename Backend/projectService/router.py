@@ -226,10 +226,6 @@ async def update_project(recordId: str, data: ProjectCreate, request: Request) -
 async def delete_project(recordId: str) -> dict[str, str]:
     """Delete a project."""
     await execute_mutation("UPDATE cases SET project = NULL WHERE project = %s", [recordId])
-    await execute_mutation(
-        "DELETE FROM case_entity_links WHERE entityType = 'project' AND entityRecordId = %s",
-        [recordId],
-    )
     return await delete_entity(PROJECT_CONFIG, recordId)
 
 

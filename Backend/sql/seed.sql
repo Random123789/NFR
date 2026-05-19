@@ -27,26 +27,23 @@ INSERT INTO knocks (recordId, moduleId, recordRevision, metaData, ownedBy, creat
 ('KNOCK-002', 'MOD-KNOCK', '1.0', 'Dashboard customization', 'Sarah Johnson', '2026-02-10', 'Sarah Johnson', '2026-04-16', 'Sarah Johnson', 'FortiAnalyzer custom dashboard widgets for threat analytics', 'KNK-9877', 'https://knock.fortinet.com/9877', 'Completed', '2026-02-10', '2026-04-15', NULL),
 ('KNOCK-003', 'MOD-KNOCK', '1.2', 'User management enhancement', 'Alex Kumar', '2026-04-05', 'Alex Kumar', '2026-04-21', 'Alex Kumar', 'FortiAuthenticator advanced user filtering and search capabilities', 'KNK-9878', 'https://knock.fortinet.com/9878', 'In Progress', '2026-04-05', '2026-06-10', NULL);
 
-INSERT INTO cases (recordId, account, project, category, escalationType, escalationNote, product, closeDate, description, seOwner, assignedTo, priority, status, knockId, mantisId) VALUES
-('REC-001', 'ACC-001', 'PRJ-001', 'Pre-Sales', 'Escalation', 'Requires executive approval', 'PRD-001', NULL, 'Enterprise SD-WAN solution design and FortiGate sizing for 50 branch locations', 'Sarah Johnson', 'Sarah Johnson', 'High', 'New', NULL, 'MANT-5678'),
-('REC-002', 'ACC-002', 'PRJ-002', 'Pre-Sales', 'Monitoring', 'Customer deadline approaching', 'PRD-002', NULL, 'Zero Trust Network Access (ZTNA) architecture proposal with FortiClient EMS', 'Mike Chen', 'Mike Chen', 'Very High', 'Acknowledged', 'KNK-9876', NULL),
-('REC-003', 'ACC-003', 'PRJ-003', 'Others', 'Others', NULL, 'PRD-003', NULL, 'Multi-factor authentication rollout strategy and FortiAuthenticator PoC', 'Alex Kumar', 'Alex Kumar', 'Medium', 'Monitoring', 'KNK-9878', 'MANT-5680'),
-('REC-004', 'ACC-004', NULL, 'Post-Sales', 'Drop', NULL, 'PRD-004', '2026-04-16', 'Security Operations Center (SOC) visibility enhancement with FortiAnalyzer', 'Mike Chen', 'Mike Chen', 'Low', 'Closed-Resolved', 'KNK-9877', NULL),
-('REC-005', 'ACC-001', 'PRJ-001', 'NFR', 'Re-Escalation', 'Competitive situation, needs immediate attention', 'PRD-001', NULL, 'Data center firewall refresh - FortiGate 3000 series evaluation and proposal', 'Sarah Johnson', 'Sarah Johnson', 'Very High', 'Escalated', NULL, 'MANT-5679');
+INSERT INTO cases (recordId, project, category, escalationType, escalationNote, closeDate, description, seOwner, assignedTo, priority, status) VALUES
+('REC-001', 'PRJ-001', 'Pre-Sales', 'Escalation', 'Requires executive approval', NULL, 'Enterprise SD-WAN solution design and FortiGate sizing for 50 branch locations', 'Sarah Johnson', 'Sarah Johnson', 'High', 'New'),
+('REC-002', 'PRJ-002', 'Pre-Sales', 'Monitoring', 'Customer deadline approaching', NULL, 'Zero Trust Network Access (ZTNA) architecture proposal with FortiClient EMS', 'Mike Chen', 'Mike Chen', 'Very High', 'Acknowledged'),
+('REC-003', 'PRJ-003', 'Others', 'Others', NULL, NULL, 'Multi-factor authentication rollout strategy and FortiAuthenticator PoC', 'Alex Kumar', 'Alex Kumar', 'Medium', 'Monitoring'),
+('REC-004', NULL, 'Post-Sales', 'Drop', NULL, '2026-04-16', 'Security Operations Center (SOC) visibility enhancement with FortiAnalyzer', 'Mike Chen', 'Mike Chen', 'Low', 'Closed-Resolved'),
+('REC-005', 'PRJ-001', 'NFR', 'Re-Escalation', 'Competitive situation, needs immediate attention', NULL, 'Data center firewall refresh - FortiGate 3000 series evaluation and proposal', 'Sarah Johnson', 'Sarah Johnson', 'Very High', 'Escalated');
 
 INSERT INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy) VALUES
 ('REC-001', 'account', 'ACC-001', '2026-04-21 08:45', 'Sarah Johnson'),
-('REC-001', 'project', 'PRJ-001', '2026-04-21 08:50', 'Sarah Johnson'),
 ('REC-001', 'product', 'PRD-001', '2026-04-21 08:55', 'Sarah Johnson'),
 ('REC-001', 'mantis', 'MANTIS-001', '2026-04-21 09:00', 'Sarah Johnson'),
 ('REC-001', 'mantis', 'MANTIS-002', '2026-04-21 09:15', 'Sarah Johnson'),
 ('REC-002', 'account', 'ACC-002', '2026-04-21 09:20', 'Mike Chen'),
-('REC-002', 'project', 'PRJ-002', '2026-04-21 09:22', 'Mike Chen'),
 ('REC-002', 'product', 'PRD-002', '2026-04-21 09:25', 'Mike Chen'),
 ('REC-002', 'knock', 'KNOCK-001', '2026-04-21 09:30', 'Mike Chen'),
 ('REC-002', 'knock', 'KNOCK-002', '2026-04-21 09:35', 'Mike Chen'),
 ('REC-003', 'account', 'ACC-003', '2026-04-21 09:36', 'Alex Kumar'),
-('REC-003', 'project', 'PRJ-003', '2026-04-21 09:37', 'Alex Kumar'),
 ('REC-003', 'product', 'PRD-003', '2026-04-21 09:38', 'Alex Kumar'),
 ('REC-003', 'mantis', 'MANTIS-003', '2026-04-21 09:40', 'Alex Kumar'),
 ('REC-003', 'knock', 'KNOCK-003', '2026-04-21 09:45', 'Alex Kumar'),
@@ -55,7 +52,6 @@ INSERT INTO case_entity_links (caseRecordId, entityType, entityRecordId, created
 ('REC-004', 'knock', 'KNOCK-002', '2026-04-21 09:58', 'Mike Chen'),
 ('REC-005', 'account', 'ACC-001', '2026-04-21 09:59', 'Sarah Johnson'),
 ('REC-005', 'mantis', 'MANTIS-001', '2026-04-21 10:00', 'Sarah Johnson'),
-('REC-005', 'project', 'PRJ-001', '2026-04-21 10:01', 'Sarah Johnson'),
 ('REC-005', 'product', 'PRD-001', '2026-04-21 10:02', 'Sarah Johnson'),
 ('REC-005', 'mantis', 'MANTIS-002', '2026-04-21 10:03', 'Sarah Johnson'),
 ('REC-005', 'knock', 'KNOCK-003', '2026-04-21 10:05', 'Sarah Johnson');

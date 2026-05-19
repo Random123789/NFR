@@ -10,8 +10,10 @@ function truncateLabel(value: string, maxLength: number) {
 }
 
 export function getRelatedCaseLabelParts(caseItem: CaseRecord, accounts: AccountRecord[], projects: ProjectRecord[]) {
-  const account = cleanLabel(accounts.find((item) => item.recordId === caseItem.account)?.accountName)
-    || cleanLabel(caseItem.account)
+  const accountNames = (caseItem.accountIds ?? [])
+    .map((accountId) => cleanLabel(accounts.find((item) => item.recordId === accountId)?.accountName) || cleanLabel(accountId))
+    .filter(Boolean);
+  const account = cleanLabel(accountNames.join(", "))
     || "No account";
   const project = cleanLabel(projects.find((item) => item.recordId === caseItem.project)?.projectName)
     || cleanLabel(caseItem.project)
