@@ -36,13 +36,13 @@ export interface ManagedUser {
 export interface CreateUserRequest {
   email: string;
   displayName: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'manager' | 'user';
   vertical?: AccountVertical | null;
   password: string;
 }
 
 export interface UpdateManagedUserRoleRequest {
-  role: 'admin' | 'user';
+  role: 'admin' | 'manager' | 'user';
   vertical?: AccountVertical | null;
 }
 

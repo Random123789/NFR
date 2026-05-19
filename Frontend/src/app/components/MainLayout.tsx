@@ -12,7 +12,7 @@ import {
   getRecentNotifications,
   type Notification,
 } from "../data/apiClient";
-import { createOpenDetailState, getDetailRoute, type DetailEntityType } from "../navigation/detailNavigation";
+import { createDetailPath, createOpenDetailState, type DetailEntityType } from "../navigation/detailNavigation";
 
 const navItems = [
   { path: "/", label: "Home", icon: Home, exact: true },
@@ -61,13 +61,9 @@ export function MainLayout() {
     if (!notification.entityType || !notification.entityId) return;
 
     const entityType = notification.entityType as DetailEntityType;
-    const path = getDetailRoute(entityType);
-    
-    if (path) {
-      navigate(path, { state: createOpenDetailState(entityType, notification.entityId) });
-      setShowNotifications(false);
-      dismissNotification(notification.id);
-    }
+    navigate(createDetailPath(entityType, notification.entityId), { state: createOpenDetailState(entityType, notification.entityId) });
+    setShowNotifications(false);
+    dismissNotification(notification.id);
   };
 
   const dismissNotification = async (id: string) => {

@@ -126,6 +126,9 @@ def _normalize_role(role: str) -> str:
     aliases = {
         "administrator": "admin",
         "admin": "admin",
+        "manager": "manager",
+        "sales manager": "manager",
+        "se manager": "manager",
         "se user": "user",
         "se_user": "user",
         "user": "user",
@@ -308,6 +311,8 @@ async def _get_user_from_token(token: str) -> Optional[dict]:
         [token_hash],
         fetch_one=True,
     )
+    if row:
+        row["role"] = _normalize_role(row.get("role") or "user")
     return row
 
 
@@ -376,7 +381,7 @@ async def login(data: LoginRequest) -> LoginResponse:
             id=user["id"],
             email=user["email"],
             displayName=user["displayName"],
-            role=user["role"],
+            role=_normalize_role(user.get("role") or "user"),
             vertical=user.get("vertical"),
         ),
     )
@@ -502,7 +507,7 @@ async def list_users(request: Request):
         ORDER BY createdAt DESC
         """,
     )
-    return [ManagedUser(**row) for row in rows]
+    return [ManagedUser(**{**row, "role": _normalize_role(row.get("role") or "user")}) for row in rows]
 
 
 @router.post("/users", response_model=CreateUserResponse)
@@ -519,9 +524,9 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
         raise HTTPException(status_code=400, detail="Email is required")
     if not display_name:
         raise HTTPException(status_code=400, detail="Display name is required")
-    if role not in {"admin", "user"}:
-        raise HTTPException(status_code=400, detail="Role must be SE user or Administrator")
-    if role == "admin":
+    if role not in {"admin", "manager", "user"}:
+        raise HTTPException(status_code=400, detail="Role must be SE user, Manager, or Administrator")
+    if role in {"admin", "manager"}:
         vertical = None
     elif not vertical:
         raise HTTPException(status_code=400, detail="Vertical is required for SE users")
@@ -579,8 +584,8 @@ async def update_user_role(request: Request, user_id: int, data: UpdateUserRoleR
 
     role = _normalize_role(data.role)
     requested_vertical = _normalize_vertical(data.vertical)
-    if role not in {"admin", "user"}:
-        raise HTTPException(status_code=400, detail="Role must be SE user or Administrator")
+    if role not in {"admin", "manager", "user"}:
+        raise HTTPException(status_code=400, detail="Role must be SE user, Manager, or Administrator")
 
     existing = await execute_query(
         """
@@ -597,7 +602,7 @@ async def update_user_role(request: Request, user_id: int, data: UpdateUserRoleR
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
 
-    next_vertical = None if role == "admin" else requested_vertical or existing.get("vertical")
+    next_vertical = None if role in {"admin", "manager"} else requested_vertical or existing.get("vertical")
     if role == "user" and not next_vertical:
         raise HTTPException(status_code=400, detail="Vertical is required for SE users")
 

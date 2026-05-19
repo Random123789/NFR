@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, ChevronDown, Download, Edit2, Save, UserRound, Check } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, ChevronDown, Download, Edit2, Save, UserRound } from "lucide-react";
 import {
   addCaseLink,
   addCaseHistory,
@@ -8,7 +8,6 @@ import {
   listAssignableUsers,
   removeCaseLink,
   updateCase,
-  type AssignableUser,
   type CaseLinkEntityType,
   type CaseLinksResponse,
   type CaseRecord,
@@ -17,9 +16,8 @@ import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { MultiRecordDropdown, SearchableSelect } from "../components/SearchableSelect";
 import { TableFieldSelector } from "../components/TableFieldSelector";
-import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
-import { Checkbox } from "../components/ui/checkbox";
 import { useLocation, useNavigate } from "react-router";
 import { useAuth } from "../context/AuthContext";
 import { useBookmarks } from "../context/BookmarksContext";
@@ -32,8 +30,10 @@ import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
 import { useRecordComments } from "../hooks/useRecordComments";
 import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 import {
+  createDetailPath,
   createDetailTarget,
   createLinkedDetailState,
+  resolveDetailRouteRecordId,
   type DetailEntityType,
   type DetailRouteState,
 } from "../navigation/detailNavigation";
@@ -104,10 +104,6 @@ const CASE_DETAIL_TABS = [
   { key: "linkedKnocks", label: "Linked Knocks" },
 ];
 
-function assigneeLabel(user: AssignableUser) {
-  return `${user.displayName} (${user.email})${user.vertical ? ` - ${user.vertical}` : ""}${user.isActive ? "" : " - inactive"}`;
-}
-
 function AssignedToBadge({ value }: { value: string | null | undefined }) {
   const hasAssignee = Boolean(value);
 
@@ -142,67 +138,6 @@ function uniqueNonEmptyValues(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
-function MultiSelectDropdown<T extends { recordId: string }>({
-  label,
-  values,
-  options,
-  getOptionLabel,
-  onChange,
-}: {
-  label: string;
-  values: string[];
-  options: T[];
-  getOptionLabel: (option: T) => string;
-  onChange: (nextValues: string[]) => void;
-}) {
-  const selectedLabels = options
-    .filter((option) => values.includes(option.recordId))
-    .map(getOptionLabel)
-    .filter(Boolean);
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="flex min-h-[42px] w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-        >
-          <span className="truncate">
-            {selectedLabels.length > 0 ? selectedLabels.join(", ") : `Select ${label}`}
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
-        <div className="max-h-72 space-y-1 overflow-auto">
-          {options.length === 0 ? (
-            <div className="px-2 py-2 text-sm text-gray-500">No records available</div>
-          ) : options.map((option) => {
-            const checked = values.includes(option.recordId);
-            return (
-              <button
-                key={option.recordId}
-                type="button"
-                className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-gray-50"
-                onClick={() => {
-                  const nextValues = checked
-                    ? values.filter((value) => value !== option.recordId)
-                    : [...values, option.recordId];
-                  onChange(nextValues);
-                }}
-              >
-                <Checkbox checked={checked} className="pointer-events-none" />
-                <span className="min-w-0 flex-1 truncate text-gray-900">{getOptionLabel(option)}</span>
-                {checked ? <Check className="h-4 w-4 text-[#E31937]" /> : null}
-              </button>
-            );
-          })}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 export function Cases() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -228,7 +163,6 @@ export function Cases() {
   const {
     selectedRecord: selectedCase,
     setSelectedRecord: setSelectedCase,
-    selectRecord,
     isEditing,
     editedRecord: editedCase,
     setEditedRecord: setEditedCase,
@@ -241,6 +175,7 @@ export function Cases() {
   } = useRoutedEntityDetail({
     entityType: "case",
     getRecordById: getCaseById,
+    resolveRouteRecordId: (routeParam) => resolveDetailRouteRecordId("case", routeParam, cases),
   });
   const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
     selectedRecord: selectedCase,
@@ -587,7 +522,13 @@ export function Cases() {
   const navigateToLinkedEntity = (entityType: DetailEntityType, targetRecordId: string) => {
     if (!selectedCase?.recordId) return;
 
-    navigate(createDetailTarget(entityType, targetRecordId).path, {
+    const targetIdentifier = entityType === "mantis"
+      ? mantisRecords.find((item) => item.recordId === targetRecordId)?.mantisId || targetRecordId
+      : entityType === "knock"
+        ? knocks.find((item) => item.recordId === targetRecordId)?.knockId || targetRecordId
+        : targetRecordId;
+
+    navigate(createDetailPath(entityType, targetIdentifier), {
       state: createLinkedDetailState(
         entityType,
         targetRecordId,
@@ -732,7 +673,7 @@ export function Cases() {
               <Download className="h-4 w-4" />
               Export CSV
             </button>
-            <CreateEntityDialog entityType="case" onCreated={selectRecord} />
+            <CreateEntityDialog entityType="case" onCreated={(caseRecord) => navigate(createDetailPath("case", caseRecord.recordId))} />
             <TableFieldSelector
               columns={CASE_TABLE_COLUMNS}
               visibleKeys={visibleCaseColumnKeys}
@@ -756,10 +697,7 @@ export function Cases() {
               {sortedCases.map((caseItem) => (
                 <tr
                   key={caseItem.recordId}
-                  onClick={() => {
-                    setSelectedCase(caseItem);
-                    setActiveDetailTab("details");
-                  }}
+                  onClick={() => navigate(createDetailPath("case", caseItem.recordId))}
                   className="cursor-pointer transition-colors hover:bg-gray-50"
                 >
                   <td className="px-4 py-4 text-center" onClick={(event) => event.stopPropagation()}>
@@ -887,18 +825,18 @@ export function Cases() {
                   <div className={`detail-cell ${!isEditing ? "flex items-center gap-2 whitespace-nowrap" : ""}`}>
                     <label className={`${!isEditing ? "mb-0 shrink-0 font-semibold after:content-[':']" : "mb-1 block"} text-sm font-medium text-gray-600`}>Assigned To</label>
                     {isEditing && editedCase ? (
-                      <select
+                      <SearchableSelect
+                        label="assignee"
                         value={editedCase.assignedTo || ""}
-                        onChange={(event) => setEditedCase({ ...editedCase, assignedTo: event.target.value })}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                      >
-                        <option value="">Unassigned</option>
-                        {assignableUsers.map((assignableUser) => (
-                          <option key={assignableUser.id} value={assignableUser.displayName}>
-                            {assigneeLabel(assignableUser)}
-                          </option>
-                        ))}
-                      </select>
+                        options={assignableUsers.map((assignableUser) => ({
+                          value: assignableUser.displayName,
+                          label: assignableUser.displayName,
+                          description: `${assignableUser.email}${assignableUser.vertical ? ` | ${assignableUser.vertical}` : ""}${assignableUser.isActive ? "" : " | inactive"}`,
+                        }))}
+                        emptyLabel="Unassigned"
+                        searchPlaceholder="Search users"
+                        onChange={(assignedTo) => setEditedCase({ ...editedCase, assignedTo })}
+                      />
                     ) : (
                       <AssignedToBadge value={selectedCase.assignedTo} />
                     )}
@@ -928,18 +866,18 @@ export function Cases() {
                 <div className="order-4 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">SE Owner</label>
                   {isEditing && editedCase ? (
-                    <select
+                    <SearchableSelect
+                      label="SE owner"
                       value={editedCase.seOwner || ""}
-                      onChange={(event) => setEditedCase({ ...editedCase, seOwner: event.target.value })}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">No SE owner</option>
-                      {assignableUsers.map((assignableUser) => (
-                        <option key={assignableUser.id} value={assignableUser.displayName}>
-                          {assigneeLabel(assignableUser)}
-                        </option>
-                      ))}
-                    </select>
+                      options={assignableUsers.map((assignableUser) => ({
+                        value: assignableUser.displayName,
+                        label: assignableUser.displayName,
+                        description: `${assignableUser.email}${assignableUser.vertical ? ` | ${assignableUser.vertical}` : ""}${assignableUser.isActive ? "" : " | inactive"}`,
+                      }))}
+                      emptyLabel="No SE owner"
+                      searchPlaceholder="Search users"
+                      onChange={(seOwner) => setEditedCase({ ...editedCase, seOwner })}
+                    />
                   ) : (
                     <p className="text-gray-900">{textValue(selectedCase.seOwner)}</p>
                   )}
@@ -948,18 +886,20 @@ export function Cases() {
                   <label className="mb-1 block text-sm font-medium text-gray-600">Account</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
-                      <select
-                        value={editedCase.account || ""}
-                        onChange={(event) => setEditedCase({ ...editedCase, account: event.target.value })}
-                        className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                      >
-                        <option value="">No account</option>
-                        {accounts.map((item) => (
-                          <option key={item.recordId} value={item.recordId}>
-                            {item.accountName}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="min-w-0 flex-1">
+                        <SearchableSelect
+                          label="account"
+                          value={editedCase.account || ""}
+                          options={accounts.map((item) => ({
+                            value: item.recordId,
+                            label: item.accountName,
+                            description: [item.type, item.vertical].filter(Boolean).join(" | "),
+                          }))}
+                          emptyLabel="No account"
+                          searchPlaceholder="Search accounts"
+                          onChange={(account) => setEditedCase({ ...editedCase, account })}
+                        />
+                      </div>
                       <CreateEntityDialog
                         entityType="account"
                         triggerLabel="New"
@@ -972,25 +912,29 @@ export function Cases() {
                       />
                     </div>
                   ) : (
-                    <p className="text-gray-900">{textValue(account?.accountName || selectedCase.account)}</p>
+                    <p className="text-gray-900">
+                      {textValue(linkedAccounts.length > 0 ? linkedAccounts.map((item) => item.accountName).filter(Boolean).join(", ") : account?.accountName || selectedCase.account)}
+                    </p>
                   )}
                 </div>
                 <div className="order-6 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Product</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
-                      <select
-                        value={editedCase.product || ""}
-                        onChange={(event) => setEditedCase({ ...editedCase, product: event.target.value })}
-                        className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                      >
-                        <option value="">No product</option>
-                        {products.map((item) => (
-                          <option key={item.recordId} value={item.recordId}>
-                            {item.productName}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="min-w-0 flex-1">
+                        <SearchableSelect
+                          label="product"
+                          value={editedCase.product || ""}
+                          options={products.map((item) => ({
+                            value: item.recordId,
+                            label: item.productName,
+                            description: item.productFamily,
+                          }))}
+                          emptyLabel="No product"
+                          searchPlaceholder="Search products"
+                          onChange={(product) => setEditedCase({ ...editedCase, product })}
+                        />
+                      </div>
                       <CreateEntityDialog
                         entityType="product"
                         triggerLabel="New"
@@ -1003,25 +947,29 @@ export function Cases() {
                       />
                     </div>
                   ) : (
-                    <p className="text-gray-900">{textValue(product?.productName || selectedCase.product)}</p>
+                    <p className="text-gray-900">
+                      {textValue(linkedProducts.length > 0 ? linkedProducts.map((item) => item.productName).filter(Boolean).join(", ") : product?.productName || selectedCase.product)}
+                    </p>
                   )}
                 </div>
                 <div className="order-7 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Project</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
-                      <select
-                        value={editedCase.project || ""}
-                        onChange={(event) => setEditedCase({ ...editedCase, project: event.target.value })}
-                        className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                      >
-                        <option value="">No project</option>
-                        {projects.map((item) => (
-                          <option key={item.recordId} value={item.recordId}>
-                            {item.projectName}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="min-w-0 flex-1">
+                        <SearchableSelect
+                          label="project"
+                          value={editedCase.project || ""}
+                          options={projects.map((item) => ({
+                            value: item.recordId,
+                            label: item.projectName,
+                            description: [getAccountById(item.accountId)?.accountName, item.stage].filter(Boolean).join(" | "),
+                          }))}
+                          emptyLabel="No project"
+                          searchPlaceholder="Search projects"
+                          onChange={(project) => setEditedCase({ ...editedCase, project })}
+                        />
+                      </div>
                       <CreateEntityDialog
                         entityType="project"
                         triggerLabel="New"
@@ -1043,11 +991,15 @@ export function Cases() {
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
                       <div className="min-w-0 flex-1">
-                        <MultiSelectDropdown
+                        <MultiRecordDropdown
                           label="Knock IDs"
                           values={editedKnockIds}
-                          options={knocks}
-                          getOptionLabel={(item) => item.knockId || "No Knock ID"}
+                          options={knocks.map((item) => ({
+                            value: item.recordId,
+                            label: item.knockId || "No Knock ID",
+                            description: [item.status, item.description].filter(Boolean).join(" | "),
+                          }))}
+                          searchPlaceholder="Search Knock ID, status, or description"
                           onChange={setEditedKnockIds}
                         />
                       </div>
@@ -1072,11 +1024,15 @@ export function Cases() {
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
                       <div className="min-w-0 flex-1">
-                        <MultiSelectDropdown
+                        <MultiRecordDropdown
                           label="Mantis IDs"
                           values={editedMantisIds}
-                          options={mantisRecords}
-                          getOptionLabel={(item) => item.mantisId || "No Mantis ID"}
+                          options={mantisRecords.map((item) => ({
+                            value: item.recordId,
+                            label: item.mantisId || "No Mantis ID",
+                            description: [item.mantisStatus, item.description].filter(Boolean).join(" | "),
+                          }))}
+                          searchPlaceholder="Search Mantis ID, status, or description"
                           onChange={setEditedMantisIds}
                         />
                       </div>
@@ -1188,18 +1144,20 @@ export function Cases() {
                   {activeDetailTab === "linkedAccounts" && (
                   <>
                   <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
-                    <select
-                      value={linkDrafts.account}
-                      onChange={(event) => setLinkDrafts((prev) => ({ ...prev, account: event.target.value }))}
-                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">Select account</option>
-                      {availableAccountsForLink.map((item) => (
-                        <option key={item.recordId} value={item.recordId}>
-                          {item.accountName}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="min-w-0 flex-1">
+                      <SearchableSelect
+                        label="account"
+                        value={linkDrafts.account}
+                        options={availableAccountsForLink.map((item) => ({
+                          value: item.recordId,
+                          label: item.accountName,
+                          description: [item.type, item.vertical].filter(Boolean).join(" | "),
+                        }))}
+                        emptyLabel="Select account"
+                        searchPlaceholder="Search accounts"
+                        onChange={(account) => setLinkDrafts((prev) => ({ ...prev, account }))}
+                      />
+                    </div>
                     <CreateEntityDialog
                       entityType="account"
                       triggerLabel="New"
@@ -1236,18 +1194,20 @@ export function Cases() {
                   {activeDetailTab === "linkedProducts" && (
                   <>
                   <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
-                    <select
-                      value={linkDrafts.product}
-                      onChange={(event) => setLinkDrafts((prev) => ({ ...prev, product: event.target.value }))}
-                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">Select product</option>
-                      {availableProductsForLink.map((item) => (
-                        <option key={item.recordId} value={item.recordId}>
-                          {item.productName}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="min-w-0 flex-1">
+                      <SearchableSelect
+                        label="product"
+                        value={linkDrafts.product}
+                        options={availableProductsForLink.map((item) => ({
+                          value: item.recordId,
+                          label: item.productName,
+                          description: item.productFamily,
+                        }))}
+                        emptyLabel="Select product"
+                        searchPlaceholder="Search products"
+                        onChange={(product) => setLinkDrafts((prev) => ({ ...prev, product }))}
+                      />
+                    </div>
                     <CreateEntityDialog
                       entityType="product"
                       triggerLabel="New"
@@ -1283,18 +1243,20 @@ export function Cases() {
                   {activeDetailTab === "linkedProjects" && (
                   <>
                   <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
-                    <select
-                      value={linkDrafts.project}
-                      onChange={(event) => setLinkDrafts((prev) => ({ ...prev, project: event.target.value }))}
-                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">Select project</option>
-                      {availableProjectsForLink.map((item) => (
-                        <option key={item.recordId} value={item.recordId}>
-                          {item.projectName}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="min-w-0 flex-1">
+                      <SearchableSelect
+                        label="project"
+                        value={linkDrafts.project}
+                        options={availableProjectsForLink.map((item) => ({
+                          value: item.recordId,
+                          label: item.projectName,
+                          description: [getAccountById(item.accountId)?.accountName, item.stage].filter(Boolean).join(" | "),
+                        }))}
+                        emptyLabel="Select project"
+                        searchPlaceholder="Search projects"
+                        onChange={(project) => setLinkDrafts((prev) => ({ ...prev, project }))}
+                      />
+                    </div>
                     <CreateEntityDialog
                       entityType="project"
                       triggerLabel="New"
@@ -1335,11 +1297,15 @@ export function Cases() {
                   <>
                   <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
                     <div className="min-w-0 flex-1">
-                      <MultiSelectDropdown
+                      <MultiRecordDropdown
                         label="Mantis records"
                         values={linkDrafts.mantis}
-                        options={availableMantisForLink}
-                        getOptionLabel={(item) => item.mantisId ? `${item.mantisId} - ${item.description}` : item.description}
+                        options={availableMantisForLink.map((item) => ({
+                          value: item.recordId,
+                          label: item.mantisId || item.description,
+                          description: [item.mantisStatus, item.description].filter(Boolean).join(" | "),
+                        }))}
+                        searchPlaceholder="Search Mantis ID, status, or description"
                         onChange={(values) => setLinkDrafts((prev) => ({ ...prev, mantis: values }))}
                       />
                     </div>
@@ -1380,11 +1346,15 @@ export function Cases() {
                   <>
                   <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 md:flex-row md:items-center">
                     <div className="min-w-0 flex-1">
-                      <MultiSelectDropdown
+                      <MultiRecordDropdown
                         label="Knock records"
                         values={linkDrafts.knock}
-                        options={availableKnocksForLink}
-                        getOptionLabel={(item) => item.knockId ? `${item.knockId} - ${item.description}` : item.description}
+                        options={availableKnocksForLink.map((item) => ({
+                          value: item.recordId,
+                          label: item.knockId || item.description,
+                          description: [item.status, item.description].filter(Boolean).join(" | "),
+                        }))}
+                        searchPlaceholder="Search Knock ID, status, or description"
                         onChange={(values) => setLinkDrafts((prev) => ({ ...prev, knock: values }))}
                       />
                     </div>

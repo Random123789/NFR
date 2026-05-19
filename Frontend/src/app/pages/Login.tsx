@@ -33,7 +33,7 @@ export function Login() {
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
         <div className="mb-8">
           <img src={fortinetLogoUrl} alt="Fortinet" className="h-16 w-auto mx-auto mb-7" />
-          <h1 className="text-2xl font-bold text-gray-900">CRM Login</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Login</h1>
           <p className="text-sm text-gray-600 mt-1">Sign in to load your bookmarks and track your actions.</p>
         </div>
 

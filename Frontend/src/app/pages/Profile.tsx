@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeft, Check, KeyRound, Save, Trash2 } from "lucide-
 import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUserPassword, updateManagedUserRole, type ManagedUser } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
 import { accountVerticals, type AccountVertical } from "../data/accountOptions";
-import { formatRoleLabel, managedRoleOptions } from "../data/roleLabels";
+import { formatRoleLabel, managedRoleOptions, type ManagedRole } from "../data/roleLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
 
 export function Profile() {
@@ -25,11 +25,11 @@ export function Profile() {
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [newUserDisplayName, setNewUserDisplayName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
-  const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
+  const [newUserRole, setNewUserRole] = useState<ManagedRole>("user");
   const [newUserVertical, setNewUserVertical] = useState<AccountVertical | "">("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [isCreatingUser, setIsCreatingUser] = useState(false);
-  const [roleDrafts, setRoleDrafts] = useState<Record<number, "admin" | "user">>({});
+  const [roleDrafts, setRoleDrafts] = useState<Record<number, ManagedRole>>({});
   const [verticalDrafts, setVerticalDrafts] = useState<Record<number, AccountVertical | "">>({});
   const [passwordDrafts, setPasswordDrafts] = useState<Record<number, string>>({});
   const [savingRoleUserId, setSavingRoleUserId] = useState<number | null>(null);
@@ -182,7 +182,7 @@ export function Profile() {
     setSavingRoleUserId(managedUser.id);
 
     try {
-      const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as "admin" | "user");
+      const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as ManagedRole);
       const selectedVertical = selectedRole === "user"
         ? verticalDrafts[managedUser.id] ?? managedUser.vertical ?? ""
         : "";
@@ -207,7 +207,7 @@ export function Profile() {
         vertical: "vertical" in result.user ? result.user.vertical : nextVertical,
       };
       setManagedUsers((prev) => prev.map((userItem) => (userItem.id === managedUser.id ? updatedUser : userItem)));
-      setRoleDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.role as "admin" | "user" }));
+      setRoleDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.role as ManagedRole }));
       setVerticalDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.vertical ?? "" }));
 
       if (user.id === managedUser.id) {
@@ -386,7 +386,7 @@ export function Profile() {
               <div className="text-gray-500">Role</div>
               <div className="font-medium text-gray-900">{formatRoleLabel(user.role)}</div>
             </div>
-            {user.role !== "admin" && (
+            {user.role === "user" && (
               <div>
                 <div className="text-gray-500">Vertical</div>
                 <div className="font-medium text-gray-900">{user.vertical || "-"}</div>
@@ -439,9 +439,9 @@ export function Profile() {
               <select
                 value={newUserRole}
                 onChange={(e) => {
-                  const nextRole = e.target.value as "admin" | "user";
+                  const nextRole = e.target.value as ManagedRole;
                   setNewUserRole(nextRole);
-                  if (nextRole === "admin") {
+                  if (nextRole !== "user") {
                     setNewUserVertical("");
                   }
                 }}
@@ -519,7 +519,7 @@ export function Profile() {
               </thead>
               <tbody>
                 {managedUsers.map((managedUser) => {
-                  const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as "admin" | "user");
+                  const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as ManagedRole);
                   const selectedVertical = selectedRole === "user"
                     ? verticalDrafts[managedUser.id] ?? managedUser.vertical ?? ""
                     : "";
@@ -537,7 +537,7 @@ export function Profile() {
                           onChange={(e) =>
                             setRoleDrafts((prev) => ({
                               ...prev,
-                              [managedUser.id]: e.target.value as "admin" | "user",
+                              [managedUser.id]: e.target.value as ManagedRole,
                             }))
                           }
                           className="w-full min-w-40 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937] bg-white"

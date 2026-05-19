@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, ExternalLink, Save, Bookmark } from "lucide-react";
-import { addProjectHistory, listAssignableUsers, updateProject, type AssignableUser, type ProjectRecord } from "../data/apiClient";
+import { addProjectHistory, listAssignableUsers, updateProject, type ProjectRecord } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList, LinkedCasesList } from "../components/LinkedEntityCard";
 import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import { SearchableSelect } from "../components/SearchableSelect";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
@@ -19,8 +20,10 @@ import { useLinkedCases } from "../hooks/useLinkedCases";
 import { useRecordComments } from "../hooks/useRecordComments";
 import { compareValues, getNextSortConfig, toggleColumnKey, useStoredColumnKeys, type SortConfig } from "../hooks/useTableColumns";
 import {
+  createDetailPath,
   createDetailTarget,
   createLinkedDetailState,
+  resolveDetailRouteRecordId,
   type DetailRouteState,
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
@@ -59,10 +62,6 @@ const PROJECT_DETAIL_TABS = [
   { key: "linkedAccounts", label: "Linked Accounts" },
   { key: "linkedCases", label: "Linked Cases" },
 ];
-
-function assigneeLabel(user: AssignableUser) {
-  return `${user.displayName} (${user.email})${user.vertical ? ` - ${user.vertical}` : ""}${user.isActive ? "" : " - inactive"}`;
-}
 
 function createProjectPayload(project: ProjectRecord) {
   return {
@@ -111,6 +110,7 @@ export function Projects() {
   } = useRoutedEntityDetail({
     entityType: "project",
     getRecordById: getProjectById,
+    resolveRouteRecordId: (routeParam) => resolveDetailRouteRecordId("project", routeParam, projects),
   });
   const {
     linkedCases,
@@ -174,7 +174,7 @@ export function Projects() {
   const handleAccountClick = (accountId: string) => {
     if (!selectedProject?.recordId) return;
 
-    navigate('/accounts', {
+    navigate(createDetailPath("account", accountId), {
       state: createLinkedDetailState(
         "account",
         accountId,
@@ -187,7 +187,7 @@ export function Projects() {
   const handleCaseClick = (caseId: string) => {
     if (!selectedProject?.recordId) return;
 
-    navigate('/cases', {
+    navigate(createDetailPath("case", caseId), {
       state: createLinkedDetailState(
         "case",
         caseId,
@@ -459,10 +459,7 @@ export function Projects() {
             </button>
             <CreateEntityDialog
               entityType="project"
-              onCreated={(project) => {
-                setSelectedProject(project);
-                setActiveDetailTab("details");
-              }}
+              onCreated={(project) => navigate(createDetailPath("project", project.recordId))}
             />
             <TableFieldSelector
               columns={PROJECT_TABLE_COLUMNS}
@@ -486,10 +483,7 @@ export function Projects() {
               {sortedProjects.map((project) => (
                 <tr
                   key={project.recordId}
-                  onClick={() => {
-                    setSelectedProject(project);
-                    setActiveDetailTab("details");
-                  }}
+                  onClick={() => navigate(createDetailPath("project", project.recordId))}
                   className="hover:bg-gray-50 cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -596,18 +590,20 @@ export function Projects() {
                   <label className="block text-sm font-medium text-gray-600 mb-1">Account</label>
                   {isEditing && editedProject ? (
                     <div className="flex gap-2">
-                      <select
-                        value={editedProject.accountId ?? ""}
-                        onChange={(e) => setEditedProject({ ...editedProject, accountId: e.target.value || null })}
-                        className="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                      >
-                        <option value="">No account</option>
-                        {accounts.map((item) => (
-                          <option key={item.recordId} value={item.recordId}>
-                            {item.accountName}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="min-w-0 flex-1">
+                        <SearchableSelect
+                          label="account"
+                          value={editedProject.accountId ?? ""}
+                          options={accounts.map((item) => ({
+                            value: item.recordId,
+                            label: item.accountName,
+                            description: [item.type, item.vertical].filter(Boolean).join(" | "),
+                          }))}
+                          emptyLabel="No account"
+                          searchPlaceholder="Search accounts"
+                          onChange={(accountId) => setEditedProject({ ...editedProject, accountId: accountId || null })}
+                        />
+                      </div>
                       <CreateEntityDialog
                         entityType="account"
                         triggerLabel="New"
@@ -652,18 +648,18 @@ export function Projects() {
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">SE Owner</label>
                   {isEditing && editedProject ? (
-                    <select
+                    <SearchableSelect
+                      label="SE owner"
                       value={editedProject.seOwner ?? ""}
-                      onChange={(e) => setEditedProject({ ...editedProject, seOwner: e.target.value })}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    >
-                      <option value="">No SE owner</option>
-                      {assignableUsers.map((assignableUser) => (
-                        <option key={assignableUser.id} value={assignableUser.displayName}>
-                          {assigneeLabel(assignableUser)}
-                        </option>
-                      ))}
-                    </select>
+                      options={assignableUsers.map((assignableUser) => ({
+                        value: assignableUser.displayName,
+                        label: assignableUser.displayName,
+                        description: `${assignableUser.email}${assignableUser.vertical ? ` | ${assignableUser.vertical}` : ""}${assignableUser.isActive ? "" : " | inactive"}`,
+                      }))}
+                      emptyLabel="No SE owner"
+                      searchPlaceholder="Search users"
+                      onChange={(seOwner) => setEditedProject({ ...editedProject, seOwner })}
+                    />
                   ) : (
                     <p className="text-gray-900">{textValue(selectedProject.seOwner)}</p>
                   )}
@@ -763,18 +759,18 @@ export function Projects() {
                     <div className="flex flex-col gap-3 md:flex-row md:items-end">
                       <div className="min-w-0 flex-1">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Link account</label>
-                        <select
+                        <SearchableSelect
+                          label="account"
                           value={linkingAccountId}
-                          onChange={(e) => setLinkingAccountId(e.target.value)}
-                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                        >
-                          <option value="">Select an account</option>
-                          {availableAccounts.map((item) => (
-                            <option key={item.recordId} value={item.recordId}>
-                              {item.accountName}
-                            </option>
-                          ))}
-                        </select>
+                          options={availableAccounts.map((item) => ({
+                            value: item.recordId,
+                            label: item.accountName,
+                            description: [item.type, item.vertical].filter(Boolean).join(" | "),
+                          }))}
+                          emptyLabel="Select an account"
+                          searchPlaceholder="Search accounts"
+                          onChange={setLinkingAccountId}
+                        />
                       </div>
                       <CreateEntityDialog
                         entityType="account"
@@ -816,18 +812,18 @@ export function Projects() {
                     <div className="flex flex-col gap-3 md:flex-row md:items-end">
                       <div className="flex-1">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Link case</label>
-                        <select
+                        <SearchableSelect
+                          label="case"
                           value={linkingCaseId}
-                          onChange={(e) => setLinkingCaseId(e.target.value)}
-                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                        >
-                          <option value="">Select a case</option>
-                          {availableCases.map((caseItem) => (
-                            <option key={caseItem.recordId} value={caseItem.recordId}>
-                              {formatRelatedCaseOption(caseItem, accounts, projects)}
-                            </option>
-                          ))}
-                        </select>
+                          options={availableCases.map((caseItem) => ({
+                            value: caseItem.recordId,
+                            label: formatRelatedCaseOption(caseItem, accounts, projects),
+                            description: [caseItem.status, caseItem.priority].filter(Boolean).join(" | "),
+                          }))}
+                          emptyLabel="Select a case"
+                          searchPlaceholder="Search account, project, or description"
+                          onChange={setLinkingCaseId}
+                        />
                       </div>
                       <CreateEntityDialog
                         entityType="case"

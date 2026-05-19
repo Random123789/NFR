@@ -102,11 +102,13 @@ CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId);
 
 CREATE TABLE IF NOT EXISTS cases (
   recordId VARCHAR(32) PRIMARY KEY,
+  -- Backward-compatible primary/display link. Full case-account links live in case_entity_links.
   account VARCHAR(32),
   project VARCHAR(32),
   category VARCHAR(120),
   escalationType VARCHAR(120),
   escalationNote TEXT,
+  -- Backward-compatible primary/display link. Full case-product links live in case_entity_links.
   product VARCHAR(32),
   closeDate VARCHAR(32),
   description TEXT NOT NULL,
@@ -135,18 +137,6 @@ ALTER TABLE projects
   ON UPDATE CASCADE;
 
 ALTER TABLE cases
-  ADD CONSTRAINT fk_cases_account
-  FOREIGN KEY (account) REFERENCES accounts(recordId)
-  ON DELETE SET NULL
-  ON UPDATE CASCADE;
-
-ALTER TABLE cases
-  ADD CONSTRAINT fk_cases_product
-  FOREIGN KEY (product) REFERENCES products(recordId)
-  ON DELETE SET NULL
-  ON UPDATE CASCADE;
-
-ALTER TABLE cases
   ADD CONSTRAINT fk_cases_project
   FOREIGN KEY (project) REFERENCES projects(recordId)
   ON DELETE SET NULL
@@ -158,7 +148,11 @@ CREATE TABLE IF NOT EXISTS case_entity_links (
   entityRecordId VARCHAR(32) NOT NULL,
   createdAt DATETIME NOT NULL,
   createdBy VARCHAR(120),
-  PRIMARY KEY (caseRecordId, entityType, entityRecordId)
+  PRIMARY KEY (caseRecordId, entityType, entityRecordId),
+  CONSTRAINT fk_case_entity_links_case
+    FOREIGN KEY (caseRecordId) REFERENCES cases(recordId)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
 );
 
 CREATE INDEX idx_case_entity_links_case ON case_entity_links (caseRecordId);

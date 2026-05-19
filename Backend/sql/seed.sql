@@ -35,11 +35,27 @@ INSERT INTO cases (recordId, account, project, category, escalationType, escalat
 ('REC-005', 'ACC-001', 'PRJ-001', 'NFR', 'Re-Escalation', 'Competitive situation, needs immediate attention', 'PRD-001', NULL, 'Data center firewall refresh - FortiGate 3000 series evaluation and proposal', 'Sarah Johnson', 'Sarah Johnson', 'Very High', 'Escalated', NULL, 'MANT-5679');
 
 INSERT INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy) VALUES
+('REC-001', 'account', 'ACC-001', '2026-04-21 08:45', 'Sarah Johnson'),
+('REC-001', 'project', 'PRJ-001', '2026-04-21 08:50', 'Sarah Johnson'),
+('REC-001', 'product', 'PRD-001', '2026-04-21 08:55', 'Sarah Johnson'),
 ('REC-001', 'mantis', 'MANTIS-001', '2026-04-21 09:00', 'Sarah Johnson'),
 ('REC-001', 'mantis', 'MANTIS-002', '2026-04-21 09:15', 'Sarah Johnson'),
+('REC-002', 'account', 'ACC-002', '2026-04-21 09:20', 'Mike Chen'),
+('REC-002', 'project', 'PRJ-002', '2026-04-21 09:22', 'Mike Chen'),
+('REC-002', 'product', 'PRD-002', '2026-04-21 09:25', 'Mike Chen'),
 ('REC-002', 'knock', 'KNOCK-001', '2026-04-21 09:30', 'Mike Chen'),
 ('REC-002', 'knock', 'KNOCK-002', '2026-04-21 09:35', 'Mike Chen'),
+('REC-003', 'account', 'ACC-003', '2026-04-21 09:36', 'Alex Kumar'),
+('REC-003', 'project', 'PRJ-003', '2026-04-21 09:37', 'Alex Kumar'),
+('REC-003', 'product', 'PRD-003', '2026-04-21 09:38', 'Alex Kumar'),
 ('REC-003', 'mantis', 'MANTIS-003', '2026-04-21 09:40', 'Alex Kumar'),
 ('REC-003', 'knock', 'KNOCK-003', '2026-04-21 09:45', 'Alex Kumar'),
+('REC-004', 'account', 'ACC-004', '2026-04-21 09:50', 'Mike Chen'),
+('REC-004', 'product', 'PRD-004', '2026-04-21 09:55', 'Mike Chen'),
+('REC-004', 'knock', 'KNOCK-002', '2026-04-21 09:58', 'Mike Chen'),
+('REC-005', 'account', 'ACC-001', '2026-04-21 09:59', 'Sarah Johnson'),
 ('REC-005', 'mantis', 'MANTIS-001', '2026-04-21 10:00', 'Sarah Johnson'),
+('REC-005', 'project', 'PRJ-001', '2026-04-21 10:01', 'Sarah Johnson'),
+('REC-005', 'product', 'PRD-001', '2026-04-21 10:02', 'Sarah Johnson'),
+('REC-005', 'mantis', 'MANTIS-002', '2026-04-21 10:03', 'Sarah Johnson'),
 ('REC-005', 'knock', 'KNOCK-003', '2026-04-21 10:05', 'Sarah Johnson');

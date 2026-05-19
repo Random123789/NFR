@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { Briefcase, FolderKanban, AlertCircle, Clock3, ChevronDown, Plus, Settings2, Trash2, Edit2 } from "lucide-react";
+import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, FolderKanban, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
 import { useRecords } from "../context/RecordsContext";
+import { useAuth } from "../context/AuthContext";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
 import type { AccountRecord, CaseRecord, ProjectRecord } from "../data/apiClient";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Checkbox } from "../components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "../components/ui/dialog";
 import { caseStatuses, casePriorities } from "../data/caseOptions";
+import { createDetailPath } from "../navigation/detailNavigation";
+import { formatUsdInteger } from "../utils/currency";
 
 type CaseItem = CaseRecord;
 
@@ -89,7 +92,309 @@ export type CustomWidgetConfig = {
   priorityFilter?: string | null;
 };
 
+const CLOSED_CASE_STATUSES = new Set(["Closed-Resolved", "Closed-Dead"]);
+
+function isOpenCase(caseItem: CaseRecord) {
+  return !CLOSED_CASE_STATUSES.has(caseItem.status ?? "");
+}
+
+function getDaysUntil(dateString: string | null | undefined) {
+  if (!dateString) return null;
+  const target = new Date(dateString);
+  if (Number.isNaN(target.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  target.setHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 3600 * 24));
+}
+
+function projectValue(project: ProjectRecord) {
+  return typeof project.sfdcValue === "number" ? project.sfdcValue : 0;
+}
+
+function getAccountName(accounts: AccountRecord[], accountId: string | null | undefined) {
+  return accounts.find((account) => account.recordId === accountId)?.accountName ?? "No account";
+}
+
+function ManagerHome() {
+  const { cases, accounts, projects } = useRecords();
+  const navigate = useNavigate();
+
+  const openCases = cases.filter(isOpenCase);
+  const openProjects = projects.filter((project) => !project.isClosed);
+  const totalOpenPipeline = openProjects.reduce((sum, project) => sum + projectValue(project), 0);
+  const highRiskCases = openCases.filter((caseItem) =>
+    caseItem.status === "Escalated" || caseItem.priority === "High" || caseItem.priority === "Very High"
+  );
+  const veryHighCases = openCases.filter((caseItem) => caseItem.priority === "Very High");
+  const closingSoonProjects = openProjects.filter((project) => {
+    const days = getDaysUntil(project.closeDate);
+    return days !== null && days >= 0 && days <= 45;
+  });
+
+  const valueByStage = Object.values(openProjects.reduce<Record<string, { id: string; stage: string; value: number; projects: number }>>((acc, project) => {
+    const stage = project.stage || "No stage";
+    acc[stage] = acc[stage] ?? { id: `stage-${stage}`, stage, value: 0, projects: 0 };
+    acc[stage].value += projectValue(project);
+    acc[stage].projects += 1;
+    return acc;
+  }, {})).sort((left, right) => right.value - left.value);
+
+  const valueByVertical = Object.values(openProjects.reduce<Record<string, { id: string; vertical: string; value: number; projects: number }>>((acc, project) => {
+    const vertical = accounts.find((account) => account.recordId === project.accountId)?.vertical || "No vertical";
+    acc[vertical] = acc[vertical] ?? { id: `vertical-${vertical}`, vertical, value: 0, projects: 0 };
+    acc[vertical].value += projectValue(project);
+    acc[vertical].projects += 1;
+    return acc;
+  }, {})).sort((left, right) => right.value - left.value);
+
+  const casesByOwner = Object.values(openCases.reduce<Record<string, { id: string; owner: string; total: number; escalated: number; veryHigh: number }>>((acc, caseItem) => {
+    const owner = caseItem.seOwner || caseItem.assignedTo || "Unassigned";
+    acc[owner] = acc[owner] ?? { id: `owner-${owner}`, owner, total: 0, escalated: 0, veryHigh: 0 };
+    acc[owner].total += 1;
+    if (caseItem.status === "Escalated") acc[owner].escalated += 1;
+    if (caseItem.priority === "Very High") acc[owner].veryHigh += 1;
+    return acc;
+  }, {})).sort((left, right) => (right.escalated * 3 + right.veryHigh * 2 + right.total) - (left.escalated * 3 + left.veryHigh * 2 + left.total));
+
+  const topFocusProjects = [...openProjects]
+    .map((project) => {
+      const relatedCases = cases.filter((caseItem) => caseItem.project === project.recordId && isOpenCase(caseItem));
+      const escalated = relatedCases.filter((caseItem) => caseItem.status === "Escalated").length;
+      const veryHigh = relatedCases.filter((caseItem) => caseItem.priority === "Very High").length;
+      const daysToClose = getDaysUntil(project.closeDate);
+      const closingScore = daysToClose !== null && daysToClose >= 0 && daysToClose <= 45 ? 4 : 0;
+      const valueScore = Math.min(projectValue(project) / 50000, 8);
+      return {
+        ...project,
+        accountName: getAccountName(accounts, project.accountId),
+        escalated,
+        veryHigh,
+        openCaseCount: relatedCases.length,
+        daysToClose,
+        focusScore: valueScore + escalated * 4 + veryHigh * 3 + closingScore,
+      };
+    })
+    .sort((left, right) => right.focusScore - left.focusScore)
+    .slice(0, 6);
+
+  const priorityCases = [...highRiskCases]
+    .sort((left, right) => {
+      const priorityWeight = (value: string | null | undefined) => value === "Very High" ? 3 : value === "High" ? 2 : 1;
+      return (right.status === "Escalated" ? 4 : 0) + priorityWeight(right.priority) - ((left.status === "Escalated" ? 4 : 0) + priorityWeight(left.priority));
+    })
+    .slice(0, 6);
+
+  const managerStats = [
+    {
+      label: "Open Pipeline",
+      value: formatUsdInteger(totalOpenPipeline),
+      detail: `${openProjects.length} open projects`,
+      icon: DollarSign,
+      color: "bg-[#E31937]",
+      onClick: () => navigate("/projects"),
+    },
+    {
+      label: "High-Risk Cases",
+      value: highRiskCases.length.toString(),
+      detail: `${veryHighCases.length} very high priority`,
+      icon: AlertCircle,
+      color: "bg-[#B5122B]",
+      onClick: () => navigate("/cases", { state: { priorityFilter: "Very High" } }),
+    },
+    {
+      label: "Closing Soon",
+      value: closingSoonProjects.length.toString(),
+      detail: "projects inside 45 days",
+      icon: CalendarClock,
+      color: "bg-[#2c3e50]",
+      onClick: () => navigate("/projects"),
+    },
+    {
+      label: "Coverage",
+      value: casesByOwner.length.toString(),
+      detail: "active SE owners",
+      icon: Target,
+      color: "bg-[#4b5563]",
+      onClick: () => navigate("/cases"),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Manager Dashboard</h1>
+        <p className="mt-1 text-gray-600">Pipeline, risk, and focus areas for the SE team.</p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {managerStats.map((stat) => (
+          <button
+            key={stat.label}
+            type="button"
+            onClick={stat.onClick}
+            className="rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-600">{stat.label}</p>
+                <p className="mt-2 truncate text-3xl font-semibold text-gray-900">{stat.value}</p>
+                <p className="mt-1 text-sm text-gray-500">{stat.detail}</p>
+              </div>
+              <div className={`${stat.color} flex h-12 w-12 shrink-0 items-center justify-center rounded-lg`}>
+                <stat.icon className="h-6 w-6 text-white" />
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Pipeline by Stage</h2>
+              <p className="text-sm text-gray-500">Open project value by sales stage.</p>
+            </div>
+            <TrendingUp className="h-5 w-5 text-gray-400" />
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={valueByStage}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <XAxis dataKey="stage" stroke="#6B7280" interval={0} angle={-15} textAnchor="end" height={70} />
+              <YAxis stroke="#6B7280" tickFormatter={(value) => `$${Math.round(Number(value) / 1000)}k`} />
+              <Tooltip formatter={(value) => [formatUsdInteger(Number(value)), "Pipeline"]} />
+              <Bar dataKey="value" fill="#E31937" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Pipeline by Vertical</h2>
+              <p className="text-sm text-gray-500">Where the team has the largest opportunity.</p>
+            </div>
+            <Building2 className="h-5 w-5 text-gray-400" />
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={valueByVertical}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <XAxis dataKey="vertical" stroke="#6B7280" />
+              <YAxis stroke="#6B7280" tickFormatter={(value) => `$${Math.round(Number(value) / 1000)}k`} />
+              <Tooltip formatter={(value) => [formatUsdInteger(Number(value)), "Pipeline"]} />
+              <Bar dataKey="value" fill="#2c3e50" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-5">
+            <h2 className="text-lg font-semibold text-gray-900">Recommended Focus</h2>
+            <p className="mt-1 text-sm text-gray-500">Projects ranked by value, urgency, and open case pressure.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Project</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Account</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Value</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Risk</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Close</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {topFocusProjects.map((project) => (
+                  <tr
+                    key={project.recordId}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => navigate(createDetailPath("project", project.recordId))}
+                  >
+                    <td className="max-w-xs truncate px-5 py-4 text-sm font-medium text-gray-900">{project.projectName}</td>
+                    <td className="px-5 py-4 text-sm text-gray-700">{project.accountName}</td>
+                    <td className="px-5 py-4 text-sm text-gray-700">{formatUsdInteger(project.sfdcValue)}</td>
+                    <td className="px-5 py-4 text-sm text-gray-700">
+                      {project.escalated > 0 || project.veryHigh > 0
+                        ? `${project.escalated} escalated, ${project.veryHigh} very high`
+                        : `${project.openCaseCount} open cases`}
+                    </td>
+                    <td className="px-5 py-4 text-sm text-gray-700">
+                      {project.daysToClose === null ? "-" : project.daysToClose < 0 ? "Past due" : `${project.daysToClose}d`}
+                    </td>
+                  </tr>
+                ))}
+                {topFocusProjects.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-10 text-center text-sm text-gray-500">No open projects to prioritize.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-gray-900">Team Load</h2>
+            <p className="mt-1 text-sm text-gray-500">Open case pressure by SE owner.</p>
+            <div className="mt-4 space-y-3">
+              {casesByOwner.slice(0, 6).map((owner) => (
+                <div key={owner.id}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="font-medium text-gray-900">{owner.owner}</span>
+                    <span className="text-gray-500">{owner.total} open</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-gray-100">
+                    <div
+                      className="h-2 rounded-full bg-[#E31937]"
+                      style={{ width: `${Math.min(100, owner.total * 12 + owner.escalated * 14 + owner.veryHigh * 10)}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">{owner.escalated} escalated, {owner.veryHigh} very high</p>
+                </div>
+              ))}
+              {casesByOwner.length === 0 && <p className="text-sm text-gray-500">No open case load.</p>}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-gray-900">Priority Cases</h2>
+            <p className="mt-1 text-sm text-gray-500">Cases that may need leadership attention.</p>
+            <div className="mt-4 divide-y divide-gray-100">
+              {priorityCases.map((caseItem) => (
+                <button
+                  key={caseItem.recordId}
+                  type="button"
+                  onClick={() => navigate(createDetailPath("case", caseItem.recordId), { state: { openDetail: { entityType: "case", recordId: caseItem.recordId } } })}
+                  className="block w-full py-3 text-left hover:bg-gray-50"
+                >
+                  <p className="line-clamp-2 text-sm font-medium text-gray-900">{caseItem.description}</p>
+                  <p className="mt-1 text-xs text-gray-500">{caseItem.status || "-"} | {caseItem.priority || "-"} | {caseItem.seOwner || caseItem.assignedTo || "Unassigned"}</p>
+                </button>
+              ))}
+              {priorityCases.length === 0 && <p className="py-6 text-sm text-gray-500">No high-risk open cases right now.</p>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Home() {
+  const { user } = useAuth();
+
+  if (user?.role === "manager") {
+    return <ManagerHome />;
+  }
+
+  return <TeamHome />;
+}
+
+function TeamHome() {
   const { cases, accounts, projects } = useRecords();
   const [selectedOwners, setSelectedOwners] = useState<string[]>([]);
   const navigate = useNavigate();
@@ -410,7 +715,7 @@ export function Home() {
                   <tr 
                     key={caseItem.recordId} 
                     className="hover:bg-gray-50 transition-colors cursor-pointer"
-                    onClick={() => navigate('/cases', { state: { openDetail: { entityType: 'case', recordId: caseItem.recordId } } })}
+                    onClick={() => navigate(createDetailPath("case", caseItem.recordId), { state: { openDetail: { entityType: 'case', recordId: caseItem.recordId } } })}
                   >
                     <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate whitespace-nowrap" title={caseItem.description}>
                       {caseItem.description}

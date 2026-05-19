@@ -1,14 +1,14 @@
 [Unit]
-Description=Mantis FastAPI backend
+Description=CRM FastAPI backend
 After=network-online.target mysql.service
 Wants=network-online.target mysql.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/mantis/Backend
-EnvironmentFile=/opt/mantis/Backend/.env
+WorkingDirectory=/opt/crm/Backend
+EnvironmentFile=/opt/crm/Backend/.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/mantis/Backend/.venv/bin/python main.py
+ExecStart=/opt/crm/Backend/.venv/bin/python main.py
 Restart=on-failure
 RestartSec=5
 User=www-data

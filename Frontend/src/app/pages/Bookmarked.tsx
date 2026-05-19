@@ -2,7 +2,7 @@ import { Bookmark } from "lucide-react";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useRecords } from "../context/RecordsContext";
 import { useNavigate } from "react-router";
-import { createOpenDetailState, getDetailRoute, type DetailEntityType } from "../navigation/detailNavigation";
+import { createDetailPath, createDetailSlug, createOpenDetailState, type DetailEntityType } from "../navigation/detailNavigation";
 import { formatTimestampMinute } from "../utils/dateTime";
 import type { BookmarkedItem } from "../data/apiClient";
 
@@ -30,7 +30,7 @@ function textValue(value: string | null | undefined) {
 }
 
 function formatCaseId(recordId: string) {
-  return recordId.startsWith("REC-") ? recordId.replace("REC-", "CASE-") : recordId;
+  return createDetailSlug("case", recordId);
 }
 
 export function Bookmarked() {
@@ -40,11 +40,13 @@ export function Bookmarked() {
 
   const handleItemClick = (item: any) => {
     const entityType = item.type as DetailEntityType;
-    const path = getDetailRoute(entityType);
+    const identifier = entityType === "mantis"
+      ? getMantisById(item.id)?.mantisId || item.id
+      : entityType === "knock"
+        ? getKnockById(item.id)?.knockId || item.id
+        : item.id;
 
-    if (path) {
-      navigate(path, { state: createOpenDetailState(entityType, item.id) });
-    }
+    navigate(createDetailPath(entityType, identifier), { state: createOpenDetailState(entityType, item.id) });
   };
 
   const groupedByType = bookmarked.reduce((acc, item) => {

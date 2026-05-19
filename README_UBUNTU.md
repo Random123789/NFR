@@ -201,6 +201,8 @@ Change this password after your first login if this is more than a throwaway loc
 
 ## Apache Production Deployment
 
+For split deployment guides, see [README_APACHE_UBUNTU.md](README_APACHE_UBUNTU.md) for production and [README_APACHE_UAT_UBUNTU.md](README_APACHE_UAT_UBUNTU.md) for UAT.
+
 Use this when you want Apache to serve the app on normal HTTP port `80` instead of running the Vite dev server. Apache serves the built React files from `/var/www/mantis` and proxies `/api` to the FastAPI backend on `127.0.0.1:4000`.
 
 ### 1. Install Apache

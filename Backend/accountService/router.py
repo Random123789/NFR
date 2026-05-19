@@ -95,7 +95,7 @@ async def ensure_account_schema() -> None:
 
 
 def _account_is_visible_to_actor(account_record: dict, actor: dict) -> bool:
-    if actor.get("role") == "admin":
+    if actor.get("role") in {"admin", "manager"}:
         return True
 
     actor_vertical = (actor.get("vertical") or "").strip()
@@ -106,7 +106,7 @@ def _account_is_visible_to_actor(account_record: dict, actor: dict) -> bool:
 
 
 def _account_visibility_where(actor: dict) -> tuple[str, list[str]]:
-    if actor.get("role") == "admin":
+    if actor.get("role") in {"admin", "manager"}:
         return "1=1", []
 
     actor_vertical = (actor.get("vertical") or "").strip()

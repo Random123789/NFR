@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import {
   createReturnDetailState,
+  getDetailRoute,
   getOpenDetailRecordId,
   type DetailEntityType,
   type DetailRouteState,
@@ -16,12 +17,15 @@ export type DetailTab = string;
 export function useRoutedEntityDetail<T extends RecordWithId>({
   entityType,
   getRecordById,
+  resolveRouteRecordId,
 }: {
   entityType: DetailEntityType;
   getRecordById: (recordId: string) => T | undefined;
+  resolveRouteRecordId?: (routeParam: string) => string | undefined;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { recordSlug } = useParams();
   const [selectedRecord, setSelectedRecord] = useState<T | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedRecord, setEditedRecord] = useState<T | null>(null);
@@ -30,7 +34,9 @@ export function useRoutedEntityDetail<T extends RecordWithId>({
   const lastRouteSelectionKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const recordId = getOpenDetailRecordId(location.state, entityType);
+    const routeRecordId = recordSlug ? (resolveRouteRecordId?.(recordSlug) ?? recordSlug) : null;
+    const recordId = getOpenDetailRecordId(location.state, entityType) ?? routeRecordId;
+
     if (!recordId) {
       if (lastLocationKeyRef.current !== location.key) {
         setSelectedRecord(null);
@@ -55,9 +61,15 @@ export function useRoutedEntityDetail<T extends RecordWithId>({
         setEditedRecord(null);
         lastRouteSelectionKeyRef.current = routeSelectionKey;
       }
+    } else if (lastLocationKeyRef.current !== location.key) {
+      setSelectedRecord(null);
+      setActiveDetailTab("details");
+      setIsEditing(false);
+      setEditedRecord(null);
+      lastRouteSelectionKeyRef.current = `${location.key}:${entityType}:${recordId}`;
     }
     lastLocationKeyRef.current = location.key;
-  }, [entityType, getRecordById, location.key, location.state]);
+  }, [entityType, getRecordById, location.key, location.state, recordSlug]);
 
   const selectRecord = (record: T) => {
     setSelectedRecord(record);
@@ -72,6 +84,11 @@ export function useRoutedEntityDetail<T extends RecordWithId>({
       navigate(navState.returnTo.path, {
         state: createReturnDetailState(navState.returnTo, navState.previousState ?? null),
       });
+      return;
+    }
+
+    if (recordSlug) {
+      navigate(getDetailRoute(entityType));
       return;
     }
 

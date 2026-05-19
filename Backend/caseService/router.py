@@ -42,6 +42,7 @@ CASE_LINK_TARGET_TABLES = {
     "knock": "knocks",
 }
 CASE_LINK_ENTITY_TYPES = set(CASE_LINK_TARGET_TABLES)
+SINGLE_CASE_LINK_ENTITY_TYPES = {"project"}
 CASE_FIELD_LABELS = {
     "account": "Account",
     "project": "Project",
@@ -264,7 +265,7 @@ async def ensure_case_schema() -> None:
         "ALTER TABLE cases ADD COLUMN history JSON NULL",
     )
 
-    for constraint_name in ("fk_cases_nfr", "fk_cases_knock"):
+    for constraint_name in ("fk_cases_nfr", "fk_cases_knock", "fk_cases_account", "fk_cases_product"):
         await _drop_foreign_key_if_present("cases", constraint_name)
 
     for index_name in ("idx_cases_nfrRecordId", "idx_cases_knockRecordId"):
@@ -309,26 +310,6 @@ async def ensure_case_schema() -> None:
         """,
     )
     await _add_foreign_key_if_missing(
-        "fk_cases_account",
-        """
-        ALTER TABLE cases
-          ADD CONSTRAINT fk_cases_account
-          FOREIGN KEY (account) REFERENCES accounts(recordId)
-          ON DELETE SET NULL
-          ON UPDATE CASCADE
-        """,
-    )
-    await _add_foreign_key_if_missing(
-        "fk_cases_product",
-        """
-        ALTER TABLE cases
-          ADD CONSTRAINT fk_cases_product
-          FOREIGN KEY (product) REFERENCES products(recordId)
-          ON DELETE SET NULL
-          ON UPDATE CASCADE
-        """,
-    )
-    await _add_foreign_key_if_missing(
         "fk_cases_project",
         """
         ALTER TABLE cases
@@ -360,6 +341,16 @@ async def ensure_case_link_tables() -> None:
     )
     await execute_mutation("UPDATE case_entity_links SET entityType = 'mantis' WHERE entityType = 'nfr'")
     await cleanup_case_entity_links()
+    await _add_foreign_key_if_missing(
+        "fk_case_entity_links_case",
+        """
+        ALTER TABLE case_entity_links
+          ADD CONSTRAINT fk_case_entity_links_case
+          FOREIGN KEY (caseRecordId) REFERENCES cases(recordId)
+          ON DELETE CASCADE
+          ON UPDATE CASCADE
+        """,
+    )
 
     await execute_mutation(
         """
@@ -408,6 +399,7 @@ async def ensure_case_link_tables() -> None:
         """,
         [backfill_created_at],
     )
+    await cleanup_single_case_entity_links()
 
 
 async def cleanup_case_entity_links() -> None:
@@ -439,6 +431,26 @@ async def cleanup_case_entity_links() -> None:
         )
 
 
+async def cleanup_single_case_entity_links() -> None:
+    for entity_type in SINGLE_CASE_LINK_ENTITY_TYPES:
+        await execute_mutation(
+            """
+            DELETE cel
+            FROM case_entity_links cel
+            INNER JOIN case_entity_links newer
+              ON newer.caseRecordId = cel.caseRecordId
+             AND newer.entityType = cel.entityType
+             AND newer.entityType = %s
+             AND (
+                  newer.createdAt > cel.createdAt
+               OR (newer.createdAt = cel.createdAt AND newer.entityRecordId > cel.entityRecordId)
+             )
+            WHERE cel.entityType = %s
+            """,
+            [entity_type, entity_type],
+        )
+
+
 async def _lookup_mantis_record_id(mantis_id: Optional[str]) -> Optional[str]:
     if not mantis_id:
         return None
@@ -464,6 +476,15 @@ async def _lookup_knock_record_id(knock_id: Optional[str]) -> Optional[str]:
 
 
 async def _upsert_case_entity_link(record_id: str, entity_type: str, entity_record_id: str, actor_display_name: str) -> None:
+    if entity_type in SINGLE_CASE_LINK_ENTITY_TYPES:
+        await execute_mutation(
+            """
+            DELETE FROM case_entity_links
+            WHERE caseRecordId = %s AND entityType = %s AND entityRecordId <> %s
+            """,
+            [record_id, entity_type, entity_record_id],
+        )
+
     await execute_mutation(
         """
         INSERT INTO case_entity_links (caseRecordId, entityType, entityRecordId, createdAt, createdBy)
@@ -679,7 +700,7 @@ async def build_linked_cases_payload(entity_type: str, entity_record_id: str, ac
 
 
 def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, list[str]]:
-    if actor.get("role") == "admin":
+    if actor.get("role") in {"admin", "manager"}:
         return "1=1", []
 
     actor_name = (actor.get("displayName") or "").strip().lower()
@@ -722,7 +743,7 @@ def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, lis
 
 
 async def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
-    if actor.get("role") == "admin":
+    if actor.get("role") in {"admin", "manager"}:
         return True
 
     actor_name = (actor.get("displayName") or "").strip().lower()

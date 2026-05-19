@@ -391,7 +391,7 @@ def _build_filter_sql(spec: ReportQuerySpec, active_sources: Set[str]) -> Tuple[
 
 
 def _apply_case_visibility(where_parts: List[str], params: List[Any], active_sources: Set[str], actor: Optional[dict]) -> None:
-    if not actor or actor.get("role") == "admin" or "cases" not in active_sources:
+    if not actor or actor.get("role") in {"admin", "manager"} or "cases" not in active_sources:
         return
 
     conditions: List[str] = []
@@ -429,7 +429,7 @@ def _apply_case_visibility(where_parts: List[str], params: List[Any], active_sou
 
 
 def _apply_account_visibility(where_parts: List[str], params: List[Any], active_sources: Set[str], actor: Optional[dict]) -> None:
-    if not actor or actor.get("role") == "admin" or "accounts" not in active_sources or "cases" in active_sources:
+    if not actor or actor.get("role") in {"admin", "manager"} or "accounts" not in active_sources or "cases" in active_sources:
         return
 
     actor_vertical = (actor.get("vertical") or "").strip()
