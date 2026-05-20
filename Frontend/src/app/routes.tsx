@@ -12,6 +12,7 @@ const Knock = lazy(() => import("./pages/Knock").then((module) => ({ default: mo
 const Product = lazy(() => import("./pages/Product").then((module) => ({ default: module.Product })));
 const Reports = lazy(() => import("./pages/Reports").then((module) => ({ default: module.Reports })));
 const Bookmarked = lazy(() => import("./pages/Bookmarked").then((module) => ({ default: module.Bookmarked })));
+const Backlog = lazy(() => import("./pages/Backlog").then((module) => ({ default: module.Backlog })));
 const Login = lazy(() => import("./pages/Login").then((module) => ({ default: module.Login })));
 const Profile = lazy(() => import("./pages/Profile").then((module) => ({ default: module.Profile })));
 
@@ -59,6 +60,7 @@ export const router = createBrowserRouter([
       { path: "product/:recordSlug", element: pageElement(Product) },
       { path: "reports", element: pageElement(Reports) },
       { path: "bookmarked", element: pageElement(Bookmarked) },
+      { path: "backlog", element: pageElement(Backlog) },
       { path: "profile", element: pageElement(Profile) },
     ],
   },

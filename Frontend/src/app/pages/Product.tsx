@@ -28,8 +28,8 @@ import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
 
-type ProductColumnKey = "productName" | "productFamily" | "productUrl" | "updatedAt";
-type ProductSearchKey = "productName" | "productFamily";
+type ProductColumnKey = "productName" | "productFamily" | "productVersion" | "productUrl" | "updatedAt";
+type ProductSearchKey = "productName" | "productFamily" | "productVersion";
 
 type ProductTableColumn = {
   key: ProductColumnKey;
@@ -41,6 +41,7 @@ type ProductTableColumn = {
 const PRODUCT_TABLE_COLUMNS: ProductTableColumn[] = [
   { key: "productName", label: "Product Name", sortKey: "productName", searchKey: "productName" },
   { key: "productFamily", label: "Product Family", sortKey: "productFamily", searchKey: "productFamily" },
+  { key: "productVersion", label: "Version", sortKey: "productVersion", searchKey: "productVersion" },
   { key: "productUrl", label: "Product URL", sortKey: "productUrl" },
   { key: "updatedAt", label: "Updated At", sortKey: "updatedAt" },
 ];
@@ -107,6 +108,7 @@ export function Product() {
   const [searchFilters, setSearchFilters] = useState({
     productName: "",
     productFamily: "",
+    productVersion: "",
   });
 
   const [sortConfig, setSortConfig] = useState<SortConfig<ProductColumnKey>>({
@@ -134,6 +136,7 @@ export function Product() {
       const saved = await updateProduct(editedProduct.recordId, {
         productFamily: editedProduct.productFamily,
         productName: editedProduct.productName,
+        productVersion: editedProduct.productVersion,
         productUrl: editedProduct.productUrl,
         description: editedProduct.description,
         metaData: editedProduct.metaData,
@@ -180,6 +183,7 @@ export function Product() {
       const matchesGlobalSearch = [
         product.productName,
         product.productFamily,
+        product.productVersion,
         product.productUrl,
         product.description,
       ].some((value) => (value ?? "").toLowerCase().includes(normalizedSearchTerm));
@@ -189,6 +193,7 @@ export function Product() {
 
     if (searchFilters.productName && !product.productName.toLowerCase().includes(searchFilters.productName.toLowerCase())) return false;
     if (searchFilters.productFamily && !(product.productFamily ?? "").toLowerCase().includes(searchFilters.productFamily.toLowerCase())) return false;
+    if (searchFilters.productVersion && !(product.productVersion ?? "").toLowerCase().includes(searchFilters.productVersion.toLowerCase())) return false;
     return true;
   });
 
@@ -254,6 +259,8 @@ export function Product() {
         return <td key={column.key} className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{product.productName}</td>;
       case "productFamily":
         return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{product.productFamily}</td>;
+      case "productVersion":
+        return <td key={column.key} className="px-6 py-4 text-sm text-gray-700 whitespace-nowrap">{product.productVersion || "-"}</td>;
       case "productUrl":
         return (
           <td key={column.key} className="px-6 py-4 text-sm">
@@ -436,6 +443,20 @@ export function Product() {
                   )}
                 </div>
                 <div className="order-3 sm:col-span-2">
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Version</label>
+                  {isEditing && editedProduct ? (
+                    <input
+                      type="text"
+                      value={editedProduct.productVersion ?? ""}
+                      onChange={(e) => setEditedProduct({ ...editedProduct, productVersion: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      placeholder="7.6, 2026.1, GA"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{selectedProduct.productVersion || "-"}</p>
+                  )}
+                </div>
+                <div className="order-4 sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Product URL</label>
                   {isEditing && editedProduct ? (
                     <input
@@ -453,7 +474,7 @@ export function Product() {
                     <p className="text-gray-900">-</p>
                   )}
                 </div>
-                <div className="order-4 sm:col-span-2">
+                <div className="order-5 sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Description</label>
                   {isEditing && editedProduct ? (
                     <textarea

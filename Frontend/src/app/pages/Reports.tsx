@@ -107,6 +107,7 @@ const PRODUCT_CASE_TABLE_FIELDS = [
   "cases.closeDate",
   "products.productName",
   "products.productFamily",
+  "products.productVersion",
   "accounts.accountName",
   "projects.projectName",
 ];
@@ -148,7 +149,7 @@ const TABLE_FIELD_PRESETS: Record<string, string[]> = {
   cases: ["cases.recordId", "cases.status", "cases.priority", "cases.assignedTo", "cases.seOwner", "cases.closeDate"],
   accounts: ["accounts.accountName", "accounts.type", "accounts.vertical", "accounts.website"],
   projects: ["projects.projectName", "projects.accountId", "projects.startDate", "projects.closeDate", "projects.seOwner", "projects.isClosed", "projects.stage", "projects.sfdc", "projects.sfdcValue"],
-  products: ["products.recordId", "products.productName", "products.productFamily", "products.description", "products.createdAt", "products.updatedAt"],
+  products: ["products.recordId", "products.productName", "products.productFamily", "products.productVersion", "products.description", "products.createdAt", "products.updatedAt"],
   mantis: ["mantis.recordId", "mantis.mantisId", "mantis.category", "mantis.mantisStatus", "mantis.mantisRequestDate", "mantis.mantisTargetDate"],
   knocks: ["knocks.recordId", "knocks.knockId", "knocks.status", "knocks.requestDate", "knocks.targetDate"],
 };
@@ -156,7 +157,7 @@ const TABLE_FIELD_PRESETS: Record<string, string[]> = {
 const JOIN_FIELD_PRESETS: Record<string, string[]> = {
   accounts: ["accounts.accountName", "accounts.type", "accounts.vertical"],
   projects: ["projects.projectName", "projects.stage", "projects.seOwner"],
-  products: ["products.productName", "products.productFamily", "products.description"],
+  products: ["products.productName", "products.productFamily", "products.productVersion", "products.description"],
   mantis: ["mantis.mantisId", "mantis.category", "mantis.mantisStatus", "mantis.mantisTargetDate"],
   knocks: ["knocks.knockId", "knocks.status", "knocks.targetDate"],
   cases: ["cases.recordId", "cases.status", "cases.priority", "cases.closeDate"],
@@ -465,6 +466,7 @@ function getFilterValuePlaceholder(fieldKey: string) {
   if (fieldKey === "products.description") return "firewall, SD-WAN, VPN";
   if (fieldKey === "products.productName") return "FortiGate, FortiClient";
   if (fieldKey === "products.productFamily") return "Network Security";
+  if (fieldKey === "products.productVersion") return "7.6, 2026.1, GA";
   if (fieldKey === "accounts.accountName") return "Account name";
   if (fieldKey === "cases.assignedTo" || fieldKey === "cases.seOwner") return "Owner name";
   return "Value";
@@ -1343,7 +1345,7 @@ export function Reports() {
                               <option value="">Select product</option>
                               {productOptions.map((product) => (
                                 <option key={product.recordId} value={product.recordId}>
-                                  {product.productName}{product.productFamily ? ` | ${product.productFamily}` : ""}
+                                  {product.productName}{product.productFamily ? ` | ${product.productFamily}` : ""}{product.productVersion ? ` | v${product.productVersion}` : ""}
                                 </option>
                               ))}
                             </select>

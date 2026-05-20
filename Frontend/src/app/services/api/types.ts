@@ -94,6 +94,7 @@ export interface AccountRecord extends BaseRecord {
 export interface ProductRecord extends BaseRecord {
   productFamily: string | null;
   productName: string;
+  productVersion: string | null;
   productUrl: string | null;
   description: string | null;
 }

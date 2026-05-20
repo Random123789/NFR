@@ -129,6 +129,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("products", "prd", "recordId", "Product ID"),
             _field("products", "prd", "productFamily", "Product Family"),
             _field("products", "prd", "productName", "Product Name"),
+            _field("products", "prd", "productVersion", "Product Version"),
             _field("products", "prd", "productUrl", "Product URL"),
             _field("products", "prd", "description", "Product Description"),
             _field("products", "prd", "createdAt", "Product Created", "date"),

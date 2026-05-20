@@ -5,7 +5,7 @@ import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, 
 import { useRecords } from "../context/RecordsContext";
 import { useAuth } from "../context/AuthContext";
 import { casePriorityColors, caseStatusColors, knockStatusColors, mantisStatusColors, projectStageColors } from "../data/recordStyles";
-import type { AccountRecord, CaseRecord, KnockRecord, MantisRecord, ProjectRecord } from "../data/apiClient";
+import type { AccountRecord, CaseRecord, HistoryEntry, KnockRecord, MantisRecord, ProjectRecord } from "../data/apiClient";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Checkbox } from "../components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
@@ -153,6 +153,106 @@ function getDaysUntil(dateString: string | null | undefined) {
   return Math.ceil((target.getTime() - today.getTime()) / (1000 * 3600 * 24));
 }
 
+type StatusAgingBucketId = "3m" | "6m" | "9m" | "12m";
+type StatusAgingSort = "oldest" | "newest";
+
+type StatusAgingCase = CaseRecord & {
+  agingBucket: StatusAgingBucketId;
+  statusAgeDays: number;
+  statusSinceTimestamp: number;
+  statusSinceLabel: string;
+};
+
+const DAY_MS = 1000 * 60 * 60 * 24;
+const TRACKED_STATUS_AGE_STATUSES = new Set(["Acknowledged", "Escalated"]);
+const STATUS_AGING_BUCKETS: Array<{ id: StatusAgingBucketId; label: string; detail: string; minDays: number; maxDays?: number }> = [
+  { id: "3m", label: "3 months", detail: "90-179 days", minDays: 90, maxDays: 180 },
+  { id: "6m", label: "6 months", detail: "180-269 days", minDays: 180, maxDays: 270 },
+  { id: "9m", label: "9 months", detail: "270-364 days", minDays: 270, maxDays: 365 },
+  { id: "12m", label: ">12 months", detail: "365+ days", minDays: 365 },
+];
+
+function parseHistoryTimestamp(value: string | null | undefined) {
+  const text = (value ?? "").trim().replace("T", " ");
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+
+  if (match) {
+    const [, year, month, day, hour = "0", minute = "0", second = "0"] = match;
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+    ).getTime();
+  }
+
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function getStatusEntryNewValue(entry: HistoryEntry) {
+  const field = (entry.field ?? "").trim().toLowerCase();
+  if (field === "status") {
+    return entry.newValue ?? null;
+  }
+
+  const match = entry.changes?.match(/status changed from .* to (.+)$/i);
+  return match?.[1]?.trim() ?? null;
+}
+
+function getCurrentStatusSince(caseItem: CaseRecord) {
+  const currentStatus = caseItem.status ?? "";
+  if (!TRACKED_STATUS_AGE_STATUSES.has(currentStatus)) return null;
+
+  const history = (caseItem.history ?? [])
+    .map((entry, index) => ({
+      entry,
+      timestamp: parseHistoryTimestamp(entry.timestamp) + index,
+    }))
+    .filter(({ timestamp }) => timestamp > 0);
+
+  const latestMatchingStatusEntry = [...history]
+    .filter(({ entry }) => getStatusEntryNewValue(entry) === currentStatus)
+    .sort((left, right) => right.timestamp - left.timestamp)[0];
+
+  if (latestMatchingStatusEntry) {
+    return latestMatchingStatusEntry.timestamp;
+  }
+
+  const earliestHistoryEntry = [...history].sort((left, right) => left.timestamp - right.timestamp)[0];
+  return earliestHistoryEntry?.timestamp ?? null;
+}
+
+function getStatusAgingBucket(days: number) {
+  return STATUS_AGING_BUCKETS.find((bucket) => days >= bucket.minDays && (bucket.maxDays === undefined || days < bucket.maxDays)) ?? null;
+}
+
+function buildStatusAgingCase(caseItem: CaseRecord): StatusAgingCase | null {
+  const statusSinceTimestamp = getCurrentStatusSince(caseItem);
+  if (!statusSinceTimestamp) return null;
+
+  const statusAgeDays = Math.max(0, Math.floor((Date.now() - statusSinceTimestamp) / DAY_MS));
+  const agingBucket = getStatusAgingBucket(statusAgeDays);
+  if (!agingBucket) return null;
+
+  return {
+    ...caseItem,
+    agingBucket: agingBucket.id,
+    statusAgeDays,
+    statusSinceTimestamp,
+    statusSinceLabel: new Date(statusSinceTimestamp).toISOString().slice(0, 10),
+  };
+}
+
+function formatStatusAge(days: number) {
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30);
+  const remainingDays = days % 30;
+  return remainingDays > 0 ? `${months}mo ${remainingDays}d` : `${months}mo`;
+}
+
 function projectValue(project: ProjectRecord) {
   return typeof project.sfdcValue === "number" ? project.sfdcValue : 0;
 }
@@ -196,6 +296,8 @@ function ManagerHome() {
   const { cases, accounts, projects } = useRecords();
   const navigate = useNavigate();
   const [selectedVerticals, setSelectedVerticals] = useState<AccountVertical[]>([]);
+  const [statusAgingBucketFilter, setStatusAgingBucketFilter] = useState<StatusAgingBucketId | "all">("all");
+  const [statusAgingSort, setStatusAgingSort] = useState<StatusAgingSort>("oldest");
 
   const hasVerticalFilter = selectedVerticals.length > 0;
   const selectedVerticalSet = new Set<AccountVertical>(selectedVerticals);
@@ -302,6 +404,21 @@ function ManagerHome() {
     })
     .slice(0, 6);
 
+  const statusAgingCases = openCases
+    .map(buildStatusAgingCase)
+    .filter((caseItem): caseItem is StatusAgingCase => Boolean(caseItem));
+  const statusAgingBucketCounts = STATUS_AGING_BUCKETS.reduce<Record<StatusAgingBucketId, number>>((acc, bucket) => {
+    acc[bucket.id] = statusAgingCases.filter((caseItem) => caseItem.agingBucket === bucket.id).length;
+    return acc;
+  }, { "3m": 0, "6m": 0, "9m": 0, "12m": 0 });
+  const visibleStatusAgingCases = statusAgingCases
+    .filter((caseItem) => statusAgingBucketFilter === "all" || caseItem.agingBucket === statusAgingBucketFilter)
+    .sort((left, right) =>
+      statusAgingSort === "oldest"
+        ? right.statusAgeDays - left.statusAgeDays
+        : left.statusAgeDays - right.statusAgeDays
+    );
+
   const managerStats = [
     {
       label: "Open Pipeline",
@@ -403,6 +520,102 @@ function ManagerHome() {
             </div>
           </button>
         ))}
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-gray-200 p-5 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Status Aging</h2>
+            <p className="mt-1 text-sm text-gray-500">Acknowledged and escalated cases whose current status has not changed for 3+ months.</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              value={statusAgingBucketFilter}
+              onChange={(event) => setStatusAgingBucketFilter(event.target.value as StatusAgingBucketId | "all")}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+            >
+              <option value="all">All aging buckets</option>
+              {STATUS_AGING_BUCKETS.map((bucket) => (
+                <option key={bucket.id} value={bucket.id}>
+                  {bucket.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusAgingSort}
+              onChange={(event) => setStatusAgingSort(event.target.value as StatusAgingSort)}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+            >
+              <option value="oldest">Oldest status first</option>
+              <option value="newest">Newest status first</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 border-b border-gray-200 p-5 lg:grid-cols-4">
+          {STATUS_AGING_BUCKETS.map((bucket) => {
+            const isActive = statusAgingBucketFilter === bucket.id;
+            return (
+              <button
+                key={bucket.id}
+                type="button"
+                onClick={() => setStatusAgingBucketFilter(isActive ? "all" : bucket.id)}
+                className={`rounded-lg border p-4 text-left transition-colors ${
+                  isActive
+                    ? "border-[#E31937] bg-red-50"
+                    : "border-gray-200 bg-gray-50 hover:bg-gray-100"
+                }`}
+              >
+                <p className="text-xs font-medium uppercase text-gray-500">{bucket.label}</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900">{statusAgingBucketCounts[bucket.id]}</p>
+                <p className="mt-1 text-xs text-gray-500">{bucket.detail}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Case</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Status</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Unchanged For</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Since</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-600">Owner</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {visibleStatusAgingCases.map((caseItem) => (
+                <tr
+                  key={caseItem.recordId}
+                  className="cursor-pointer hover:bg-gray-50"
+                  onClick={() => navigate(createDetailPath("case", caseItem.recordId), { state: { openDetail: { entityType: "case", recordId: caseItem.recordId } } })}
+                >
+                  <td className="max-w-md px-5 py-4">
+                    <p className="line-clamp-1 text-sm font-medium text-gray-900">{caseItem.description}</p>
+                    <p className="mt-1 text-xs text-gray-500">{caseItem.recordId} | {caseItem.priority || "No priority"}</p>
+                  </td>
+                  <td className="px-5 py-4">
+                    <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${caseStatusColors[caseItem.status ?? ""] ?? "bg-gray-100 text-gray-700"}`}>
+                      {caseItem.status}
+                    </span>
+                  </td>
+                  <td className="px-5 py-4 text-sm font-medium text-gray-900">{formatStatusAge(caseItem.statusAgeDays)}</td>
+                  <td className="px-5 py-4 text-sm text-gray-700">{caseItem.statusSinceLabel}</td>
+                  <td className="px-5 py-4 text-sm text-gray-700">{caseItem.seOwner || caseItem.assignedTo || "Unassigned"}</td>
+                </tr>
+              ))}
+              {visibleStatusAgingCases.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-5 py-10 text-center text-sm text-gray-500">
+                    No acknowledged or escalated cases have been unchanged in this aging range.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">

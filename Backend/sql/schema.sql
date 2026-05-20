@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS products (
   updatedBy VARCHAR(120) DEFAULT 'System',
   productFamily VARCHAR(120),
   productName VARCHAR(255) NOT NULL,
+  productVersion VARCHAR(120),
   productUrl VARCHAR(255),
   description TEXT,
   history JSON

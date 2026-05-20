@@ -923,7 +923,7 @@ export function Cases() {
                           options={products.map((item) => ({
                             value: item.recordId,
                             label: item.productName,
-                            description: item.productFamily,
+                            description: [item.productFamily, item.productVersion ? `Version ${item.productVersion}` : null].filter(Boolean).join(" | "),
                           }))}
                           emptyLabel="No linked products"
                           searchPlaceholder="Search products"
@@ -1201,7 +1201,7 @@ export function Cases() {
                         options={availableProductsForLink.map((item) => ({
                           value: item.recordId,
                           label: item.productName,
-                          description: item.productFamily,
+                          description: [item.productFamily, item.productVersion ? `Version ${item.productVersion}` : null].filter(Boolean).join(" | "),
                         }))}
                         emptyLabel="Select product"
                         searchPlaceholder="Search products"
@@ -1233,6 +1233,7 @@ export function Cases() {
                     fields={[
                       { label: "Name", key: "productName" },
                       { label: "Family", key: "productFamily" },
+                      { label: "Version", key: "productVersion" },
                     ]}
                     onEntityClick={(recordId) => navigateToLinkedEntity("product", recordId)}
                     onRemoveEntity={(recordId) => void handleUnlinkEntity("product", recordId)}

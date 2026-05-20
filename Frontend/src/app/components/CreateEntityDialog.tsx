@@ -87,6 +87,7 @@ type FormData = {
   product: {
     productName: string;
     productFamily: string;
+    productVersion: string;
     productUrl: string;
     description: string;
     linkedCase: string;
@@ -189,6 +190,7 @@ function createInitialFormData(userName?: string | null): FormData {
     product: {
       productName: "",
       productFamily: "",
+      productVersion: "",
       productUrl: "",
       description: "",
       linkedCase: "",
@@ -649,7 +651,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     () => products.map((product) => ({
       value: product.recordId,
       label: product.productName,
-      description: joinDescriptionParts([product.productFamily, product.description]),
+      description: joinDescriptionParts([product.productFamily, product.productVersion ? `Version ${product.productVersion}` : null, product.description]),
     })),
     [products],
   );
@@ -977,6 +979,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       const created = await createProduct({
         productName,
         productFamily: nullableString(quickProductDraft.productFamily),
+        productVersion: nullableString(quickProductDraft.productVersion),
         productUrl: nullableString(quickProductDraft.productUrl),
         description: nullableString(quickProductDraft.description),
       });
@@ -1225,6 +1228,16 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               value={quickProductDraft.productFamily}
               onChange={(event) => setQuickProductDraft({ ...quickProductDraft, productFamily: event.target.value })}
               className={inputClassName}
+            />
+          </div>
+          <div>
+            <label className={labelClassName}>Version</label>
+            <input
+              type="text"
+              value={quickProductDraft.productVersion}
+              onChange={(event) => setQuickProductDraft({ ...quickProductDraft, productVersion: event.target.value })}
+              className={inputClassName}
+              placeholder="7.6, 2026.1, GA"
             />
           </div>
           <div>
@@ -1493,6 +1506,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         const created = await createProduct({
           productName: formData.product.productName.trim(),
           productFamily: nullableString(formData.product.productFamily),
+          productVersion: nullableString(formData.product.productVersion),
           productUrl: nullableString(formData.product.productUrl),
           description: nullableString(formData.product.description),
         });
@@ -2019,6 +2033,16 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           value={formData.product.productFamily}
           onChange={(event) => setFormData({ ...formData, product: { ...formData.product, productFamily: event.target.value } })}
           className={inputClassName}
+        />
+      </div>
+      <div>
+        <label className={labelClassName}>Version</label>
+        <input
+          type="text"
+          value={formData.product.productVersion}
+          onChange={(event) => setFormData({ ...formData, product: { ...formData.product, productVersion: event.target.value } })}
+          className={inputClassName}
+          placeholder="7.6, 2026.1, GA"
         />
       </div>
       <div>

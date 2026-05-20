@@ -1,6 +1,6 @@
 import { type MouseEvent, useEffect, useState } from "react";
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
-import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, Home, Info, LogOut, Package, Search, User, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, History, Home, Info, LogOut, Package, Search, User, X } from "lucide-react";
 import fortinetIconUrl from "../../../FortinetIcon.png";
 import { useSearch } from "../context/SearchContext";
 import { useAuth } from "../context/AuthContext";
@@ -17,6 +17,7 @@ import { createDetailPath, createOpenDetailState, type DetailEntityType } from "
 const navItems = [
   { path: "/", label: "Home", icon: Home, exact: true },
   { path: "/bookmarked", label: "Bookmarks", icon: Bookmark },
+  { path: "/backlog", label: "Backlog", icon: History },
   { path: "/reports", label: "Reports", icon: BarChart3 },
   { path: "/cases", label: "Cases", icon: Briefcase },
   { path: "/accounts", label: "Accounts", icon: Building2 },
@@ -118,6 +119,7 @@ export function MainLayout() {
       { path: "/mantis", patterns: [/^mantis-/, /^mant-/, /mantis/, /feature request/] },
       { path: "/knock", patterns: [/^knock-/, /^knk-/, /knock/, /request/, /integration/] },
       { path: "/product", patterns: [/^prd-/, /product/, /catalog/, /url/, /family/] },
+      { path: "/backlog", patterns: [/backlog/, /my actions/, /past actions/, /new updates/] },
       { path: "/reports", patterns: [/report/, /dashboard/, /metric/, /trend/, /activity/] },
     ];
 

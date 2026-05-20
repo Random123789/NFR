@@ -45,6 +45,7 @@ class ProductRecord(BaseRecord):
     """Product entity."""
     productFamily: Optional[str] = None
     productName: str
+    productVersion: Optional[str] = None
     productUrl: Optional[str] = None
     description: Optional[str] = None
 
@@ -225,6 +226,7 @@ class AccountCreate(BaseModel):
 class ProductCreate(BaseModel):
     productFamily: Optional[str] = None
     productName: str
+    productVersion: Optional[str] = None
     productUrl: Optional[str] = None
     description: Optional[str] = None
     metaData: Optional[str] = None

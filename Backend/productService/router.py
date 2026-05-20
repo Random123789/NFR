@@ -25,16 +25,17 @@ PRODUCT_CONFIG = EntityCrudConfig(
     record_prefix="PRD",
     module_id="MOD-PRODUCT",
     entity_label="Product",
-    data_fields=("productFamily", "productName", "productUrl", "description"),
+    data_fields=("productFamily", "productName", "productVersion", "productUrl", "description"),
     field_labels={
         "productFamily": "Product Family",
         "productName": "Product Name",
+        "productVersion": "Version",
         "productUrl": "Product URL",
         "description": "Description",
         "metaData": "Metadata",
     },
-    search_fields=("recordId", "productName", "productFamily", "description", "ownedBy"),
-    nullable_fields=("productFamily", "productUrl", "description", "metaData"),
+    search_fields=("recordId", "productName", "productFamily", "productVersion", "description", "ownedBy"),
+    nullable_fields=("productFamily", "productVersion", "productUrl", "description", "metaData"),
 )
 
 
@@ -77,6 +78,9 @@ async def ensure_product_schema() -> None:
 
     if not await _column_exists("products", "description"):
         await execute_mutation("ALTER TABLE products ADD COLUMN description TEXT NULL AFTER productUrl")
+
+    if not await _column_exists("products", "productVersion"):
+        await execute_mutation("ALTER TABLE products ADD COLUMN productVersion VARCHAR(120) NULL AFTER productName")
 
 
 @router.get("", response_model=List[ProductRecord])
