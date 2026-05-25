@@ -139,7 +139,7 @@ const SALES_ENGINEER_REPORT_TEMPLATES = [
   },
   {
     id: "nfr-targets" as const,
-    title: "NFR Target Dates",
+    title: "Mantis Target Dates",
     detail: "Mantis asks grouped by target date.",
     icon: Table2,
   },
@@ -410,7 +410,7 @@ function createSalesEngineerReportDraft(templateId: SalesEngineerReportTemplateI
   if (templateId === "nfr-targets") {
     return {
       ...createDefaultDraft(),
-      title: "Mantis NFR Target Dates",
+      title: "Mantis Target Dates",
       chartType: "bar",
       layoutSpan: 2,
       querySpec: {

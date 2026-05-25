@@ -46,8 +46,8 @@ const MANTIS_TABLE_COLUMNS: MantisTableColumn[] = [
   { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
   { key: "category", label: "Category", sortKey: "category", searchKey: "category" },
   { key: "mantisStatus", label: "Status", sortKey: "mantisStatus" },
-  { key: "mantisRequestDate", label: "NFR Request Date", sortKey: "mantisRequestDate" },
-  { key: "mantisTargetDate", label: "NFR Target Date", sortKey: "mantisTargetDate" },
+  { key: "mantisRequestDate", label: "Request Date", sortKey: "mantisRequestDate" },
+  { key: "mantisTargetDate", label: "Target Date", sortKey: "mantisTargetDate" },
 ];
 
 const DEFAULT_MANTIS_COLUMN_KEYS = MANTIS_TABLE_COLUMNS.map((column) => column.key);
@@ -528,7 +528,7 @@ export function Mantis() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">NFR Request Date</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Request Date</label>
                   {isEditing && editedMantis ? (
                     <input
                       type="date"
@@ -541,7 +541,7 @@ export function Mantis() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">NFR Target Date</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">Target Date</label>
                   {isEditing && editedMantis ? (
                     <input
                       type="date"

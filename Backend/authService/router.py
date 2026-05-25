@@ -74,6 +74,13 @@ class UpdateUserRoleRequest(BaseModel):
     vertical: Optional[AccountVertical] = None
 
 
+class UpdateManagedUserRequest(BaseModel):
+    displayName: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    vertical: Optional[AccountVertical] = None
+
+
 class UpdateUserPasswordRequest(BaseModel):
     password: str
 
@@ -94,6 +101,10 @@ class CreateUserResponse(BaseModel):
 
 
 class UpdateUserRoleResponse(BaseModel):
+    user: ManagedUser
+
+
+class UpdateManagedUserResponse(BaseModel):
     user: ManagedUser
 
 
@@ -340,17 +351,20 @@ async def require_admin_user(request: Request) -> dict:
 async def login(data: LoginRequest) -> LoginResponse:
     await ensure_default_user()
     identifier = data.email.strip().lower()
-    use_username = 0 if "@" in identifier else 1
     matching_users = await execute_query(
         """
         SELECT id, email, displayName, role, vertical, passwordHash, isActive
         FROM users
         WHERE LOWER(email) = %s
-           OR (%s = 1 AND LOWER(SUBSTRING_INDEX(email, '@', 1)) = %s)
-        ORDER BY CASE WHEN LOWER(email) = %s THEN 0 ELSE 1 END, id ASC
+           OR LOWER(TRIM(displayName)) = %s
+        ORDER BY CASE
+          WHEN LOWER(email) = %s THEN 0
+          WHEN LOWER(TRIM(displayName)) = %s THEN 1
+          ELSE 2
+        END, id ASC
         LIMIT 2
         """,
-        [identifier, use_username, identifier, identifier],
+        [identifier, identifier, identifier, identifier],
     )
 
     if len(matching_users) != 1:
@@ -402,11 +416,11 @@ async def list_assignable_users(request: Request) -> list[AssignableUser]:
         SELECT id, email, displayName, role, vertical, isActive
         FROM users
         WHERE isActive = 1
-          AND LOWER(TRIM(role)) IN ('user', 'se user', 'se_user')
+          AND LOWER(TRIM(role)) IN ('user', 'se user', 'se_user', 'manager', 'sales manager', 'se manager')
         ORDER BY displayName ASC, email ASC
         """,
     )
-    return [AssignableUser(**row) for row in rows]
+    return [AssignableUser(**{**row, "role": _normalize_role(row.get("role") or "user")}) for row in rows]
 
 
 @router.put("/me", response_model=MeResponse)
@@ -576,6 +590,118 @@ async def create_user(request: Request, data: CreateUserRequest) -> CreateUserRe
     )
 
     return CreateUserResponse(user=ManagedUser(**created))
+
+
+@router.put("/users/{user_id}", response_model=UpdateManagedUserResponse)
+async def update_managed_user(request: Request, user_id: int, data: UpdateManagedUserRequest) -> UpdateManagedUserResponse:
+    admin = await require_admin_user(request)
+
+    existing = await execute_query(
+        """
+        SELECT id, email, displayName, role, vertical, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i') AS lastLoginAt
+        FROM users
+        WHERE id = %s
+        LIMIT 1
+        """,
+        [user_id],
+        fetch_one=True,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    updates = []
+    params = []
+    audit_details = {}
+
+    if data.displayName is not None:
+        display_name = data.displayName.strip()
+        if not display_name:
+            raise HTTPException(status_code=400, detail="Display name is required")
+        if display_name != existing["displayName"]:
+            updates.append("displayName = %s")
+            params.append(display_name)
+            audit_details["displayName"] = display_name
+
+    if data.email is not None:
+        email = data.email.strip().lower()
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+        if email != existing["email"]:
+            duplicate = await execute_query(
+                "SELECT id FROM users WHERE email = %s AND id <> %s LIMIT 1",
+                [email, user_id],
+                fetch_one=True,
+            )
+            if duplicate:
+                raise HTTPException(status_code=409, detail="Email already in use")
+            updates.append("email = %s")
+            params.append(email)
+            audit_details["email"] = email
+
+    role = _normalize_role(data.role) if data.role is not None else _normalize_role(existing.get("role") or "user")
+    if role not in {"admin", "manager", "user"}:
+        raise HTTPException(status_code=400, detail="Role must be SE user, Manager, or Administrator")
+
+    requested_vertical = _normalize_vertical(data.vertical)
+    current_vertical = existing.get("vertical") if role == "user" else None
+    next_vertical = None if role in {"admin", "manager"} else requested_vertical or current_vertical
+    if role == "user" and not next_vertical:
+        raise HTTPException(status_code=400, detail="Vertical is required for SE users")
+
+    current_role = _normalize_role(existing.get("role") or "user")
+    if role != current_role:
+        updates.append("role = %s")
+        params.append(role)
+        audit_details["role"] = role
+    if next_vertical != existing.get("vertical"):
+        updates.append("vertical = %s")
+        params.append(next_vertical)
+        audit_details["vertical"] = next_vertical
+
+    if not updates:
+        return UpdateManagedUserResponse(user=ManagedUser(**{**existing, "role": current_role}))
+
+    now = _now()
+    updates.append("updatedAt = %s")
+    params.append(now)
+
+    await execute_mutation(
+        f"UPDATE users SET {', '.join(updates)} WHERE id = %s",
+        [*params, user_id],
+    )
+
+    refreshed = await execute_query(
+        """
+        SELECT id, email, displayName, role, vertical, isActive,
+               DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i') AS createdAt,
+               DATE_FORMAT(lastLoginAt, '%Y-%m-%d %H:%i') AS lastLoginAt
+        FROM users
+        WHERE id = %s
+        LIMIT 1
+        """,
+        [user_id],
+        fetch_one=True,
+    )
+
+    await execute_mutation(
+        """
+        INSERT INTO audit_logs (userId, userEmail, action, entityType, entityId, details, createdAt)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        [
+            admin["id"],
+            admin["email"],
+            "UPDATE_USER",
+            "users",
+            str(user_id),
+            json.dumps(audit_details),
+            now,
+        ],
+    )
+
+    return UpdateManagedUserResponse(user=ManagedUser(**{**refreshed, "role": _normalize_role(refreshed.get("role") or "user")}))
 
 
 @router.put("/users/{user_id}/role", response_model=UpdateUserRoleResponse)

@@ -13,6 +13,7 @@ import { useBookmarks } from "../context/BookmarksContext";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
 import { useToast } from "../context/ToastContext";
+import { buildKnockUrl } from "../data/knockOptions";
 import { knockStatusColors } from "../data/recordStyles";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
 import { useLinkedCases } from "../hooks/useLinkedCases";
@@ -138,7 +139,7 @@ export function Knock() {
       const saved = await updateKnock(editedKnock.recordId, {
         description: editedKnock.description,
         knockId: editedKnock.knockId,
-        knockUrl: editedKnock.knockUrl,
+        knockUrl: buildKnockUrl(editedKnock.knockId),
         status: editedKnock.status,
         requestDate: editedKnock.requestDate,
         targetDate: editedKnock.targetDate,
@@ -444,7 +445,7 @@ export function Knock() {
                     <input
                       type="text"
                       value={editedKnock.knockId ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, knockId: e.target.value })}
+                      onChange={(e) => setEditedKnock({ ...editedKnock, knockId: e.target.value, knockUrl: buildKnockUrl(e.target.value) })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -472,13 +473,13 @@ export function Knock() {
                     <input
                       type="url"
                       value={editedKnock.knockUrl ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, knockUrl: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
-                    selectedKnock.knockUrl ? (
-                      <a href={selectedKnock.knockUrl} target="_blank" rel="noopener noreferrer" className="break-all text-[#E31937] hover:underline inline-flex items-center gap-1">
-                        {selectedKnock.knockUrl}
+                    selectedKnock.knockUrl || buildKnockUrl(selectedKnock.knockId) ? (
+                      <a href={selectedKnock.knockUrl || buildKnockUrl(selectedKnock.knockId)} target="_blank" rel="noopener noreferrer" className="break-all text-[#E31937] hover:underline inline-flex items-center gap-1">
+                        {selectedKnock.knockUrl || buildKnockUrl(selectedKnock.knockId)}
                         <ExternalLink className="w-3 h-3 shrink-0" />
                       </a>
                     ) : (

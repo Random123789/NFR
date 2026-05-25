@@ -32,9 +32,17 @@ import { useRecords } from "../context/RecordsContext";
 import { useToast } from "../context/ToastContext";
 import { accountTypes, accountVerticals, type AccountType, type AccountVertical } from "../data/accountOptions";
 import { caseCategories, caseEscalationTypes, casePriorities, caseStatuses } from "../data/caseOptions";
+import { buildKnockUrl } from "../data/knockOptions";
 import { buildMantisUrl, mantisCategories, mantisStatuses } from "../data/mantisOptions";
 import { projectStages } from "../data/projectOptions";
 import { formatRelatedCaseOption, getRelatedCaseLabelParts } from "../utils/caseLabels";
+import {
+  isActiveAssignableUser,
+  isSeUserRole,
+  isSeOwnerRole,
+  isManagerRole,
+  toAssignableUserOption,
+} from "../utils/assignableUsers";
 import { normalizeUsdIntegerInput, parseUsdIntegerInput } from "../utils/currency";
 
 export type CreateEntityType = "case" | "account" | "project" | "mantis" | "knock" | "product";
@@ -141,6 +149,18 @@ type SelectOption = {
   description?: string | null;
 };
 
+function compareText(left: string, right: string) {
+  return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true });
+}
+
+function sortStrings<T extends string>(values: readonly T[]) {
+  return [...values].sort(compareText);
+}
+
+function sortSelectOptions(options: SelectOption[]) {
+  return [...options].sort((left, right) => compareText(left.label, right.label));
+}
+
 function createEmptyQuickAccountDraft() {
   return {
     accountName: "",
@@ -242,15 +262,6 @@ function nullableString(value: string | null | undefined) {
   return cleanString(value) ?? null;
 }
 
-function isActiveUser(user: AssignableUser) {
-  return Boolean(user.isActive);
-}
-
-function isSeUserRole(role: string | null | undefined) {
-  const normalized = role?.trim().toLowerCase();
-  return normalized === "user" || normalized === "se user" || normalized === "se_user";
-}
-
 function joinDescriptionParts(parts: Array<string | null | undefined>) {
   return parts.map((part) => part?.trim()).filter(Boolean).join(" | ");
 }
@@ -283,6 +294,7 @@ function SearchableSelect({
           .includes(normalizedSearch),
       )
     : options;
+  const sortedFilteredOptions = sortSelectOptions(filteredOptions);
 
   const handleChange = (nextValue: string) => {
     onChange(nextValue);
@@ -333,10 +345,10 @@ function SearchableSelect({
             <span>{emptyLabel}</span>
             {!value ? <Check className="h-4 w-4 shrink-0" /> : null}
           </button>
-          {filteredOptions.length === 0 ? (
+          {sortedFilteredOptions.length === 0 ? (
             <div className="px-2 py-3 text-sm text-gray-500">No matching records</div>
           ) : (
-            filteredOptions.map((option) => {
+            sortedFilteredOptions.map((option) => {
               const isSelected = option.value === value;
               return (
                 <button
@@ -364,7 +376,7 @@ function SearchableSelect({
 
 function MultiRecordDropdown({
   label,
-  values,
+  values = [],
   options,
   emptyLabel,
   searchPlaceholder,
@@ -379,7 +391,7 @@ function MultiRecordDropdown({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
-  const selectedOptions = options.filter((option) => values.includes(option.value));
+  const selectedOptions = sortSelectOptions(options.filter((option) => values.includes(option.value)));
   const normalizedSearch = searchValue.trim().toLowerCase();
   const filteredOptions = normalizedSearch
     ? options.filter((option) =>
@@ -390,6 +402,7 @@ function MultiRecordDropdown({
           .includes(normalizedSearch),
       )
     : options;
+  const sortedFilteredOptions = sortSelectOptions(filteredOptions);
 
   return (
     <Popover
@@ -430,10 +443,10 @@ function MultiRecordDropdown({
         <div className="max-h-72 space-y-1 overflow-auto pr-1">
           {options.length === 0 ? (
             <div className="px-2 py-2 text-sm text-gray-500">No records available</div>
-          ) : filteredOptions.length === 0 ? (
+          ) : sortedFilteredOptions.length === 0 ? (
             <div className="px-2 py-3 text-sm text-gray-500">No matching records</div>
           ) : (
-            filteredOptions.map((option) => {
+            sortedFilteredOptions.map((option) => {
               const checked = values.includes(option.value);
               return (
                 <button
@@ -486,6 +499,9 @@ function RelatedCaseSelect({
   const filteredCases = normalizedSearch
     ? cases.filter((caseItem) => formatRelatedCaseOption(caseItem, accounts, projects).toLowerCase().includes(normalizedSearch))
     : cases;
+  const sortedFilteredCases = [...filteredCases].sort((left, right) =>
+    compareText(formatRelatedCaseOption(left, accounts, projects), formatRelatedCaseOption(right, accounts, projects)),
+  );
 
   const handleSelect = (nextValue: string) => {
     onChange(nextValue);
@@ -538,10 +554,10 @@ function RelatedCaseSelect({
               <span>No linked case</span>
               {!value ? <Check className="h-4 w-4 shrink-0" /> : null}
             </button>
-            {filteredCases.length === 0 ? (
+            {sortedFilteredCases.length === 0 ? (
               <div className="px-2 py-3 text-sm text-gray-500">No matching cases</div>
             ) : (
-              filteredCases.map((caseItem) => {
+              sortedFilteredCases.map((caseItem) => {
                 const parts = getRelatedCaseLabelParts(caseItem, accounts, projects);
                 const isSelected = value === caseItem.recordId;
                 return (
@@ -623,7 +639,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
   const [quickKnockDraft, setQuickKnockDraft] = useState(createEmptyQuickKnockDraft);
   const [isCreatingQuickKnock, setIsCreatingQuickKnock] = useState(false);
   const [quickKnockError, setQuickKnockError] = useState("");
-  const activeAssignableUsers = useMemo(() => assignableUsers.filter(isActiveUser), [assignableUsers]);
+  const activeAssignableUsers = useMemo(() => assignableUsers.filter(isActiveAssignableUser), [assignableUsers]);
   const entityLabel = entityLabels[entityType];
   const defaultTriggerClassName = "inline-flex items-center justify-center gap-2 rounded-lg bg-[#E31937] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#c41230]";
   const triggerClassName = className ?? defaultTriggerClassName;
@@ -632,51 +648,51 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     [accounts],
   );
   const accountSelectOptions = useMemo<SelectOption[]>(
-    () => accounts.map((account) => ({
+    () => sortSelectOptions(accounts.map((account) => ({
       value: account.recordId,
       label: account.accountName,
       description: joinDescriptionParts([account.type, account.vertical]),
-    })),
+    }))),
     [accounts],
   );
   const projectSelectOptions = useMemo<SelectOption[]>(
-    () => projects.map((project) => ({
+    () => sortSelectOptions(projects.map((project) => ({
       value: project.recordId,
       label: project.projectName,
       description: joinDescriptionParts([accountNameById.get(project.accountId ?? ""), project.stage]),
-    })),
+    }))),
     [accountNameById, projects],
   );
   const productSelectOptions = useMemo<SelectOption[]>(
-    () => products.map((product) => ({
+    () => sortSelectOptions(products.map((product) => ({
       value: product.recordId,
       label: product.productName,
       description: joinDescriptionParts([product.productFamily, product.productVersion ? `Version ${product.productVersion}` : null, product.description]),
-    })),
+    }))),
     [products],
   );
-  const assignableUserSelectOptions = useMemo<SelectOption[]>(
-    () => activeAssignableUsers.map((assignableUser) => ({
-      value: assignableUser.displayName,
-      label: assignableUser.displayName,
-      description: joinDescriptionParts([assignableUser.email, assignableUser.vertical]),
-    })),
+  const seOwnerSelectOptions = useMemo<SelectOption[]>(
+    () => sortSelectOptions(activeAssignableUsers.filter((assignableUser) => isSeOwnerRole(assignableUser.role)).map(toAssignableUserOption)),
+    [activeAssignableUsers],
+  );
+  const managerSelectOptions = useMemo<SelectOption[]>(
+    () => sortSelectOptions(activeAssignableUsers.filter((assignableUser) => isManagerRole(assignableUser.role)).map(toAssignableUserOption)),
     [activeAssignableUsers],
   );
   const mantisSelectOptions = useMemo<SelectOption[]>(
-    () => mantisRecords.map((mantis) => ({
+    () => sortSelectOptions(mantisRecords.map((mantis) => ({
       value: mantis.recordId,
       label: mantis.mantisId || "No Mantis ID",
       description: joinDescriptionParts([mantis.mantisStatus, mantis.description]),
-    })),
+    }))),
     [mantisRecords],
   );
   const knockSelectOptions = useMemo<SelectOption[]>(
-    () => knocks.map((knock) => ({
+    () => sortSelectOptions(knocks.map((knock) => ({
       value: knock.recordId,
       label: knock.knockId || "No Knock ID",
       description: joinDescriptionParts([knock.status, knock.description]),
-    })),
+    }))),
     [knocks],
   );
 
@@ -686,13 +702,22 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       return nextFormData;
     }
 
-    return {
+    const mergedFormData = {
       ...nextFormData,
       [entityType]: {
         ...nextFormData[entityType],
         ...initialValues,
       },
     } as FormData;
+
+    if (entityType === "case") {
+      mergedFormData.case.accountIds = mergedFormData.case.accountIds ?? [];
+      mergedFormData.case.productIds = mergedFormData.case.productIds ?? [];
+      mergedFormData.case.knockIds = mergedFormData.case.knockIds ?? [];
+      mergedFormData.case.mantisIds = mergedFormData.case.mantisIds ?? [];
+    }
+
+    return mergedFormData;
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -826,7 +851,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               onChange={(event) => setQuickAccountDraft({ ...quickAccountDraft, type: event.target.value })}
               className={inputClassName}
             >
-              {accountTypes.map((type) => (
+              {sortStrings(accountTypes).map((type) => (
                 <option key={type} value={type}>
                   {type}
                 </option>
@@ -840,7 +865,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               onChange={(event) => setQuickAccountDraft({ ...quickAccountDraft, vertical: event.target.value })}
               className={inputClassName}
             >
-              {accountVerticals.map((vertical) => (
+              {sortStrings(accountVerticals).map((vertical) => (
                 <option key={vertical} value={vertical}>
                   {vertical}
                 </option>
@@ -1049,7 +1074,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       const created = await createKnock({
         description,
         knockId: nullableString(quickKnockDraft.knockId),
-        knockUrl: nullableString(quickKnockDraft.knockUrl),
+        knockUrl: nullableString(buildKnockUrl(quickKnockDraft.knockId)),
         status: nullableString(quickKnockDraft.status),
         requestDate: nullableString(quickKnockDraft.requestDate),
         targetDate: nullableString(quickKnockDraft.targetDate),
@@ -1142,7 +1167,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               onChange={(event) => setQuickProjectDraft({ ...quickProjectDraft, stage: event.target.value })}
               className={inputClassName}
             >
-              {projectStages.map((stage) => (
+              {sortStrings(projectStages).map((stage) => (
                 <option key={stage} value={stage}>
                   {stage}
                 </option>
@@ -1172,10 +1197,20 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             <SearchableSelect
               label="SE owner"
               value={quickProjectDraft.seOwner}
-              options={assignableUserSelectOptions}
+              options={seOwnerSelectOptions}
               emptyLabel="No SE owner"
               searchPlaceholder="Search users"
               onChange={(seOwner) => setQuickProjectDraft({ ...quickProjectDraft, seOwner })}
+            />
+          </div>
+          <div>
+            <label className={labelClassName}>SFDC</label>
+            <input
+              type="text"
+              value={quickProjectDraft.sfdc}
+              onChange={(event) => setQuickProjectDraft({ ...quickProjectDraft, sfdc: event.target.value })}
+              className={inputClassName}
+              placeholder="Opportunity ID or Salesforce URL"
             />
           </div>
           <div>
@@ -1312,7 +1347,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               onChange={(event) => setQuickMantisDraft({ ...quickMantisDraft, mantisStatus: event.target.value })}
               className={inputClassName}
             >
-              {mantisStatuses.map((status) => (
+              {sortStrings(mantisStatuses).map((status) => (
                 <option key={status} value={status}>
                   {status}
                 </option>
@@ -1326,7 +1361,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               onChange={(event) => setQuickMantisDraft({ ...quickMantisDraft, category: event.target.value })}
               className={inputClassName}
             >
-              {mantisCategories.map((category) => (
+              {sortStrings(mantisCategories).map((category) => (
                 <option key={category} value={category}>
                   {category}
                 </option>
@@ -1344,7 +1379,16 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             />
           </div>
           <div>
-            <label className={labelClassName}>NFR Target Date</label>
+            <label className={labelClassName}>Request Date</label>
+            <input
+              type="date"
+              value={quickMantisDraft.mantisRequestDate}
+              onChange={(event) => setQuickMantisDraft({ ...quickMantisDraft, mantisRequestDate: event.target.value })}
+              className={inputClassName}
+            />
+          </div>
+          <div>
+            <label className={labelClassName}>Target Date</label>
             <input
               type="date"
               value={quickMantisDraft.mantisTargetDate}
@@ -1388,7 +1432,13 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             <input
               type="text"
               value={quickKnockDraft.knockId}
-              onChange={(event) => setQuickKnockDraft({ ...quickKnockDraft, knockId: event.target.value })}
+              onChange={(event) =>
+                setQuickKnockDraft({
+                  ...quickKnockDraft,
+                  knockId: event.target.value,
+                  knockUrl: buildKnockUrl(event.target.value),
+                })
+              }
               className={inputClassName}
             />
           </div>
@@ -1406,7 +1456,17 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             <input
               type="url"
               value={quickKnockDraft.knockUrl}
-              onChange={(event) => setQuickKnockDraft({ ...quickKnockDraft, knockUrl: event.target.value })}
+              readOnly
+              className={`${inputClassName} bg-gray-50 text-gray-700`}
+              placeholder="Generated from Knock ID"
+            />
+          </div>
+          <div>
+            <label className={labelClassName}>Request Date</label>
+            <input
+              type="date"
+              value={quickKnockDraft.requestDate}
+              onChange={(event) => setQuickKnockDraft({ ...quickKnockDraft, requestDate: event.target.value })}
               className={inputClassName}
             />
           </div>
@@ -1530,7 +1590,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         const created = await createKnock({
           description: formData.knock.description.trim(),
           knockId: nullableString(formData.knock.knockId),
-          knockUrl: nullableString(formData.knock.knockUrl),
+          knockUrl: nullableString(buildKnockUrl(formData.knock.knockId)),
           status: nullableString(formData.knock.status),
           requestDate: nullableString(formData.knock.requestDate),
           targetDate: nullableString(formData.knock.targetDate),
@@ -1598,7 +1658,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             className={inputClassName}
           >
             <option value="">Select priority</option>
-            {casePriorities.map((priority) => (
+            {sortStrings(casePriorities).map((priority) => (
               <option key={priority} value={priority}>
                 {priority}
               </option>
@@ -1613,7 +1673,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             className={inputClassName}
           >
             <option value="">Select status</option>
-            {caseStatuses.map((status) => (
+            {sortStrings(caseStatuses).map((status) => (
               <option key={status} value={status}>
                 {status}
               </option>
@@ -1628,7 +1688,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             className={inputClassName}
           >
             <option value="">Select category</option>
-            {caseCategories.map((category) => (
+            {sortStrings(caseCategories).map((category) => (
               <option key={category} value={category}>
                 {category}
               </option>
@@ -1643,9 +1703,9 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           <SearchableSelect
             label="assignee"
             value={formData.case.assignedTo}
-            options={assignableUserSelectOptions}
+            options={managerSelectOptions}
             emptyLabel="Unassigned"
-            searchPlaceholder="Search users"
+            searchPlaceholder="Search managers"
             onChange={(assignedTo) => setFormData({ ...formData, case: { ...formData.case, assignedTo } })}
           />
         </div>
@@ -1654,7 +1714,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           <SearchableSelect
             label="SE owner"
             value={formData.case.seOwner}
-            options={assignableUserSelectOptions}
+            options={seOwnerSelectOptions}
             emptyLabel="No SE owner"
             searchPlaceholder="Search users"
             onChange={(seOwner) => setFormData({ ...formData, case: { ...formData.case, seOwner } })}
@@ -1671,7 +1731,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             className={inputClassName}
           >
             <option value="">Select escalation type</option>
-            {caseEscalationTypes.map((escalationType) => (
+            {sortStrings(caseEscalationTypes).map((escalationType) => (
               <option key={escalationType} value={escalationType}>
                 {escalationType}
               </option>
@@ -1862,7 +1922,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           onChange={(event) => setFormData({ ...formData, account: { ...formData.account, type: event.target.value } })}
           className={inputClassName}
         >
-          {accountTypes.map((type) => (
+          {sortStrings(accountTypes).map((type) => (
             <option key={type} value={type}>
               {type}
             </option>
@@ -1876,7 +1936,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           onChange={(event) => setFormData({ ...formData, account: { ...formData.account, vertical: event.target.value } })}
           className={inputClassName}
         >
-          {accountVerticals.map((vertical) => (
+          {sortStrings(accountVerticals).map((vertical) => (
             <option key={vertical} value={vertical}>
               {vertical}
             </option>
@@ -1926,7 +1986,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           onChange={(event) => setFormData({ ...formData, project: { ...formData.project, stage: event.target.value } })}
           className={inputClassName}
         >
-          {projectStages.map((stage) => (
+          {sortStrings(projectStages).map((stage) => (
             <option key={stage} value={stage}>
               {stage}
             </option>
@@ -1956,7 +2016,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <SearchableSelect
           label="SE owner"
           value={formData.project.seOwner}
-          options={assignableUserSelectOptions}
+          options={seOwnerSelectOptions}
           emptyLabel="No SE owner"
           searchPlaceholder="Search users"
           onChange={(seOwner) => setFormData({ ...formData, project: { ...formData.project, seOwner } })}
@@ -2110,7 +2170,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           onChange={(event) => setFormData({ ...formData, mantis: { ...formData.mantis, mantisStatus: event.target.value } })}
           className={inputClassName}
         >
-          {mantisStatuses.map((status) => (
+          {sortStrings(mantisStatuses).map((status) => (
             <option key={status} value={status}>
               {status}
             </option>
@@ -2124,7 +2184,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           onChange={(event) => setFormData({ ...formData, mantis: { ...formData.mantis, category: event.target.value } })}
           className={inputClassName}
         >
-          {mantisCategories.map((category) => (
+          {sortStrings(mantisCategories).map((category) => (
             <option key={category} value={category}>
               {category}
             </option>
@@ -2142,7 +2202,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         />
       </div>
       <div>
-        <label className={labelClassName}>NFR Request Date</label>
+        <label className={labelClassName}>Request Date</label>
         <input
           type="date"
           value={formData.mantis.mantisRequestDate}
@@ -2151,7 +2211,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         />
       </div>
       <div>
-        <label className={labelClassName}>NFR Target Date</label>
+        <label className={labelClassName}>Target Date</label>
         <input
           type="date"
           value={formData.mantis.mantisTargetDate}
@@ -2185,7 +2245,16 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <input
           type="text"
           value={formData.knock.knockId}
-          onChange={(event) => setFormData({ ...formData, knock: { ...formData.knock, knockId: event.target.value } })}
+          onChange={(event) =>
+            setFormData({
+              ...formData,
+              knock: {
+                ...formData.knock,
+                knockId: event.target.value,
+                knockUrl: buildKnockUrl(event.target.value),
+              },
+            })
+          }
           className={inputClassName}
         />
       </div>
@@ -2203,8 +2272,9 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <input
           type="url"
           value={formData.knock.knockUrl}
-          onChange={(event) => setFormData({ ...formData, knock: { ...formData.knock, knockUrl: event.target.value } })}
-          className={inputClassName}
+          readOnly
+          className={`${inputClassName} bg-gray-50 text-gray-700`}
+          placeholder="Generated from Knock ID"
         />
       </div>
       <div>
@@ -2266,7 +2336,11 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         {triggerLabel ?? `Create ${entityLabel}`}
       </button>
 
-      <DialogContent className={`max-h-[90vh] overflow-y-auto ${entityType === "case" ? "sm:max-w-4xl" : "sm:max-w-2xl"}`}>
+      <DialogContent
+        className={`max-h-[90vh] overflow-y-auto ${entityType === "case" ? "sm:max-w-4xl" : "sm:max-w-2xl"}`}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Create {entityLabel}</DialogTitle>
           <DialogDescription>Add a new {entityLabel.toLowerCase()} record.</DialogDescription>

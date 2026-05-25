@@ -105,6 +105,9 @@ export type CustomWidgetConfig = {
 const CLOSED_CASE_STATUSES = new Set(["Closed-Resolved", "Closed-Dead"]);
 const CLOSED_MANTIS_STATUSES = new Set(["resolved", "completed", "dead", "implemented", "rejected"]);
 const CLOSED_KNOCK_STATUSES = new Set(["completed", "cancelled"]);
+const CRITICAL_CASE_STATUS_FILTERS = ["Escalated"];
+const CRITICAL_CASE_PRIORITY_FILTERS = ["High", "Very High"];
+const OPEN_CASE_STATUS_FILTERS = caseStatuses.filter((status) => !CLOSED_CASE_STATUSES.has(status));
 
 function isOpenCase(caseItem: CaseRecord) {
   return !CLOSED_CASE_STATUSES.has(caseItem.status ?? "");
@@ -294,6 +297,7 @@ function countLinkedCasesForKnock(cases: CaseRecord[], record: KnockRecord) {
 
 function ManagerHome() {
   const { cases, accounts, projects } = useRecords();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [selectedVerticals, setSelectedVerticals] = useState<AccountVertical[]>([]);
   const [statusAgingBucketFilter, setStatusAgingBucketFilter] = useState<StatusAgingBucketId | "all">("all");
@@ -341,6 +345,14 @@ function ManagerHome() {
   const filteredProjects = projects.filter(projectMatchesVerticalFilter);
   const openCases = filteredCases.filter(isOpenCase);
   const openProjects = filteredProjects.filter((project) => !project.isClosed);
+  const managerDisplayName = (user?.displayName ?? "").trim();
+  const managerKey = managerDisplayName.toLowerCase();
+  const managerAssignedCases = managerKey
+    ? openCases.filter((caseItem) => (caseItem.assignedTo ?? "").trim().toLowerCase() === managerKey)
+    : [];
+  const managerOwnedEscalatedCases = managerKey
+    ? openCases.filter((caseItem) => caseItem.status === "Escalated" && isCaseOwnedBy(caseItem, managerDisplayName))
+    : [];
   const totalOpenPipeline = openProjects.reduce((sum, project) => sum + projectValue(project), 0);
   const highRiskCases = openCases.filter((caseItem) =>
     caseItem.status === "Escalated" || caseItem.priority === "High" || caseItem.priority === "Very High"
@@ -434,7 +446,14 @@ function ManagerHome() {
       detail: `${veryHighCases.length} very high priority`,
       icon: AlertCircle,
       color: "bg-[#B5122B]",
-      onClick: () => navigate("/cases", { state: { priorityFilter: "Very High" } }),
+      onClick: () =>
+        navigate("/cases", {
+          state: {
+            statusFilters: CRITICAL_CASE_STATUS_FILTERS,
+            priorityFilters: CRITICAL_CASE_PRIORITY_FILTERS,
+            caseFilterMatchMode: "any",
+          },
+        }),
     },
     {
       label: "Closing Soon",
@@ -443,6 +462,34 @@ function ManagerHome() {
       icon: CalendarClock,
       color: "bg-[#2c3e50]",
       onClick: () => navigate("/projects"),
+    },
+    {
+      label: "Assigned to Me",
+      value: managerAssignedCases.length.toString(),
+      detail: "open cases assigned to you",
+      icon: Briefcase,
+      color: "bg-[#6b7280]",
+      onClick: () =>
+        navigate("/cases", {
+          state: {
+            statusFilters: OPEN_CASE_STATUS_FILTERS,
+            searchFilters: managerDisplayName ? { assignedTo: managerDisplayName } : {},
+          },
+        }),
+    },
+    {
+      label: "My Escalations",
+      value: managerOwnedEscalatedCases.length.toString(),
+      detail: "where you are the assignee or SE owner",
+      icon: AlertCircle,
+      color: "bg-[#8f1024]",
+      onClick: () =>
+        navigate("/cases", {
+          state: {
+            statusFilters: CRITICAL_CASE_STATUS_FILTERS,
+            peopleFilters: managerDisplayName ? [managerDisplayName] : [],
+          },
+        }),
     },
     {
       label: "Coverage",
@@ -500,7 +547,7 @@ function ManagerHome() {
         </DropdownMenu>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {managerStats.map((stat) => (
           <button
             key={stat.label}
@@ -770,9 +817,14 @@ function SalesEngineerHome() {
   const userName = (user?.displayName ?? "").trim().toLowerCase();
 
   const visibleOpenCases = cases.filter(isOpenCase);
+  const seOwnedOpenCases = userName
+    ? visibleOpenCases.filter((caseItem) => (caseItem.seOwner ?? "").trim().toLowerCase() === userName)
+    : [];
   const ownedOpenCases = visibleOpenCases.filter((caseItem) => isCaseOwnedBy(caseItem, user?.displayName));
   const focusCases = user?.role === "user" && ownedOpenCases.length > 0 ? ownedOpenCases : visibleOpenCases;
   const focusCaseProjectIds = new Set(focusCases.map((caseItem) => caseItem.project).filter(Boolean) as string[]);
+  const seOwnerSearchFilters = user?.displayName ? { seOwner: user.displayName } : {};
+  const focusCaseSearchFilters = user?.role === "user" && ownedOpenCases.length > 0 ? seOwnerSearchFilters : {};
 
   const openProjects = projects.filter((project) => !project.isClosed);
   const ownedOpenProjects = openProjects.filter((project) => {
@@ -910,7 +962,15 @@ function SalesEngineerHome() {
       detail: "escalated or high priority",
       icon: AlertCircle,
       color: "bg-[#c41230]",
-      onClick: () => navigate("/cases", { state: { priorityFilter: "Very High" } }),
+      onClick: () =>
+        navigate("/cases", {
+          state: {
+            statusFilters: CRITICAL_CASE_STATUS_FILTERS,
+            priorityFilters: CRITICAL_CASE_PRIORITY_FILTERS,
+            caseFilterMatchMode: "any",
+            searchFilters: focusCaseSearchFilters,
+          },
+        }),
     },
     {
       label: "Pipeline in Play",
@@ -921,12 +981,18 @@ function SalesEngineerHome() {
       onClick: () => navigate("/projects"),
     },
     {
-      label: "Product Asks",
-      value: String(activeMantis.length + activeKnocks.length),
-      detail: `${soonMantis.length + soonKnocks.length} due in 30d`,
-      icon: FolderKanban,
+      label: "Assigned to SE",
+      value: seOwnedOpenCases.length.toString(),
+      detail: "open cases where you are SE owner",
+      icon: Target,
       color: "bg-[#4b5563]",
-      onClick: () => navigate("/mantis"),
+      onClick: () =>
+        navigate("/cases", {
+          state: {
+            statusFilters: OPEN_CASE_STATUS_FILTERS,
+            searchFilters: seOwnerSearchFilters,
+          },
+        }),
     },
   ];
 

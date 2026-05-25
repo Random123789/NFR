@@ -17,6 +17,12 @@ function optionMatchesSearch(option: SelectOption, searchValue: string) {
     .includes(searchValue);
 }
 
+function sortOptions(options: SelectOption[]) {
+  return [...options].sort((left, right) =>
+    left.label.localeCompare(right.label, undefined, { sensitivity: "base", numeric: true }),
+  );
+}
+
 export function SearchableSelect({
   label,
   value,
@@ -39,6 +45,7 @@ export function SearchableSelect({
   const selectedOption = options.find((option) => option.value === value);
   const normalizedSearch = searchValue.trim().toLowerCase();
   const filteredOptions = normalizedSearch ? options.filter((option) => optionMatchesSearch(option, normalizedSearch)) : options;
+  const sortedFilteredOptions = sortOptions(filteredOptions);
 
   const handleChange = (nextValue: string) => {
     onChange(nextValue);
@@ -91,10 +98,10 @@ export function SearchableSelect({
           </button>
           {options.length === 0 ? (
             <div className="px-2 py-2 text-sm text-gray-500">{noOptionsLabel}</div>
-          ) : filteredOptions.length === 0 ? (
+          ) : sortedFilteredOptions.length === 0 ? (
             <div className="px-2 py-3 text-sm text-gray-500">No matching records</div>
           ) : (
-            filteredOptions.map((option) => {
+            sortedFilteredOptions.map((option) => {
               const isSelected = option.value === value;
               return (
                 <button
@@ -126,6 +133,7 @@ export function MultiRecordDropdown({
   options,
   emptyLabel,
   searchPlaceholder,
+  sortByLabel = true,
   onChange,
 }: {
   label: string;
@@ -133,13 +141,16 @@ export function MultiRecordDropdown({
   options: SelectOption[];
   emptyLabel?: string;
   searchPlaceholder?: string;
+  sortByLabel?: boolean;
   onChange: (nextValues: string[]) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
-  const selectedOptions = options.filter((option) => values.includes(option.value));
+  const selectedOptionMatches = options.filter((option) => values.includes(option.value));
+  const selectedOptions = sortByLabel ? sortOptions(selectedOptionMatches) : selectedOptionMatches;
   const normalizedSearch = searchValue.trim().toLowerCase();
   const filteredOptions = normalizedSearch ? options.filter((option) => optionMatchesSearch(option, normalizedSearch)) : options;
+  const sortedFilteredOptions = sortByLabel ? sortOptions(filteredOptions) : filteredOptions;
 
   return (
     <Popover
@@ -180,10 +191,10 @@ export function MultiRecordDropdown({
         <div className="max-h-72 space-y-1 overflow-auto pr-1">
           {options.length === 0 ? (
             <div className="px-2 py-2 text-sm text-gray-500">No records available</div>
-          ) : filteredOptions.length === 0 ? (
+          ) : sortedFilteredOptions.length === 0 ? (
             <div className="px-2 py-3 text-sm text-gray-500">No matching records</div>
           ) : (
-            filteredOptions.map((option) => {
+            sortedFilteredOptions.map((option) => {
               const checked = values.includes(option.value);
               return (
                 <button

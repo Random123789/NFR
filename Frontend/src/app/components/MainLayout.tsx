@@ -1,6 +1,6 @@
 import { type MouseEvent, useEffect, useState } from "react";
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
-import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, History, Home, Info, LogOut, Package, Search, User, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Bell, Bookmark, Briefcase, Building2, CheckCircle2, CircleAlert, FileText, FolderKanban, Hammer, History, Home, Info, LogOut, MessageSquare, Package, Search, User, X } from "lucide-react";
 import fortinetIconUrl from "../../../FortinetIcon.png";
 import { useSearch } from "../context/SearchContext";
 import { useAuth } from "../context/AuthContext";
@@ -25,6 +25,7 @@ const navItems = [
   { path: "/mantis", label: "Mantis", icon: FileText },
   { path: "/knock", label: "Knock", icon: Hammer },
   { path: "/product", label: "Products", icon: Package },
+  { path: "/feedback", label: "App Feedback", icon: MessageSquare },
 ];
 
 export function MainLayout() {
@@ -121,6 +122,7 @@ export function MainLayout() {
       { path: "/product", patterns: [/^prd-/, /product/, /catalog/, /url/, /family/] },
       { path: "/backlog", patterns: [/backlog/, /my actions/, /past actions/, /new updates/] },
       { path: "/reports", patterns: [/report/, /dashboard/, /metric/, /trend/, /activity/] },
+      { path: "/feedback", patterns: [/feedback/, /bug/, /improvement/, /feature request/] },
     ];
 
     const match = routeMatchers.find((candidate) =>

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, ExternalLink, Save, Bookmark } from "lucide-react";
-import { addProjectHistory, listAssignableUsers, updateProject, type ProjectRecord } from "../data/apiClient";
+import { addProjectHistory, listAssignableUsers, updateProject, type AssignableUser, type ProjectRecord } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList, LinkedCasesList } from "../components/LinkedEntityCard";
 import { CreateEntityDialog } from "../components/CreateEntityDialog";
@@ -28,6 +28,7 @@ import {
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
+import { isActiveAssignableUser, isSeOwnerRole, toAssignableUserOption } from "../utils/assignableUsers";
 import { formatUsdInteger, parseUsdIntegerInput } from "../utils/currency";
 import { formatTimestampMinute } from "../utils/dateTime";
 
@@ -151,6 +152,11 @@ export function Projects() {
     key: "",
     direction: null,
   });
+  const activeAssignableUsers = useMemo(() => assignableUsers.filter(isActiveAssignableUser), [assignableUsers]);
+  const seOwnerSelectOptions = useMemo(
+    () => activeAssignableUsers.filter((assignableUser) => isSeOwnerRole(assignableUser.role)).map(toAssignableUserOption),
+    [activeAssignableUsers],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -651,11 +657,7 @@ export function Projects() {
                     <SearchableSelect
                       label="SE owner"
                       value={editedProject.seOwner ?? ""}
-                      options={assignableUsers.map((assignableUser) => ({
-                        value: assignableUser.displayName,
-                        label: assignableUser.displayName,
-                        description: `${assignableUser.email}${assignableUser.vertical ? ` | ${assignableUser.vertical}` : ""}${assignableUser.isActive ? "" : " | inactive"}`,
-                      }))}
+                      options={seOwnerSelectOptions}
                       emptyLabel="No SE owner"
                       searchPlaceholder="Search users"
                       onChange={(seOwner) => setEditedProject({ ...editedProject, seOwner })}

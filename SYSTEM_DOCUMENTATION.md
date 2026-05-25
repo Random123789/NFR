@@ -153,14 +153,15 @@ All routes except `/login` are protected by `ProtectedRoute`.
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `POST` | `/api/auth/login` | Validates credentials and creates a 7-day bearer token session. |
+| `POST` | `/api/auth/login` | Validates current display name or email credentials and creates a 7-day bearer token session. |
 | `GET` | `/api/auth/me` | Returns the authenticated user. |
 | `PUT` | `/api/auth/me` | Updates display name, email, or password. |
 | `DELETE` | `/api/auth/me` | Deletes the current user, sessions, and bookmarks. |
 | `POST` | `/api/auth/logout` | Removes the current token session. |
-| `GET` | `/api/auth/assignees` | Lists users that can be assigned to work. |
+| `GET` | `/api/auth/assignees` | Lists active SE users and managers for owner/assignment dropdowns. |
 | `GET` | `/api/auth/users` | Admin-only user list. |
 | `POST` | `/api/auth/users` | Admin-only user creation, including SE vertical assignment. |
+| `PUT` | `/api/auth/users/{user_id}` | Admin-only user profile, role, and SE vertical update. |
 | `PUT` | `/api/auth/users/{user_id}/role` | Admin-only role and SE vertical update. |
 
 On first startup, the backend ensures a development admin user exists:

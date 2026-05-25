@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { AlertTriangle, ArrowLeft, Check, KeyRound, Save, Trash2 } from "lucide-react";
-import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUserPassword, updateManagedUserRole, type ManagedUser } from "../data/apiClient";
+import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUser, updateManagedUserPassword, type ManagedUser } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
 import { accountVerticals, type AccountVertical } from "../data/accountOptions";
 import { formatRoleLabel, managedRoleOptions, type ManagedRole } from "../data/roleLabels";
@@ -29,10 +29,12 @@ export function Profile() {
   const [newUserVertical, setNewUserVertical] = useState<AccountVertical | "">("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [nameDrafts, setNameDrafts] = useState<Record<number, string>>({});
+  const [emailDrafts, setEmailDrafts] = useState<Record<number, string>>({});
   const [roleDrafts, setRoleDrafts] = useState<Record<number, ManagedRole>>({});
   const [verticalDrafts, setVerticalDrafts] = useState<Record<number, AccountVertical | "">>({});
   const [passwordDrafts, setPasswordDrafts] = useState<Record<number, string>>({});
-  const [savingRoleUserId, setSavingRoleUserId] = useState<number | null>(null);
+  const [savingManagedUserId, setSavingManagedUserId] = useState<number | null>(null);
   const [resettingPasswordUserId, setResettingPasswordUserId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -50,6 +52,11 @@ export function Profile() {
       try {
         const rows = await listManagedUsers();
         setManagedUsers(rows);
+        setNameDrafts({});
+        setEmailDrafts({});
+        setRoleDrafts({});
+        setVerticalDrafts({});
+        setPasswordDrafts({});
       } catch (err) {
         console.error("Failed to load users", err);
       }
@@ -176,12 +183,14 @@ export function Profile() {
     }
   };
 
-  const handleUpdateUserRole = async (managedUser: ManagedUser) => {
+  const handleSaveManagedUser = async (managedUser: ManagedUser) => {
     setAdminError("");
     setAdminMessage("");
-    setSavingRoleUserId(managedUser.id);
+    setSavingManagedUserId(managedUser.id);
 
     try {
+      const nextDisplayName = (nameDrafts[managedUser.id] ?? managedUser.displayName).trim();
+      const nextEmail = (emailDrafts[managedUser.id] ?? managedUser.email).trim().toLowerCase();
       const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as ManagedRole);
       const selectedVertical = selectedRole === "user"
         ? verticalDrafts[managedUser.id] ?? managedUser.vertical ?? ""
@@ -189,15 +198,28 @@ export function Profile() {
       const nextVertical = selectedRole === "user" ? selectedVertical || null : null;
       const currentVertical = managedUser.role === "user" ? managedUser.vertical ?? null : null;
 
+      if (!nextDisplayName) {
+        throw new Error("Display name is required");
+      }
+      if (!nextEmail) {
+        throw new Error("Email is required");
+      }
       if (selectedRole === "user" && !nextVertical) {
         throw new Error("Vertical is required for SE users");
       }
-      if (selectedRole === managedUser.role && nextVertical === currentVertical) {
+      if (
+        nextDisplayName === managedUser.displayName &&
+        nextEmail === managedUser.email.toLowerCase() &&
+        selectedRole === managedUser.role &&
+        nextVertical === currentVertical
+      ) {
         setAdminMessage(`User settings for ${managedUser.email} are already up to date.`);
         return;
       }
 
-      const result = await updateManagedUserRole(managedUser.id, {
+      const result = await updateManagedUser(managedUser.id, {
+        displayName: nextDisplayName,
+        email: nextEmail,
         role: selectedRole,
         vertical: nextVertical,
       });
@@ -207,6 +229,8 @@ export function Profile() {
         vertical: "vertical" in result.user ? result.user.vertical : nextVertical,
       };
       setManagedUsers((prev) => prev.map((userItem) => (userItem.id === managedUser.id ? updatedUser : userItem)));
+      setNameDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.displayName }));
+      setEmailDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.email }));
       setRoleDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.role as ManagedRole }));
       setVerticalDrafts((prev) => ({ ...prev, [managedUser.id]: updatedUser.vertical ?? "" }));
 
@@ -216,9 +240,9 @@ export function Profile() {
 
       setAdminMessage(`Updated ${updatedUser.displayName}.`);
     } catch (err) {
-      setAdminError(err instanceof Error ? err.message : "Failed to update user role");
+      setAdminError(err instanceof Error ? err.message : "Failed to update user");
     } finally {
-      setSavingRoleUserId(null);
+      setSavingManagedUserId(null);
     }
   };
 
@@ -413,7 +437,7 @@ export function Profile() {
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Admin User Management</h2>
-            <p className="text-sm text-gray-600 mt-1">Create accounts and reset passwords for other users.</p>
+            <p className="text-sm text-gray-600 mt-1">Create accounts, update users, and reset passwords for other users.</p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
@@ -519,18 +543,47 @@ export function Profile() {
               </thead>
               <tbody>
                 {managedUsers.map((managedUser) => {
+                  const draftedName = nameDrafts[managedUser.id] ?? managedUser.displayName;
+                  const draftedEmail = emailDrafts[managedUser.id] ?? managedUser.email;
                   const selectedRole = roleDrafts[managedUser.id] ?? (managedUser.role as ManagedRole);
                   const selectedVertical = selectedRole === "user"
                     ? verticalDrafts[managedUser.id] ?? managedUser.vertical ?? ""
                     : "";
                   const nextVertical = selectedRole === "user" ? selectedVertical || null : null;
                   const currentVertical = managedUser.role === "user" ? managedUser.vertical ?? null : null;
-                  const hasUserDraftChanges = selectedRole !== managedUser.role || nextVertical !== currentVertical;
+                  const hasUserDraftChanges =
+                    draftedName.trim() !== managedUser.displayName ||
+                    draftedEmail.trim().toLowerCase() !== managedUser.email.toLowerCase() ||
+                    selectedRole !== managedUser.role ||
+                    nextVertical !== currentVertical;
 
                   return (
                     <tr key={managedUser.id} className="border-b border-gray-100 last:border-0">
-                      <td className="px-4 py-2 text-gray-900 whitespace-nowrap">{managedUser.displayName}</td>
-                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">{managedUser.email}</td>
+                      <td className="px-4 py-2 text-gray-900 whitespace-nowrap">
+                        <input
+                          value={draftedName}
+                          onChange={(e) =>
+                            setNameDrafts((prev) => ({
+                              ...prev,
+                              [managedUser.id]: e.target.value,
+                            }))
+                          }
+                          className="w-full min-w-36 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                        />
+                      </td>
+                      <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
+                        <input
+                          type="email"
+                          value={draftedEmail}
+                          onChange={(e) =>
+                            setEmailDrafts((prev) => ({
+                              ...prev,
+                              [managedUser.id]: e.target.value,
+                            }))
+                          }
+                          className="w-full min-w-56 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                        />
+                      </td>
                       <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
                         <select
                           value={selectedRole}
@@ -587,12 +640,12 @@ export function Profile() {
                       <td className="px-4 py-2 text-gray-700 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => handleUpdateUserRole(managedUser)}
-                            disabled={savingRoleUserId === managedUser.id || !hasUserDraftChanges}
+                            onClick={() => handleSaveManagedUser(managedUser)}
+                            disabled={savingManagedUserId === managedUser.id || !hasUserDraftChanges}
                             className="inline-flex items-center gap-2 px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                           >
                             <Save className="w-4 h-4" />
-                            {savingRoleUserId === managedUser.id ? "Saving..." : "Save"}
+                            {savingManagedUserId === managedUser.id ? "Saving..." : "Save"}
                           </button>
                           <button
                             onClick={() => handleResetManagedUserPassword(managedUser)}

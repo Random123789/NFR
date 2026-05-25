@@ -24,11 +24,45 @@ function resolveApiUrl(pathOrUrl: string) {
   return `${API_BASE}${pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`}`;
 }
 
+function formatApiErrorDetail(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const messages = value
+      .map((item) => {
+        if (typeof item === 'string') {
+          return item;
+        }
+        if (item && typeof item === 'object' && 'msg' in item) {
+          const location = 'loc' in item && Array.isArray(item.loc) ? item.loc.join('.') : '';
+          const message = typeof item.msg === 'string' ? item.msg : JSON.stringify(item.msg);
+          return location ? `${location}: ${message}` : message;
+        }
+        return JSON.stringify(item);
+      })
+      .filter(Boolean);
+
+    return messages.length > 0 ? messages.join('; ') : null;
+  }
+
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
 export async function fetchJson<T>(pathOrUrl: string, options?: RequestInit): Promise<T> {
   const token = getStoredToken();
   const headers = new Headers(options?.headers || {});
 
-  if (!headers.has('Content-Type') && options?.body) {
+  if (!headers.has('Content-Type') && options?.body && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -49,8 +83,12 @@ export async function fetchJson<T>(pathOrUrl: string, options?: RequestInit): Pr
     let message = `Request failed (${response.status})`;
 
     try {
-      const payload = await response.clone().json() as { detail?: string; message?: string; error?: string };
-      message = payload.detail || payload.message || payload.error || message;
+      const payload = await response.clone().json() as { detail?: unknown; message?: unknown; error?: unknown };
+      message =
+        formatApiErrorDetail(payload.detail) ||
+        formatApiErrorDetail(payload.message) ||
+        formatApiErrorDetail(payload.error) ||
+        message;
     } catch {
       try {
         const textPayload = await response.text();

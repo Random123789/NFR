@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, ChevronDown, Download, Edit2, Save, UserRound } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, Download, Edit2, Save, UserRound } from "lucide-react";
 import {
   addCaseLink,
   addCaseHistory,
@@ -8,6 +8,7 @@ import {
   listAssignableUsers,
   removeCaseLink,
   updateCase,
+  type AssignableUser,
   type CaseLinkEntityType,
   type CaseLinksResponse,
   type CaseRecord,
@@ -16,7 +17,7 @@ import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
-import { MultiRecordDropdown, SearchableSelect } from "../components/SearchableSelect";
+import { MultiRecordDropdown, SearchableSelect, type SelectOption } from "../components/SearchableSelect";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { useLocation, useNavigate } from "react-router";
 import { useAuth } from "../context/AuthContext";
@@ -39,6 +40,12 @@ import {
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatTimestampMinute } from "../utils/dateTime";
+import {
+  isActiveAssignableUser,
+  isManagerRole,
+  isSeOwnerRole,
+  toAssignableUserOption,
+} from "../utils/assignableUsers";
 
 type LinkDrafts = {
   account: string;
@@ -75,6 +82,8 @@ type CaseTableColumn = {
   searchKey?: CaseSearchKey;
 };
 
+type CaseFilterMatchMode = "all" | "any";
+
 const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
   { key: "description", label: "Description", sortKey: "description", searchKey: "description" },
   { key: "account", label: "Accounts", sortKey: "account", searchKey: "account" },
@@ -93,6 +102,22 @@ const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
 ];
 
 const DEFAULT_CASE_COLUMN_KEYS = CASE_TABLE_COLUMNS.map((column) => column.key);
+const DEFAULT_CASE_SEARCH_FILTERS: Record<CaseSearchKey, string> = {
+  account: "",
+  project: "",
+  category: "",
+  escalationType: "",
+  escalationNote: "",
+  product: "",
+  closeDate: "",
+  description: "",
+  seOwner: "",
+  assignedTo: "",
+  priority: "",
+  status: "",
+  knockId: "",
+  mantisId: "",
+};
 const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns.v3";
 const RELATED_CREATE_BUTTON_CLASS = "inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50";
 const CASE_DETAIL_TABS = [
@@ -136,6 +161,36 @@ function emptyLinkDrafts(): LinkDrafts {
 
 function uniqueNonEmptyValues(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeFilterValues(value: unknown) {
+  if (Array.isArray(value)) {
+    return uniqueNonEmptyValues(value.filter((item): item is string => typeof item === "string" && item !== "All"));
+  }
+
+  return typeof value === "string" && value !== "All" && value ? [value] : [];
+}
+
+function normalizeCaseFilterMatchMode(value: unknown): CaseFilterMatchMode {
+  return value === "any" ? "any" : "all";
+}
+
+function normalizeSearchFilters(value: unknown): Record<CaseSearchKey, string> {
+  const nextFilters = { ...DEFAULT_CASE_SEARCH_FILTERS };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return nextFilters;
+
+  for (const key of Object.keys(DEFAULT_CASE_SEARCH_FILTERS) as CaseSearchKey[]) {
+    const nextValue = (value as Record<string, unknown>)[key];
+    if (typeof nextValue === "string") {
+      nextFilters[key] = nextValue;
+    }
+  }
+
+  return nextFilters;
+}
+
+function toFilterOptions(values: string[]): SelectOption[] {
+  return values.map((value) => ({ value, label: value }));
 }
 
 function isPresent<T>(value: T | null | undefined): value is T {
@@ -192,8 +247,14 @@ export function Cases() {
 
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const locationState = location.state as any;
-  const [statusFilter, setStatusFilter] = useState<string>(locationState?.statusFilter || "All");
-  const [priorityFilter, setPriorityFilter] = useState<string>(locationState?.priorityFilter || "All");
+  const [statusFilters, setStatusFilters] = useState<string[]>(() =>
+    normalizeFilterValues(locationState?.statusFilters ?? locationState?.statusFilter),
+  );
+  const [priorityFilters, setPriorityFilters] = useState<string[]>(() =>
+    normalizeFilterValues(locationState?.priorityFilters ?? locationState?.priorityFilter),
+  );
+  const [caseFilterMatchMode] = useState<CaseFilterMatchMode>(() => normalizeCaseFilterMatchMode(locationState?.caseFilterMatchMode));
+  const [peopleFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.peopleFilters ?? locationState?.ownerFilters));
   const [daysToCloseFilter, setDaysToCloseFilter] = useState<number | null>(locationState?.daysToCloseFilter ?? null);
   const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
   const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useStoredColumnKeys<CaseColumnKey>(CASE_COLUMN_STORAGE_KEY, DEFAULT_CASE_COLUMN_KEYS);
@@ -201,26 +262,22 @@ export function Cases() {
   const [editedMantisIds, setEditedMantisIds] = useState<string[]>([]);
   const [editedKnockIds, setEditedKnockIds] = useState<string[]>([]);
   const [linkDrafts, setLinkDrafts] = useState<LinkDrafts>(() => emptyLinkDrafts());
-  const [searchFilters, setSearchFilters] = useState<Record<CaseSearchKey, string>>({
-    account: "",
-    project: "",
-    category: "",
-    escalationType: "",
-    escalationNote: "",
-    product: "",
-    closeDate: "",
-    description: "",
-    seOwner: "",
-    assignedTo: "",
-    priority: "",
-    status: "",
-    knockId: "",
-    mantisId: "",
-  });
+  const [searchFilters, setSearchFilters] = useState<Record<CaseSearchKey, string>>(() => normalizeSearchFilters(locationState?.searchFilters));
   const [sortConfig, setSortConfig] = useState<SortConfig<CaseColumnKey>>({
     key: "",
     direction: null,
   });
+  const activeAssignableUsers = useMemo(() => assignableUsers.filter(isActiveAssignableUser), [assignableUsers]);
+  const statusFilterOptions = useMemo(() => toFilterOptions(caseStatuses), []);
+  const priorityFilterOptions = useMemo(() => toFilterOptions(casePriorities), []);
+  const managerSelectOptions = useMemo(
+    () => activeAssignableUsers.filter((assignableUser) => isManagerRole(assignableUser.role)).map(toAssignableUserOption),
+    [activeAssignableUsers],
+  );
+  const seOwnerSelectOptions = useMemo(
+    () => activeAssignableUsers.filter((assignableUser) => isSeOwnerRole(assignableUser.role)).map(toAssignableUserOption),
+    [activeAssignableUsers],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -351,8 +408,25 @@ export function Cases() {
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredCases = cases.filter((caseItem) => {
-    if (statusFilter !== "All" && caseItem.status !== statusFilter) return false;
-    if (priorityFilter !== "All" && caseItem.priority !== priorityFilter) return false;
+    const hasStatusFilters = statusFilters.length > 0;
+    const hasPriorityFilters = priorityFilters.length > 0;
+    const matchesStatusFilters = hasStatusFilters && statusFilters.includes(caseItem.status || "");
+    const matchesPriorityFilters = hasPriorityFilters && priorityFilters.includes(caseItem.priority || "");
+    const normalizedPeopleFilters = peopleFilters.map((person) => person.trim().toLowerCase()).filter(Boolean);
+
+    if (caseFilterMatchMode === "any" && (hasStatusFilters || hasPriorityFilters)) {
+      if (!matchesStatusFilters && !matchesPriorityFilters) return false;
+    } else {
+      if (hasStatusFilters && !matchesStatusFilters) return false;
+      if (hasPriorityFilters && !matchesPriorityFilters) return false;
+    }
+
+    if (normalizedPeopleFilters.length > 0) {
+      const casePeople = [caseItem.assignedTo, caseItem.seOwner]
+        .map((person) => (person ?? "").trim().toLowerCase())
+        .filter(Boolean);
+      if (!casePeople.some((person) => normalizedPeopleFilters.includes(person))) return false;
+    }
     
     if (daysToCloseFilter !== null) {
       if (!caseItem.closeDate) return false;
@@ -588,9 +662,10 @@ export function Cases() {
       case "project":
         return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getProjectById(caseItem.project)?.projectName || caseItem.project)}</td>;
       case "assignedTo":
+      case "seOwner":
         return (
           <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
-            <AssignedToBadge value={caseItem.assignedTo} />
+            <AssignedToBadge value={caseItem[column.key]} />
           </td>
         );
       default:
@@ -618,37 +693,27 @@ export function Cases() {
       <div className={`rounded-xl border border-gray-200 bg-white shadow-sm ${selectedCase ? "hidden" : ""}`}>
         <div className="flex flex-col gap-3 border-b border-gray-200 p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row">
-            <div className="relative">
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                className="appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-              >
-                <option value="All">All Status</option>
-                <option value="New">New</option>
-                <option value="Acknowledged">Acknowledged</option>
-                <option value="Escalated">Escalated</option>
-                <option value="Monitoring">Monitoring</option>
-                <option value="Closed-Resolved">Closed-Resolved</option>
-                <option value="Closed-Dead">Closed-Dead</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+            <div className="w-full sm:w-44">
+              <MultiRecordDropdown
+                label="status"
+                values={statusFilters}
+                options={statusFilterOptions}
+                emptyLabel="All Status"
+                searchPlaceholder="Search statuses"
+                onChange={setStatusFilters}
+              />
             </div>
 
-            <div className="relative">
-              <select
-                value={priorityFilter}
-                onChange={(event) => setPriorityFilter(event.target.value)}
-                className="appearance-none rounded-lg border border-gray-300 bg-white px-4 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-              >
-                <option value="All">All Priority</option>
-                <option value="Very Low">Very Low</option>
-                <option value="Low">Low</option>
-                <option value="Medium">Medium</option>
-                <option value="High">High</option>
-                <option value="Very High">Very High</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+            <div className="w-full sm:w-44">
+              <MultiRecordDropdown
+                label="priority"
+                values={priorityFilters}
+                options={priorityFilterOptions}
+                emptyLabel="All Priority"
+                searchPlaceholder="Search priorities"
+                sortByLabel={false}
+                onChange={setPriorityFilters}
+              />
             </div>
           </div>
 
@@ -818,13 +883,9 @@ export function Cases() {
                       <SearchableSelect
                         label="assignee"
                         value={editedCase.assignedTo || ""}
-                        options={assignableUsers.map((assignableUser) => ({
-                          value: assignableUser.displayName,
-                          label: assignableUser.displayName,
-                          description: `${assignableUser.email}${assignableUser.vertical ? ` | ${assignableUser.vertical}` : ""}${assignableUser.isActive ? "" : " | inactive"}`,
-                        }))}
+                        options={managerSelectOptions}
                         emptyLabel="Unassigned"
-                        searchPlaceholder="Search users"
+                        searchPlaceholder="Search managers"
                         onChange={(assignedTo) => setEditedCase({ ...editedCase, assignedTo })}
                       />
                     ) : (
@@ -859,17 +920,13 @@ export function Cases() {
                     <SearchableSelect
                       label="SE owner"
                       value={editedCase.seOwner || ""}
-                      options={assignableUsers.map((assignableUser) => ({
-                        value: assignableUser.displayName,
-                        label: assignableUser.displayName,
-                        description: `${assignableUser.email}${assignableUser.vertical ? ` | ${assignableUser.vertical}` : ""}${assignableUser.isActive ? "" : " | inactive"}`,
-                      }))}
+                      options={seOwnerSelectOptions}
                       emptyLabel="No SE owner"
                       searchPlaceholder="Search users"
                       onChange={(seOwner) => setEditedCase({ ...editedCase, seOwner })}
                     />
                   ) : (
-                    <p className="text-gray-900">{textValue(selectedCase.seOwner)}</p>
+                    <AssignedToBadge value={selectedCase.seOwner} />
                   )}
                 </div>
                 <div className="order-5 detail-cell">
@@ -1103,7 +1160,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(selectedCase.escalationType)}</p>
                   )}
                 </div>
-                <div className="order-[14] sm:col-span-2">
+                <div className="order-[14] detail-cell sm:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Description</label>
                   {isEditing && editedCase ? (
                     <textarea
@@ -1113,10 +1170,10 @@ export function Cases() {
                       rows={3}
                     />
                   ) : (
-                    <p className="text-gray-900">{selectedCase.description}</p>
+                    <p className="whitespace-pre-wrap text-gray-900">{selectedCase.description}</p>
                   )}
                 </div>
-                <div className="order-[15] sm:col-span-2">
+                <div className="order-[15] detail-cell sm:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Escalation Note</label>
                   {isEditing && editedCase ? (
                     <textarea
@@ -1126,7 +1183,7 @@ export function Cases() {
                       rows={2}
                     />
                   ) : (
-                    <p className="text-gray-900">{textValue(selectedCase.escalationNote)}</p>
+                    <p className="whitespace-pre-wrap text-gray-900">{textValue(selectedCase.escalationNote)}</p>
                   )}
                 </div>
               </div>

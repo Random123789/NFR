@@ -10,3 +10,4 @@ export * from '../services/api/mantisService';
 export * from '../services/api/knockService';
 export * from '../services/api/reportsService';
 export * from '../services/api/notificationsService';
+export * from '../services/api/appFeedbackService';

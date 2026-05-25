@@ -46,6 +46,13 @@ export interface UpdateManagedUserRoleRequest {
   vertical?: AccountVertical | null;
 }
 
+export interface UpdateManagedUserRequest {
+  displayName?: string;
+  email?: string;
+  role?: 'admin' | 'manager' | 'user';
+  vertical?: AccountVertical | null;
+}
+
 export interface UpdateManagedUserPasswordRequest {
   password: string;
 }
@@ -56,6 +63,36 @@ export interface BookmarkedItem {
   title: string;
   subtitle?: string;
   timestamp: number;
+}
+
+export type AppFeedbackCategory = 'bug' | 'improvement' | 'feature';
+
+export interface AppFeedbackImage {
+  id: number;
+  fileName: string;
+  contentType: string;
+  fileSize: number;
+}
+
+export interface AppFeedbackRecord {
+  id: number;
+  category: AppFeedbackCategory;
+  status: 'open' | 'done' | string;
+  title: string;
+  description: string;
+  createdByName: string;
+  createdByEmail: string;
+  createdAt: string;
+  doneAt?: string | null;
+  doneByName?: string | null;
+  images: AppFeedbackImage[];
+}
+
+export interface SubmitAppFeedbackRequest {
+  category: AppFeedbackCategory;
+  title: string;
+  description: string;
+  images?: File[];
 }
 
 export interface HistoryEntry {

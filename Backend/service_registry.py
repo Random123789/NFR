@@ -9,6 +9,7 @@ from typing import Awaitable, Callable, Optional
 from fastapi import APIRouter, FastAPI
 
 from accountService import ensure_account_schema, router as account_router
+from appFeedbackService import ensure_app_feedback_tables, router as app_feedback_router
 from authService import ensure_default_user, router as auth_router
 from bookmarkService import ensure_bookmark_tables, router as bookmark_router
 from caseService import ensure_case_link_tables, router as case_router
@@ -44,6 +45,7 @@ SERVICES = [
     BackendService("knockService", knock_router),
     BackendService("reportsService", reports_router, ensure_custom_report_tables),
     BackendService("notificationsService", notification_router, ensure_notification_tables),
+    BackendService("appFeedbackService", app_feedback_router, ensure_app_feedback_tables),
 ]
 
 

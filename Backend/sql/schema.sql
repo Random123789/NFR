@@ -199,3 +199,36 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   INDEX idx_audit_logs_entity (entityType, entityId),
   INDEX idx_audit_logs_userId (userId)
 );
+
+CREATE TABLE IF NOT EXISTS app_feedback (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  category VARCHAR(32) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  createdByUserId INT NULL,
+  createdByName VARCHAR(120) NOT NULL,
+  createdByEmail VARCHAR(255) NOT NULL,
+  createdAt DATETIME NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'open',
+  doneAt DATETIME NULL,
+  doneByUserId INT NULL,
+  doneByName VARCHAR(120) NULL,
+  INDEX idx_app_feedback_createdAt (createdAt),
+  INDEX idx_app_feedback_category (category),
+  INDEX idx_app_feedback_status (status),
+  INDEX idx_app_feedback_createdByUserId (createdByUserId),
+  FOREIGN KEY (createdByUserId) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (doneByUserId) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS app_feedback_images (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  feedbackId BIGINT NOT NULL,
+  fileName VARCHAR(255) NOT NULL,
+  contentType VARCHAR(120) NOT NULL,
+  fileSize INT NOT NULL,
+  imageData LONGBLOB NOT NULL,
+  createdAt DATETIME NOT NULL,
+  INDEX idx_app_feedback_images_feedbackId (feedbackId),
+  FOREIGN KEY (feedbackId) REFERENCES app_feedback(id) ON DELETE CASCADE
+);

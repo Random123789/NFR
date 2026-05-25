@@ -5,6 +5,7 @@ import type {
   AuthUser,
   CreateUserRequest,
   ManagedUser,
+  UpdateManagedUserRequest,
   UpdateManagedUserPasswordRequest,
   UpdateManagedUserRoleRequest,
   UpdateProfileRequest,
@@ -62,6 +63,13 @@ export async function createManagedUser(data: CreateUserRequest) {
 
 export async function updateManagedUserRole(userId: number, data: UpdateManagedUserRoleRequest) {
   return fetchJson<{ user: ManagedUser }>(`/auth/users/${userId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateManagedUser(userId: number, data: UpdateManagedUserRequest) {
+  return fetchJson<{ user: ManagedUser }>(`/auth/users/${userId}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
