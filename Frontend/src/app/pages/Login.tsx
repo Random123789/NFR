@@ -5,8 +5,8 @@ import fortinetLogoUrl from "../../../FortinetLogo.png";
 
 export function Login() {
   const { user, login } = useAuth();
-  const [loginIdentifier, setLoginIdentifier] = useState("admin@local");
-  const [password, setPassword] = useState("Admin123!");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -73,10 +73,6 @@ export function Login() {
             {isSubmitting ? "Signing in..." : "Sign in"}
           </button>
         </form>
-
-        <p className="text-xs text-gray-500 mt-6">
-          First run default account: Admin User or admin@local / Admin123!
-        </p>
       </div>
     </div>
   );
