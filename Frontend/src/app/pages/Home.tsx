@@ -322,6 +322,10 @@ function ManagerHome() {
     : selectedVerticals.length === 1
       ? selectedVerticals[0]
       : `${selectedVerticals.length} verticals`;
+  const withManagerVerticalFilters = (state: Record<string, unknown> = {}) => ({
+    ...state,
+    ...(hasVerticalFilter ? { verticalFilters: selectedVerticals } : {}),
+  });
 
   const toggleVertical = (vertical: AccountVertical) => {
     setSelectedVerticals((current) =>
@@ -458,11 +462,11 @@ function ManagerHome() {
       color: "bg-[#B5122B]",
       onClick: () =>
         navigate("/cases", {
-          state: {
+          state: withManagerVerticalFilters({
             statusFilters: CRITICAL_CASE_STATUS_FILTERS,
             priorityFilters: CRITICAL_CASE_PRIORITY_FILTERS,
             caseFilterMatchMode: "any",
-          },
+          }),
         }),
     },
     {
@@ -481,10 +485,10 @@ function ManagerHome() {
       color: "bg-[#6b7280]",
       onClick: () =>
         navigate("/cases", {
-          state: {
+          state: withManagerVerticalFilters({
             statusFilters: OPEN_CASE_STATUS_FILTERS,
             searchFilters: managerDisplayName ? { assignedTo: managerDisplayName } : {},
-          },
+          }),
         }),
     },
     {
@@ -495,10 +499,10 @@ function ManagerHome() {
       color: "bg-[#8f1024]",
       onClick: () =>
         navigate("/cases", {
-          state: {
+          state: withManagerVerticalFilters({
             statusFilters: OPEN_CASE_STATUS_FILTERS,
             watcherFilters: managerDisplayName ? [managerDisplayName] : [],
-          },
+          }),
         }),
     },
     {
@@ -507,7 +511,7 @@ function ManagerHome() {
       detail: "active SE owners",
       icon: Target,
       color: "bg-[#4b5563]",
-      onClick: () => navigate("/cases"),
+      onClick: () => navigate("/cases", { state: withManagerVerticalFilters() }),
     },
   ];
 

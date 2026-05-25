@@ -286,19 +286,6 @@ export function Cases() {
   const statusFilterOptions = useMemo(() => toFilterOptions(caseStatuses), []);
   const priorityFilterOptions = useMemo(() => toFilterOptions(casePriorities), []);
   const verticalFilterOptions = useMemo(() => toFilterOptions([...accountVerticals]), []);
-  const peopleFilterOptions = useMemo(
-    () => toFilterOptions(uniqueNonEmptyValues([
-      ...cases.flatMap((caseItem) =>
-        [caseItem.assignedTo, caseItem.seOwner, ...(caseItem.watcherNames ?? [])].filter(isPresent)
-      ),
-      ...peopleFilters,
-    ])),
-    [cases, peopleFilters],
-  );
-  const watcherFilterOptions = useMemo(
-    () => toFilterOptions(uniqueNonEmptyValues([...cases.flatMap((caseItem) => caseItem.watcherNames ?? []), ...watcherFilters])),
-    [cases, watcherFilters],
-  );
   const managerSelectOptions = useMemo(
     () => activeAssignableUsers.filter((assignableUser) => isManagerRole(assignableUser.role)).map(toAssignableUserOption),
     [activeAssignableUsers],
@@ -452,11 +439,6 @@ export function Cases() {
   const handlePriorityFiltersChange = (nextFilters: string[]) => {
     setPriorityFilters(nextFilters);
     setCaseFilterMatchMode("all");
-  };
-
-  const handleDaysToCloseFilterChange = (value: string) => {
-    const nextValue = Number.parseInt(value, 10);
-    setDaysToCloseFilter(Number.isFinite(nextValue) && nextValue > 0 ? nextValue : null);
   };
 
   const hasActiveCaseFilters =
@@ -810,40 +792,6 @@ export function Cases() {
                 emptyLabel="All Verticals"
                 searchPlaceholder="Search verticals"
                 onChange={setVerticalFilters}
-              />
-            </div>
-
-            <div className="w-full sm:w-44">
-              <MultiRecordDropdown
-                label="person"
-                values={peopleFilters}
-                options={peopleFilterOptions}
-                emptyLabel="All People"
-                searchPlaceholder="Search people"
-                onChange={setPeopleFilters}
-              />
-            </div>
-
-            <div className="w-full sm:w-44">
-              <MultiRecordDropdown
-                label="watcher"
-                values={watcherFilters}
-                options={watcherFilterOptions}
-                emptyLabel="All Watchers"
-                searchPlaceholder="Search watchers"
-                onChange={setWatcherFilters}
-              />
-            </div>
-
-            <div className="w-full sm:w-36">
-              <input
-                type="number"
-                min={1}
-                value={daysToCloseFilter ?? ""}
-                onChange={(event) => handleDaysToCloseFilterChange(event.target.value)}
-                placeholder="Any Close"
-                aria-label="Close within days"
-                className="min-h-[42px] w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
               />
             </div>
 
