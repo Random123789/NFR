@@ -1649,7 +1649,38 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className={labelClassName}>Escalation Status</label>
+            <select
+              value={formData.case.status}
+              onChange={(event) => setFormData({ ...formData, case: { ...formData.case, status: event.target.value } })}
+              className={inputClassName}
+            >
+              <option value="">Select escalation status</option>
+              {sortStrings(caseStatuses).map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelClassName}>Assigned To</label>
+            <SearchableSelect
+              label="assignee"
+              value={formData.case.assignedTo}
+              options={managerSelectOptions}
+              emptyLabel="Unassigned"
+              searchPlaceholder="Search managers"
+              onChange={(assignedTo) => setFormData({ ...formData, case: { ...formData.case, assignedTo } })}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelClassName}>Priority</label>
           <select
@@ -1661,21 +1692,6 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             {sortStrings(casePriorities).map((priority) => (
               <option key={priority} value={priority}>
                 {priority}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelClassName}>Status</label>
-          <select
-            value={formData.case.status}
-            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, status: event.target.value } })}
-            className={inputClassName}
-          >
-            <option value="">Select status</option>
-            {sortStrings(caseStatuses).map((status) => (
-              <option key={status} value={status}>
-                {status}
               </option>
             ))}
           </select>
@@ -1699,17 +1715,6 @@ export function CreateEntityDialog<T extends CreateEntityType>({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label className={labelClassName}>Assigned To</label>
-          <SearchableSelect
-            label="assignee"
-            value={formData.case.assignedTo}
-            options={managerSelectOptions}
-            emptyLabel="Unassigned"
-            searchPlaceholder="Search managers"
-            onChange={(assignedTo) => setFormData({ ...formData, case: { ...formData.case, assignedTo } })}
-          />
-        </div>
-        <div>
           <label className={labelClassName}>SE Owner</label>
           <SearchableSelect
             label="SE owner"
@@ -1720,9 +1725,6 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             onChange={(seOwner) => setFormData({ ...formData, case: { ...formData.case, seOwner } })}
           />
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelClassName}>Escalation Type</label>
           <select
@@ -1737,6 +1739,18 @@ export function CreateEntityDialog<T extends CreateEntityType>({
               </option>
             ))}
           </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <label className={labelClassName}>Close Date</label>
+          <input
+            type="date"
+            value={formData.case.closeDate}
+            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, closeDate: event.target.value } })}
+            className={inputClassName}
+          />
         </div>
         {renderAccountSelect({
           values: formData.case.accountIds,
@@ -1809,17 +1823,8 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div>
-          <label className={labelClassName}>Close Date</label>
-          <input
-            type="date"
-            value={formData.case.closeDate}
-            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, closeDate: event.target.value } })}
-            className={inputClassName}
-          />
-        </div>
-        <div className={quickMantisOpen ? "sm:col-span-3" : undefined}>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className={quickMantisOpen ? "sm:col-span-2" : undefined}>
           <label className={labelClassName}>Mantis IDs</label>
           <div className="flex gap-2">
             <div className="min-w-0 flex-1">
@@ -1855,7 +1860,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             }),
           )}
         </div>
-        <div className={quickKnockOpen ? "sm:col-span-3" : undefined}>
+        <div className={quickKnockOpen ? "sm:col-span-2" : undefined}>
           <label className={labelClassName}>Knock IDs</label>
           <div className="flex gap-2">
             <div className="min-w-0 flex-1">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, Download, Edit2, Save, UserRound } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, Download, Edit2, Save, UserRound, X } from "lucide-react";
 import {
   addCaseLink,
   addCaseHistory,
@@ -23,8 +23,10 @@ import { useLocation, useNavigate } from "react-router";
 import { useAuth } from "../context/AuthContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useRecords } from "../context/RecordsContext";
+import { useRecordReadState } from "../context/RecordReadContext";
 import { useSearch } from "../context/SearchContext";
 import { useToast } from "../context/ToastContext";
+import { accountVerticals } from "../data/accountOptions";
 import { caseCategories, caseEscalationTypes, casePriorities, caseStatuses } from "../data/caseOptions";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
@@ -40,6 +42,8 @@ import {
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { getRecordActivityTimestamp } from "../utils/recordActivity";
+import { unreadRowClassName } from "../utils/unreadRows";
 import {
   isActiveAssignableUser,
   isManagerRole,
@@ -204,6 +208,7 @@ export function Cases() {
   const { user } = useAuth();
   const { searchTerm } = useSearch();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
+  const { isRecordUnread, markRecordRead } = useRecordReadState();
   const {
     cases,
     accounts,
@@ -244,6 +249,12 @@ export function Cases() {
     userName: user?.displayName,
     onError: (message) => showToast(message, "error"),
   });
+  const selectedCaseActivityAt = getRecordActivityTimestamp(selectedCase);
+
+  useEffect(() => {
+    if (!selectedCase) return;
+    void markRecordRead("case", selectedCase.recordId);
+  }, [markRecordRead, selectedCase?.recordId, selectedCaseActivityAt]);
 
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const locationState = location.state as any;
@@ -253,8 +264,12 @@ export function Cases() {
   const [priorityFilters, setPriorityFilters] = useState<string[]>(() =>
     normalizeFilterValues(locationState?.priorityFilters ?? locationState?.priorityFilter),
   );
-  const [caseFilterMatchMode] = useState<CaseFilterMatchMode>(() => normalizeCaseFilterMatchMode(locationState?.caseFilterMatchMode));
-  const [peopleFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.peopleFilters ?? locationState?.ownerFilters));
+  const [verticalFilters, setVerticalFilters] = useState<string[]>(() =>
+    normalizeFilterValues(locationState?.verticalFilters ?? locationState?.verticalFilter),
+  );
+  const [caseFilterMatchMode, setCaseFilterMatchMode] = useState<CaseFilterMatchMode>(() => normalizeCaseFilterMatchMode(locationState?.caseFilterMatchMode));
+  const [peopleFilters, setPeopleFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.peopleFilters ?? locationState?.ownerFilters));
+  const [watcherFilters, setWatcherFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.watcherFilters ?? locationState?.watcherFilter));
   const [daysToCloseFilter, setDaysToCloseFilter] = useState<number | null>(locationState?.daysToCloseFilter ?? null);
   const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
   const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useStoredColumnKeys<CaseColumnKey>(CASE_COLUMN_STORAGE_KEY, DEFAULT_CASE_COLUMN_KEYS);
@@ -270,6 +285,20 @@ export function Cases() {
   const activeAssignableUsers = useMemo(() => assignableUsers.filter(isActiveAssignableUser), [assignableUsers]);
   const statusFilterOptions = useMemo(() => toFilterOptions(caseStatuses), []);
   const priorityFilterOptions = useMemo(() => toFilterOptions(casePriorities), []);
+  const verticalFilterOptions = useMemo(() => toFilterOptions([...accountVerticals]), []);
+  const peopleFilterOptions = useMemo(
+    () => toFilterOptions(uniqueNonEmptyValues([
+      ...cases.flatMap((caseItem) =>
+        [caseItem.assignedTo, caseItem.seOwner, ...(caseItem.watcherNames ?? [])].filter(isPresent)
+      ),
+      ...peopleFilters,
+    ])),
+    [cases, peopleFilters],
+  );
+  const watcherFilterOptions = useMemo(
+    () => toFilterOptions(uniqueNonEmptyValues([...cases.flatMap((caseItem) => caseItem.watcherNames ?? []), ...watcherFilters])),
+    [cases, watcherFilters],
+  );
   const managerSelectOptions = useMemo(
     () => activeAssignableUsers.filter((assignableUser) => isManagerRole(assignableUser.role)).map(toAssignableUserOption),
     [activeAssignableUsers],
@@ -405,14 +434,62 @@ export function Cases() {
     }
   };
 
+  const getCaseVerticals = (caseItem: CaseRecord) => {
+    const linkedAccountVerticals = (caseItem.accountIds ?? [])
+      .map((accountId) => getAccountById(accountId)?.vertical)
+      .filter(isPresent);
+    const projectAccountId = getProjectById(caseItem.project)?.accountId;
+    const projectVertical = projectAccountId ? getAccountById(projectAccountId)?.vertical : null;
+
+    return uniqueNonEmptyValues([...linkedAccountVerticals, projectVertical].filter(isPresent));
+  };
+
+  const handleStatusFiltersChange = (nextFilters: string[]) => {
+    setStatusFilters(nextFilters);
+    setCaseFilterMatchMode("all");
+  };
+
+  const handlePriorityFiltersChange = (nextFilters: string[]) => {
+    setPriorityFilters(nextFilters);
+    setCaseFilterMatchMode("all");
+  };
+
+  const handleDaysToCloseFilterChange = (value: string) => {
+    const nextValue = Number.parseInt(value, 10);
+    setDaysToCloseFilter(Number.isFinite(nextValue) && nextValue > 0 ? nextValue : null);
+  };
+
+  const hasActiveCaseFilters =
+    statusFilters.length > 0 ||
+    priorityFilters.length > 0 ||
+    verticalFilters.length > 0 ||
+    peopleFilters.length > 0 ||
+    watcherFilters.length > 0 ||
+    daysToCloseFilter !== null ||
+    Object.values(searchFilters).some((value) => value.trim() !== "");
+
+  const handleClearCaseFilters = () => {
+    setStatusFilters([]);
+    setPriorityFilters([]);
+    setVerticalFilters([]);
+    setPeopleFilters([]);
+    setWatcherFilters([]);
+    setDaysToCloseFilter(null);
+    setCaseFilterMatchMode("all");
+    setSearchFilters(DEFAULT_CASE_SEARCH_FILTERS);
+  };
+
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
   const filteredCases = cases.filter((caseItem) => {
     const hasStatusFilters = statusFilters.length > 0;
     const hasPriorityFilters = priorityFilters.length > 0;
+    const hasVerticalFilters = verticalFilters.length > 0;
     const matchesStatusFilters = hasStatusFilters && statusFilters.includes(caseItem.status || "");
     const matchesPriorityFilters = hasPriorityFilters && priorityFilters.includes(caseItem.priority || "");
+    const matchesVerticalFilters = hasVerticalFilters && getCaseVerticals(caseItem).some((vertical) => verticalFilters.includes(vertical));
     const normalizedPeopleFilters = peopleFilters.map((person) => person.trim().toLowerCase()).filter(Boolean);
+    const normalizedWatcherFilters = watcherFilters.map((watcher) => watcher.trim().toLowerCase()).filter(Boolean);
 
     if (caseFilterMatchMode === "any" && (hasStatusFilters || hasPriorityFilters)) {
       if (!matchesStatusFilters && !matchesPriorityFilters) return false;
@@ -421,11 +498,20 @@ export function Cases() {
       if (hasPriorityFilters && !matchesPriorityFilters) return false;
     }
 
+    if (hasVerticalFilters && !matchesVerticalFilters) return false;
+
     if (normalizedPeopleFilters.length > 0) {
-      const casePeople = [caseItem.assignedTo, caseItem.seOwner]
+      const casePeople = [caseItem.assignedTo, caseItem.seOwner, ...(caseItem.watcherNames ?? [])]
         .map((person) => (person ?? "").trim().toLowerCase())
         .filter(Boolean);
       if (!casePeople.some((person) => normalizedPeopleFilters.includes(person))) return false;
+    }
+
+    if (normalizedWatcherFilters.length > 0) {
+      const caseWatchers = (caseItem.watcherNames ?? [])
+        .map((watcher) => watcher.trim().toLowerCase())
+        .filter(Boolean);
+      if (!caseWatchers.some((watcher) => normalizedWatcherFilters.includes(watcher))) return false;
     }
     
     if (daysToCloseFilter !== null) {
@@ -692,7 +778,7 @@ export function Cases() {
 
       <div className={`rounded-xl border border-gray-200 bg-white shadow-sm ${selectedCase ? "hidden" : ""}`}>
         <div className="flex flex-col gap-3 border-b border-gray-200 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <div className="w-full sm:w-44">
               <MultiRecordDropdown
                 label="status"
@@ -700,7 +786,7 @@ export function Cases() {
                 options={statusFilterOptions}
                 emptyLabel="All Status"
                 searchPlaceholder="Search statuses"
-                onChange={setStatusFilters}
+                onChange={handleStatusFiltersChange}
               />
             </div>
 
@@ -712,9 +798,66 @@ export function Cases() {
                 emptyLabel="All Priority"
                 searchPlaceholder="Search priorities"
                 sortByLabel={false}
-                onChange={setPriorityFilters}
+                onChange={handlePriorityFiltersChange}
               />
             </div>
+
+            <div className="w-full sm:w-44">
+              <MultiRecordDropdown
+                label="vertical"
+                values={verticalFilters}
+                options={verticalFilterOptions}
+                emptyLabel="All Verticals"
+                searchPlaceholder="Search verticals"
+                onChange={setVerticalFilters}
+              />
+            </div>
+
+            <div className="w-full sm:w-44">
+              <MultiRecordDropdown
+                label="person"
+                values={peopleFilters}
+                options={peopleFilterOptions}
+                emptyLabel="All People"
+                searchPlaceholder="Search people"
+                onChange={setPeopleFilters}
+              />
+            </div>
+
+            <div className="w-full sm:w-44">
+              <MultiRecordDropdown
+                label="watcher"
+                values={watcherFilters}
+                options={watcherFilterOptions}
+                emptyLabel="All Watchers"
+                searchPlaceholder="Search watchers"
+                onChange={setWatcherFilters}
+              />
+            </div>
+
+            <div className="w-full sm:w-36">
+              <input
+                type="number"
+                min={1}
+                value={daysToCloseFilter ?? ""}
+                onChange={(event) => handleDaysToCloseFilterChange(event.target.value)}
+                placeholder="Any Close"
+                aria-label="Close within days"
+                className="min-h-[42px] w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleClearCaseFilters}
+              disabled={!hasActiveCaseFilters}
+              title="Clear filters"
+              aria-label="Clear case filters"
+              className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <X className="h-4 w-4" />
+              <span>Clear</span>
+            </button>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -753,7 +896,7 @@ export function Cases() {
                 <tr
                   key={caseItem.recordId}
                   onClick={() => navigate(createDetailPath("case", caseItem.recordId))}
-                  className="cursor-pointer transition-colors hover:bg-gray-50"
+                  className={unreadRowClassName(isRecordUnread("case", caseItem.recordId, getRecordActivityTimestamp(caseItem)))}
                 >
                   <td className="px-4 py-4 text-center" onClick={(event) => event.stopPropagation()}>
                     <button
@@ -854,7 +997,7 @@ export function Cases() {
                 <DetailTabs tabs={CASE_DETAIL_TABS} activeTab={activeDetailTab} onChange={setActiveDetailTab} />
 
               <div className={detailGridClassName}>
-                <div className="order-1 sm:col-span-2 rounded-xl border border-gray-200 bg-gray-50/50 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="order-1 sm:col-span-2 rounded-xl border border-orange-200 bg-orange-50 p-4 shadow-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className={`detail-cell ${!isEditing ? "flex items-center gap-2 whitespace-nowrap" : ""}`}>
                     <label className={`${!isEditing ? "mb-0 shrink-0 font-semibold after:content-[':']" : "mb-1 block"} text-sm font-medium text-gray-600`}>Escalation Status</label>
                     {isEditing && editedCase ? (

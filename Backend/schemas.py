@@ -116,6 +116,7 @@ class CaseRecord(BaseModel):
     productIds: List[str] = Field(default_factory=list)
     mantisRecordIds: List[str] = Field(default_factory=list)
     knockRecordIds: List[str] = Field(default_factory=list)
+    watcherNames: List[str] = Field(default_factory=list)
     history: List[HistoryEntry] = Field(default_factory=list)
 
 

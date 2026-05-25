@@ -190,6 +190,7 @@ export interface CaseRecord {
   status: CaseStatus | null;
   knockRecordIds: string[];
   mantisRecordIds: string[];
+  watcherNames: string[];
   history: HistoryEntry[];
 }
 
@@ -340,4 +341,17 @@ export interface Notification {
   timestamp: string;
   entityType?: 'project' | 'case' | 'account' | 'mantis' | 'knock' | 'product';
   entityId?: string;
+}
+
+export type RecordReadEntityType = 'case' | 'project' | 'account' | 'mantis' | 'knock' | 'product';
+
+export interface RecordReadEntry {
+  entityType: RecordReadEntityType;
+  entityId: string;
+  lastSeenAt: string;
+}
+
+export interface RecordReadStateResponse {
+  baselineAt: string;
+  reads: RecordReadEntry[];
 }

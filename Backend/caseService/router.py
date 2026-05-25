@@ -47,7 +47,7 @@ CASE_FIELD_LABELS = {
     "seOwner": "SE Owner",
     "assignedTo": "Assigned To",
     "priority": "Priority",
-    "status": "Status",
+    "status": "Escalation Status",
 }
 
 CASE_LINK_ARRAY_FIELDS = {
@@ -334,6 +334,22 @@ async def ensure_case_link_tables() -> None:
         )
         """
     )
+    await execute_mutation(
+        """
+        CREATE TABLE IF NOT EXISTS case_watchers (
+          caseRecordId VARCHAR(32) NOT NULL,
+          userId INT NULL,
+          displayName VARCHAR(120) NOT NULL,
+          watchedAt DATETIME NOT NULL,
+          watchedBy VARCHAR(120) NULL,
+          PRIMARY KEY (caseRecordId, displayName),
+          INDEX idx_case_watchers_case (caseRecordId),
+          INDEX idx_case_watchers_userId (userId),
+          FOREIGN KEY (caseRecordId) REFERENCES cases(recordId) ON DELETE CASCADE ON UPDATE CASCADE,
+          FOREIGN KEY (userId) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
     await execute_mutation("UPDATE case_entity_links SET entityType = 'mantis' WHERE entityType = 'nfr'")
     await cleanup_case_entity_links()
     await _add_foreign_key_if_missing(
@@ -532,6 +548,7 @@ async def enrich_case_records(case_rows: list[dict]) -> list[dict]:
     for row in normalized_rows:
         for array_field in CASE_LINK_ARRAY_FIELDS.values():
             row[array_field] = []
+        row["watcherNames"] = []
 
     if not case_ids:
         return normalized_rows
@@ -556,6 +573,21 @@ async def enrich_case_records(case_rows: list[dict]) -> list[dict]:
             continue
         if entity_record_id not in case_record[array_field]:
             case_record[array_field].append(entity_record_id)
+
+    watcher_rows = await execute_query(
+        f"""
+        SELECT caseRecordId, displayName
+        FROM case_watchers
+        WHERE caseRecordId IN ({placeholders})
+        ORDER BY watchedAt ASC
+        """,
+        case_ids,
+    )
+    for watcher in watcher_rows:
+        case_record = by_case.get(watcher.get("caseRecordId"))
+        display_name = (watcher.get("displayName") or "").strip()
+        if case_record and display_name and display_name not in case_record["watcherNames"]:
+            case_record["watcherNames"].append(display_name)
 
     return normalized_rows
 
@@ -660,6 +692,7 @@ def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, lis
         return "1=1", []
 
     actor_name = (actor.get("displayName") or "").strip().lower()
+    actor_id = actor.get("id")
     actor_vertical = (actor.get("vertical") or "").strip()
     qualifier = f"{case_alias}." if case_alias else ""
     conditions = []
@@ -668,6 +701,19 @@ def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, lis
     if actor_name:
         conditions.append(f"(LOWER(TRIM({qualifier}`seOwner`)) = %s OR LOWER(TRIM({qualifier}`assignedTo`)) = %s)")
         params.extend([actor_name, actor_name])
+
+    if actor_id:
+        conditions.append(
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM case_watchers visible_watcher
+                WHERE visible_watcher.caseRecordId = {qualifier}`recordId`
+                  AND visible_watcher.userId = %s
+            )
+            """
+        )
+        params.append(actor_id)
 
     if actor_vertical:
         conditions.append(
@@ -700,6 +746,22 @@ async def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
         if any((value or "").strip().lower() == actor_name for value in visible_values):
             return True
 
+    actor_id = actor.get("id")
+    if actor_id:
+        visible_watcher = await execute_query(
+            """
+            SELECT 1
+            FROM case_watchers
+            WHERE caseRecordId = %s
+              AND userId = %s
+            LIMIT 1
+            """,
+            [case_record.get("recordId"), actor_id],
+            fetch_one=True,
+        )
+        if visible_watcher:
+            return True
+
     actor_vertical = (actor.get("vertical") or "").strip()
     if not actor_vertical:
         return False
@@ -718,6 +780,25 @@ async def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
         fetch_one=True,
     )
     return bool(visible_linked_account)
+
+
+async def _add_case_watcher(record_id: str, actor: dict) -> None:
+    display_name = (actor.get("displayName") or "").strip()
+    if not display_name:
+        return
+
+    now = current_timestamp()
+    await execute_mutation(
+        """
+        INSERT INTO case_watchers (caseRecordId, userId, displayName, watchedAt, watchedBy)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+          userId = VALUES(userId),
+          watchedAt = VALUES(watchedAt),
+          watchedBy = VALUES(watchedBy)
+        """,
+        [record_id, actor.get("id"), display_name, now, display_name],
+    )
 
 
 @router.get("", response_model=List[CaseRecord])
@@ -827,6 +908,7 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
         raise HTTPException(status_code=404, detail="Case not found")
 
     payload = _case_payload(data)
+    status_changed = (existing.get("status") or "") != (payload.get("status") or "")
     history = _history_from_record(existing)
     history.extend(
         build_update_history_entries(
@@ -845,6 +927,8 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
     params.append(recordId)
 
     await execute_mutation(sql, params)
+    if status_changed:
+        await _add_case_watcher(recordId, actor)
     await _replace_case_links_from_data(recordId, data, actor["displayName"], replace_all=False)
 
     result = await get_case_or_404(recordId)

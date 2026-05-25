@@ -162,6 +162,19 @@ CREATE TABLE IF NOT EXISTS users (
   lastLoginAt DATETIME NULL
 );
 
+CREATE TABLE IF NOT EXISTS case_watchers (
+  caseRecordId VARCHAR(32) NOT NULL,
+  userId INT NULL,
+  displayName VARCHAR(120) NOT NULL,
+  watchedAt DATETIME NOT NULL,
+  watchedBy VARCHAR(120),
+  PRIMARY KEY (caseRecordId, displayName),
+  INDEX idx_case_watchers_case (caseRecordId),
+  INDEX idx_case_watchers_userId (userId),
+  FOREIGN KEY (caseRecordId) REFERENCES cases(recordId) ON DELETE CASCADE ON UPDATE CASCADE,
+  FOREIGN KEY (userId) REFERENCES users(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_sessions (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   userId INT NOT NULL,
@@ -183,6 +196,24 @@ CREATE TABLE IF NOT EXISTS user_bookmarks (
   createdAt DATETIME NOT NULL,
   UNIQUE KEY uniq_user_bookmark (userId, entityType, entityId),
   INDEX idx_user_bookmarks_userId (userId),
+  FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_record_read_state (
+  userId INT PRIMARY KEY,
+  baselineAt DATETIME NOT NULL,
+  updatedAt DATETIME NOT NULL,
+  FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_record_reads (
+  userId INT NOT NULL,
+  entityType VARCHAR(32) NOT NULL,
+  entityId VARCHAR(64) NOT NULL,
+  lastSeenAt DATETIME NOT NULL,
+  PRIMARY KEY (userId, entityType, entityId),
+  INDEX idx_user_record_reads_userId (userId),
+  INDEX idx_user_record_reads_entity (entityType, entityId),
   FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
 );
 

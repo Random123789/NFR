@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
 import { addKnockHistory, updateKnock } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
@@ -12,6 +12,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
+import { useRecordReadState } from "../context/RecordReadContext";
 import { useToast } from "../context/ToastContext";
 import { buildKnockUrl } from "../data/knockOptions";
 import { knockStatusColors } from "../data/recordStyles";
@@ -29,6 +30,8 @@ import {
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { getRecordActivityTimestamp } from "../utils/recordActivity";
+import { unreadRowClassName } from "../utils/unreadRows";
 
 type KnockColumnKey = "knockId" | "knockUrl" | "description" | "status" | "requestDate" | "targetDate";
 type KnockSearchKey = "knockId" | "knockUrl" | "description";
@@ -63,6 +66,7 @@ export function Knock() {
   const { showToast } = useToast();
   const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
+  const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { searchTerm } = useSearch();
   const { accounts, projects, knocks, cases, getKnockById, upsertKnock } = useRecords();
   const {
@@ -106,6 +110,12 @@ export function Knock() {
     userName: user?.displayName,
     onError: (message) => showToast(message, "error"),
   });
+  const selectedKnockActivityAt = getRecordActivityTimestamp(selectedKnock);
+
+  useEffect(() => {
+    if (!selectedKnock) return;
+    void markRecordRead("knock", selectedKnock.recordId);
+  }, [markRecordRead, selectedKnock?.recordId, selectedKnockActivityAt]);
   const [visibleKnockColumnKeys, setVisibleKnockColumnKeys] = useStoredColumnKeys<KnockColumnKey>(KNOCK_COLUMN_STORAGE_KEY, DEFAULT_KNOCK_COLUMN_KEYS);
 
   const [searchFilters, setSearchFilters] = useState({
@@ -350,7 +360,7 @@ export function Knock() {
                 <tr
                   key={knock.recordId}
                   onClick={() => navigate(createDetailPath("knock", knock.knockId || knock.recordId))}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className={unreadRowClassName(isRecordUnread("knock", knock.recordId, getRecordActivityTimestamp(knock)))}
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
 import { addProductHistory, updateProduct } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
@@ -12,6 +12,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
+import { useRecordReadState } from "../context/RecordReadContext";
 import { useToast } from "../context/ToastContext";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
 import { useLinkedCases } from "../hooks/useLinkedCases";
@@ -27,6 +28,8 @@ import {
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { getRecordActivityTimestamp } from "../utils/recordActivity";
+import { unreadRowClassName } from "../utils/unreadRows";
 
 type ProductColumnKey = "productName" | "productFamily" | "productVersion" | "productUrl" | "updatedAt";
 type ProductSearchKey = "productName" | "productFamily" | "productVersion";
@@ -60,6 +63,7 @@ export function Product() {
   const { showToast } = useToast();
   const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
+  const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { searchTerm } = useSearch();
   const { accounts, projects, products, cases, getProductById, upsertProduct } = useRecords();
   const {
@@ -103,6 +107,12 @@ export function Product() {
     userName: user?.displayName,
     onError: (message) => showToast(message, "error"),
   });
+  const selectedProductActivityAt = getRecordActivityTimestamp(selectedProduct);
+
+  useEffect(() => {
+    if (!selectedProduct) return;
+    void markRecordRead("product", selectedProduct.recordId);
+  }, [markRecordRead, selectedProduct?.recordId, selectedProductActivityAt]);
   const [visibleProductColumnKeys, setVisibleProductColumnKeys] = useStoredColumnKeys<ProductColumnKey>(PRODUCT_COLUMN_STORAGE_KEY, DEFAULT_PRODUCT_COLUMN_KEYS);
 
   const [searchFilters, setSearchFilters] = useState({
@@ -327,7 +337,7 @@ export function Product() {
                 <tr
                   key={product.recordId}
                   onClick={() => navigate(createDetailPath("product", product.recordId))}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className={unreadRowClassName(isRecordUnread("product", product.recordId, getRecordActivityTimestamp(product)))}
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button

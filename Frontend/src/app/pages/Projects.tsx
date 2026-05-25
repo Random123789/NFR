@@ -12,6 +12,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
+import { useRecordReadState } from "../context/RecordReadContext";
 import { useToast } from "../context/ToastContext";
 import { projectStages } from "../data/projectOptions";
 import { projectStageColors } from "../data/recordStyles";
@@ -31,6 +32,8 @@ import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { isActiveAssignableUser, isSeOwnerRole, toAssignableUserOption } from "../utils/assignableUsers";
 import { formatUsdInteger, parseUsdIntegerInput } from "../utils/currency";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { getRecordActivityTimestamp } from "../utils/recordActivity";
+import { unreadRowClassName } from "../utils/unreadRows";
 
 type ProjectColumnKey = "projectName" | "account" | "startDate" | "closeDate" | "seOwner" | "isClosed" | "stage" | "sfdc" | "sfdcValue";
 type ProjectSearchKey = "projectName" | "account" | "seOwner";
@@ -94,6 +97,7 @@ export function Projects() {
   const { showToast } = useToast();
   const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
+  const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { searchTerm } = useSearch();
   const { accounts, projects, cases, getAccountById, getProjectById, upsertProject } = useRecords();
   const {
@@ -137,6 +141,12 @@ export function Projects() {
     userName: user?.displayName,
     onError: (message) => showToast(message, "error"),
   });
+  const selectedProjectActivityAt = getRecordActivityTimestamp(selectedProject);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+    void markRecordRead("project", selectedProject.recordId);
+  }, [markRecordRead, selectedProject?.recordId, selectedProjectActivityAt]);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [visibleProjectColumnKeys, setVisibleProjectColumnKeys] = useStoredColumnKeys<ProjectColumnKey>(PROJECT_COLUMN_STORAGE_KEY, DEFAULT_PROJECT_COLUMN_KEYS);
   const [linkingAccountId, setLinkingAccountId] = useState("");
@@ -490,7 +500,7 @@ export function Projects() {
                 <tr
                   key={project.recordId}
                   onClick={() => navigate(createDetailPath("project", project.recordId))}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className={unreadRowClassName(isRecordUnread("project", project.recordId, getRecordActivityTimestamp(project)))}
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button

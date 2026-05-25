@@ -18,6 +18,7 @@ from mantisService import ensure_mantis_schema, router as mantis_router
 from notificationsService import ensure_notification_tables, router as notification_router
 from productService import ensure_product_schema, router as product_router
 from projectService import ensure_project_schema, router as project_router
+from recordReadService import ensure_record_read_tables, router as record_read_router
 from reportsService import ensure_custom_report_tables, router as reports_router
 
 
@@ -46,6 +47,7 @@ SERVICES = [
     BackendService("reportsService", reports_router, ensure_custom_report_tables),
     BackendService("notificationsService", notification_router, ensure_notification_tables),
     BackendService("appFeedbackService", app_feedback_router, ensure_app_feedback_tables),
+    BackendService("recordReadService", record_read_router, ensure_record_read_tables),
 ]
 
 

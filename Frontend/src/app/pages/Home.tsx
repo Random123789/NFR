@@ -42,7 +42,11 @@ function getMonthLabel(monthKey: string) {
 }
 
 function getCasePeople(caseItem: CaseItem) {
-  return [caseItem.assignedTo?.trim(), caseItem.seOwner?.trim()].filter(Boolean) as string[];
+  return [
+    caseItem.assignedTo?.trim(),
+    caseItem.seOwner?.trim(),
+    ...(caseItem.watcherNames ?? []).map((watcherName) => watcherName.trim()),
+  ].filter(Boolean) as string[];
 }
 
 function caseMatchesOwnerFilter(caseItem: CaseItem, selectedOwners: string[]) {
@@ -144,6 +148,12 @@ function isCaseOwnedBy(caseItem: CaseRecord, displayName: string | null | undefi
   const owner = (displayName ?? "").trim().toLowerCase();
   if (!owner) return false;
   return [caseItem.seOwner, caseItem.assignedTo].some((value) => (value ?? "").trim().toLowerCase() === owner);
+}
+
+function isCaseWatchedBy(caseItem: CaseRecord, displayName: string | null | undefined) {
+  const watcher = (displayName ?? "").trim().toLowerCase();
+  if (!watcher) return false;
+  return (caseItem.watcherNames ?? []).some((value) => value.trim().toLowerCase() === watcher);
 }
 
 function getDaysUntil(dateString: string | null | undefined) {
@@ -350,8 +360,8 @@ function ManagerHome() {
   const managerAssignedCases = managerKey
     ? openCases.filter((caseItem) => (caseItem.assignedTo ?? "").trim().toLowerCase() === managerKey)
     : [];
-  const managerOwnedEscalatedCases = managerKey
-    ? openCases.filter((caseItem) => caseItem.status === "Escalated" && isCaseOwnedBy(caseItem, managerDisplayName))
+  const managerWatchedCases = managerKey
+    ? openCases.filter((caseItem) => isCaseWatchedBy(caseItem, managerDisplayName))
     : [];
   const totalOpenPipeline = openProjects.reduce((sum, project) => sum + projectValue(project), 0);
   const highRiskCases = openCases.filter((caseItem) =>
@@ -478,16 +488,16 @@ function ManagerHome() {
         }),
     },
     {
-      label: "My Escalations",
-      value: managerOwnedEscalatedCases.length.toString(),
-      detail: "where you are the assignee or SE owner",
+      label: "Cases Watched",
+      value: managerWatchedCases.length.toString(),
+      detail: "open cases you are watching",
       icon: AlertCircle,
       color: "bg-[#8f1024]",
       onClick: () =>
         navigate("/cases", {
           state: {
-            statusFilters: CRITICAL_CASE_STATUS_FILTERS,
-            peopleFilters: managerDisplayName ? [managerDisplayName] : [],
+            statusFilters: OPEN_CASE_STATUS_FILTERS,
+            watcherFilters: managerDisplayName ? [managerDisplayName] : [],
           },
         }),
     },

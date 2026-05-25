@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
 import { addMantisHistory, updateMantis } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
@@ -12,6 +12,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
+import { useRecordReadState } from "../context/RecordReadContext";
 import { useToast } from "../context/ToastContext";
 import { mantisStatusColors } from "../data/recordStyles";
 import { buildMantisUrl, mantisCategories, mantisStatuses } from "../data/mantisOptions";
@@ -29,6 +30,8 @@ import {
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { getRecordActivityTimestamp } from "../utils/recordActivity";
+import { unreadRowClassName } from "../utils/unreadRows";
 
 type MantisColumnKey = "mantisId" | "mantisUrl" | "description" | "category" | "mantisStatus" | "mantisRequestDate" | "mantisTargetDate";
 type MantisSearchKey = "mantisId" | "mantisUrl" | "description" | "category";
@@ -64,6 +67,7 @@ export function Mantis() {
   const { showToast } = useToast();
   const { user } = useAuth();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
+  const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { searchTerm } = useSearch();
   const { accounts, projects, mantisRecords, cases, getMantisById, upsertMantis } = useRecords();
   const {
@@ -107,6 +111,12 @@ export function Mantis() {
     userName: user?.displayName,
     onError: (message) => showToast(message, "error"),
   });
+  const selectedMantisActivityAt = getRecordActivityTimestamp(selectedMantis);
+
+  useEffect(() => {
+    if (!selectedMantis) return;
+    void markRecordRead("mantis", selectedMantis.recordId);
+  }, [markRecordRead, selectedMantis?.recordId, selectedMantisActivityAt]);
   const [visibleMantisColumnKeys, setVisibleMantisColumnKeys] = useStoredColumnKeys<MantisColumnKey>(MANTIS_COLUMN_STORAGE_KEY, DEFAULT_MANTIS_COLUMN_KEYS);
 
   const [searchFilters, setSearchFilters] = useState({
@@ -360,7 +370,7 @@ export function Mantis() {
                 <tr
                   key={mantis.recordId}
                   onClick={() => navigate(createDetailPath("mantis", mantis.mantisId || mantis.recordId))}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className={unreadRowClassName(isRecordUnread("mantis", mantis.recordId, getRecordActivityTimestamp(mantis)))}
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
 import { addAccountHistory, updateAccount, updateProject, type ProjectRecord } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
@@ -12,6 +12,7 @@ import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
+import { useRecordReadState } from "../context/RecordReadContext";
 import { useToast } from "../context/ToastContext";
 import { accountTypes, accountVerticals, type AccountType, type AccountVertical } from "../data/accountOptions";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
@@ -28,6 +29,8 @@ import {
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { getRecordActivityTimestamp } from "../utils/recordActivity";
+import { unreadRowClassName } from "../utils/unreadRows";
 
 type AccountColumnKey = "accountName" | "type" | "vertical" | "website";
 type AccountSearchKey = "accountName" | "type" | "vertical";
@@ -77,6 +80,7 @@ export function Accounts() {
   const { user } = useAuth();
   const { searchTerm } = useSearch();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
+  const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { accounts, projects, cases, getAccountById, getProjectsByAccountId, upsertAccount, upsertProject } = useRecords();
   const {
     selectedRecord: selectedAccount,
@@ -119,6 +123,12 @@ export function Accounts() {
     userName: user?.displayName,
     onError: (message) => showToast(message, "error"),
   });
+  const selectedAccountActivityAt = getRecordActivityTimestamp(selectedAccount);
+
+  useEffect(() => {
+    if (!selectedAccount) return;
+    void markRecordRead("account", selectedAccount.recordId);
+  }, [markRecordRead, selectedAccount?.recordId, selectedAccountActivityAt]);
   const [visibleAccountColumnKeys, setVisibleAccountColumnKeys] = useStoredColumnKeys<AccountColumnKey>(ACCOUNT_COLUMN_STORAGE_KEY, DEFAULT_ACCOUNT_COLUMN_KEYS);
 
   const [searchFilters, setSearchFilters] = useState({
@@ -384,7 +394,7 @@ export function Accounts() {
                 <tr
                   key={account.recordId}
                   onClick={() => navigate(createDetailPath("account", account.recordId))}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className={unreadRowClassName(isRecordUnread("account", account.recordId, getRecordActivityTimestamp(account)))}
                 >
                   <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                     <button
