@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS mantis (
   history JSON
 );
 
-CREATE UNIQUE INDEX uniq_mantis_mantisId ON mantis (mantisId);
+CREATE INDEX idx_mantis_mantisId ON mantis (mantisId);
 
 CREATE TABLE IF NOT EXISTS knocks (
   recordId VARCHAR(32) PRIMARY KEY,
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS knocks (
   history JSON
 );
 
-CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId);
+CREATE INDEX idx_knocks_knockId ON knocks (knockId);
 
 CREATE TABLE IF NOT EXISTS cases (
   recordId VARCHAR(32) PRIMARY KEY,
@@ -224,6 +224,22 @@ CREATE TABLE IF NOT EXISTS user_record_reads (
   PRIMARY KEY (userId, entityType, entityId),
   INDEX idx_user_record_reads_userId (userId),
   INDEX idx_user_record_reads_entity (entityType, entityId),
+  FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_notification_dismissals (
+  userId INT NOT NULL,
+  notificationId VARCHAR(180) NOT NULL,
+  dismissedAt DATETIME NOT NULL,
+  PRIMARY KEY (userId, notificationId),
+  INDEX idx_user_notification_dismissals_userId (userId),
+  FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_notification_state (
+  userId INT PRIMARY KEY,
+  lastClearedAt DATETIME NULL,
+  updatedAt DATETIME NOT NULL,
   FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
 );
 

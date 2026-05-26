@@ -40,6 +40,7 @@ ACCOUNT_CONFIG = EntityCrudConfig(
     },
     search_fields=("recordId", "accountName", "type", "vertical", "website"),
     nullable_fields=("website", "type", "vertical", "metaData"),
+    duplicate_fields=("accountName", "type", "vertical"),
 )
 
 

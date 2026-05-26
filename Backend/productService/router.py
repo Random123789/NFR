@@ -36,7 +36,7 @@ PRODUCT_CONFIG = EntityCrudConfig(
     },
     search_fields=("recordId", "productName", "productFamily", "productVersion", "description", "ownedBy"),
     nullable_fields=("productFamily", "productVersion", "productUrl", "description", "metaData"),
-    duplicate_fields=("productFamily", "productName", "productVersion", "productUrl"),
+    duplicate_fields=("productFamily", "productName", "productVersion"),
 )
 
 

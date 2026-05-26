@@ -41,7 +41,7 @@ MANTIS_CONFIG = EntityCrudConfig(
     },
     search_fields=("recordId", "description", "mantisId", "mantisUrl", "category", "mantisStatus", "ownedBy"),
     nullable_fields=("mantisId", "mantisUrl", "category", "mantisStatus", "mantisRequestDate", "mantisTargetDate", "metaData"),
-    unique_fields=("mantisId",),
+    duplicate_fields=("description", "mantisId"),
 )
 
 
@@ -171,8 +171,10 @@ async def ensure_mantis_schema() -> None:
 
     if await _index_exists("mantis", "uniq_nfrs_mantisId"):
         await execute_mutation("DROP INDEX uniq_nfrs_mantisId ON mantis")
-    if not await _index_exists("mantis", "uniq_mantis_mantisId"):
-        await execute_mutation("CREATE UNIQUE INDEX uniq_mantis_mantisId ON mantis (mantisId)")
+    if await _index_exists("mantis", "uniq_mantis_mantisId"):
+        await execute_mutation("DROP INDEX uniq_mantis_mantisId ON mantis")
+    if not await _index_exists("mantis", "idx_mantis_mantisId"):
+        await execute_mutation("CREATE INDEX idx_mantis_mantisId ON mantis (mantisId)")
 
     await execute_mutation("UPDATE mantis SET moduleId = 'MOD-MANTIS' WHERE moduleId = 'MOD-NFR'")
     if await _table_exists("case_entity_links"):

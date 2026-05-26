@@ -601,7 +601,7 @@ export function Projects() {
                 >
                   <Bookmark className={`w-5 h-5 ${isBookmarked(selectedProject!.recordId, 'project') ? 'fill-current' : ''}`} />
                 </button>
-                {canDeleteRecords && !isEditing ? (
+                {canDeleteRecords && isEditing ? (
                   <button
                     onClick={() => void handleDelete()}
                     className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-[#B5122B] transition-colors hover:bg-red-50"

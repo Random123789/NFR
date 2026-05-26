@@ -95,7 +95,7 @@ async def _ensure_no_duplicate_record(
     conditions = []
     params: list[Any] = []
 
-    duplicate_fields = config.duplicate_fields or config.data_fields
+    duplicate_fields = config.data_fields if config.duplicate_fields is None else config.duplicate_fields
     for field in duplicate_fields:
         conditions.append(_duplicate_field_condition(field))
         params.extend([_DUPLICATE_NULL_SENTINEL, _canonical_duplicate_value(_db_value(config, data, field))])

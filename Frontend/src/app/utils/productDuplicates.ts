@@ -4,7 +4,6 @@ export type ProductDuplicateInput = {
   productFamily?: string | null;
   productName?: string | null;
   productVersion?: string | null;
-  productUrl?: string | null;
 };
 
 export type ProductSuggestionField = "productFamily" | "productName" | "productVersion" | "productUrl";
@@ -13,7 +12,6 @@ const PRODUCT_DUPLICATE_FIELDS: Array<keyof ProductDuplicateInput> = [
   "productFamily",
   "productName",
   "productVersion",
-  "productUrl",
 ];
 const DUPLICATE_BLANK_VALUE = "__nfr_duplicate_null__";
 

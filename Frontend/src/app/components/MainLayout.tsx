@@ -71,21 +71,19 @@ export function MainLayout() {
   const dismissNotification = async (id: string) => {
     try {
       await dismissNotificationApi(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
     } catch (error) {
       console.error('Failed to dismiss notification:', error);
     }
-
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
   const clearAllNotifications = async () => {
     try {
       await clearAllNotificationsApi();
+      setNotifications([]);
     } catch (error) {
       console.error('Failed to clear notifications:', error);
     }
-
-    setNotifications([]);
   };
 
   const handleSidebarNavigation = (event: MouseEvent<HTMLAnchorElement>, path: string) => {

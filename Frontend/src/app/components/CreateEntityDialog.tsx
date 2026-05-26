@@ -1336,7 +1336,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             <div className="font-medium">Matching product exists: {duplicateQuickProduct.productName}</div>
             <div className="mt-0.5 text-xs text-amber-800">
-              {joinDescriptionParts([duplicateQuickProduct.productFamily, duplicateQuickProduct.productVersion, duplicateQuickProduct.productUrl]) || duplicateQuickProduct.recordId}
+              {joinDescriptionParts([duplicateQuickProduct.productFamily, duplicateQuickProduct.productVersion]) || duplicateQuickProduct.recordId}
             </div>
             <button
               type="button"
@@ -2224,7 +2224,7 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <div className="font-medium">Matching product exists: {duplicateProduct.productName}</div>
           <div className="mt-0.5 text-xs text-amber-800">
-            {joinDescriptionParts([duplicateProduct.productFamily, duplicateProduct.productVersion, duplicateProduct.productUrl]) || duplicateProduct.recordId}
+            {joinDescriptionParts([duplicateProduct.productFamily, duplicateProduct.productVersion]) || duplicateProduct.recordId}
           </div>
         </div>
       ) : null}

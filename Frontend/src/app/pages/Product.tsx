@@ -446,7 +446,7 @@ export function Product() {
                 >
                   <Bookmark className={`w-5 h-5 ${isBookmarked(selectedProduct!.recordId, 'product') ? 'fill-current' : ''}`} />
                 </button>
-                {canDeleteRecords && !isEditing ? (
+                {canDeleteRecords && isEditing ? (
                   <button
                     onClick={() => void handleDelete()}
                     className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-[#B5122B] transition-colors hover:bg-red-50"
@@ -562,7 +562,7 @@ export function Product() {
                   <div className="order-6 sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                     <div className="font-medium">Matching product exists: {duplicateEditedProduct.productName}</div>
                     <div className="mt-0.5 text-xs text-amber-800">
-                      {[duplicateEditedProduct.productFamily, duplicateEditedProduct.productVersion, duplicateEditedProduct.productUrl]
+                      {[duplicateEditedProduct.productFamily, duplicateEditedProduct.productVersion]
                         .map((part) => part?.trim())
                         .filter(Boolean)
                         .join(" | ") || duplicateEditedProduct.recordId}

@@ -508,8 +508,10 @@ async def ensure_case_schema() -> None:
     await _add_index_if_missing("cases", "idx_cases_project", "CREATE INDEX idx_cases_project ON cases (project)")
     await _add_index_if_missing("cases", "idx_cases_seOwner", "CREATE INDEX idx_cases_seOwner ON cases (seOwner)")
     await _add_index_if_missing("cases", "idx_cases_assignedTo", "CREATE INDEX idx_cases_assignedTo ON cases (assignedTo)")
-    await _add_index_if_missing("mantis", "uniq_mantis_mantisId", "CREATE UNIQUE INDEX uniq_mantis_mantisId ON mantis (mantisId)")
-    await _add_index_if_missing("knocks", "uniq_knocks_knockId", "CREATE UNIQUE INDEX uniq_knocks_knockId ON knocks (knockId)")
+    await _drop_index_if_present("mantis", "uniq_mantis_mantisId")
+    await _drop_index_if_present("knocks", "uniq_knocks_knockId")
+    await _add_index_if_missing("mantis", "idx_mantis_mantisId", "CREATE INDEX idx_mantis_mantisId ON mantis (mantisId)")
+    await _add_index_if_missing("knocks", "idx_knocks_knockId", "CREATE INDEX idx_knocks_knockId ON knocks (knockId)")
 
     await _add_foreign_key_if_missing(
         "fk_projects_account",
@@ -1207,8 +1209,6 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
 
     record_id = generate_record_id("REC", "cases")
     payload = _case_payload(data)
-    link_ids = await _effective_case_link_ids(None, data)
-    await _ensure_no_duplicate_case(payload, link_ids)
 
     sql = f"""
         INSERT INTO cases (
@@ -1237,8 +1237,6 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
         raise HTTPException(status_code=404, detail="Case not found")
 
     payload = _case_payload(data)
-    link_ids = await _effective_case_link_ids(recordId, data)
-    await _ensure_no_duplicate_case(payload, link_ids, recordId)
     status_changed = (existing.get("status") or "") != (payload.get("status") or "")
     history = _history_from_record(existing)
     update_entries = build_update_history_entries(

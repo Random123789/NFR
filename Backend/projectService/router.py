@@ -50,6 +50,7 @@ PROJECT_CONFIG = EntityCrudConfig(
     },
     search_fields=("recordId", "projectName", "accountId", "stage", "seOwner", "sfdc", "sfdcValue", "ownedBy"),
     nullable_fields=("accountId", "startDate", "closeDate", "seOwner", "stage", "sfdc", "metaData"),
+    duplicate_fields=("projectName", "accountId", "startDate", "closeDate", "seOwner", "isClosed", "stage", "sfdc"),
 )
 
 

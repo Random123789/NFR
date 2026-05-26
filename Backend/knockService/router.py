@@ -37,7 +37,7 @@ KNOCK_CONFIG = EntityCrudConfig(
     },
     search_fields=("recordId", "description", "knockId", "status", "ownedBy"),
     nullable_fields=("knockId", "knockUrl", "status", "requestDate", "targetDate", "metaData"),
-    unique_fields=("knockId",),
+    duplicate_fields=("description", "knockId"),
 )
 
 
