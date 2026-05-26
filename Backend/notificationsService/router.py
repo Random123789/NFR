@@ -26,6 +26,22 @@ STATUS_TYPE_MAP = {
 MAX_NOTIFICATIONS = 20
 PER_SOURCE_LIMIT = 50
 
+CASE_UPDATED_AT_SQL = """
+COALESCE(
+    CASE
+        WHEN c.history IS NOT NULL AND JSON_LENGTH(c.history) > 0 THEN
+            STR_TO_DATE(
+                JSON_UNQUOTE(
+                    JSON_EXTRACT(c.history, CONCAT('$[', JSON_LENGTH(c.history) - 1, '].timestamp'))
+                ),
+                '%Y-%m-%d %H:%i'
+            )
+        ELSE NULL
+    END,
+    '1970-01-01 00:00:00'
+)
+"""
+
 
 class DismissNotificationRequest(BaseModel):
     notificationId: str
@@ -265,11 +281,11 @@ async def _fetch_case_notifications(actor: dict, cutoff_str: str) -> List[Dict[s
     visibility_clause, visibility_params = _case_visibility_clause(actor, "c")
     rows = await execute_query(
         f"""
-        SELECT c.recordId, c.description, c.status, c.priority, c.updatedAt
+        SELECT c.recordId, c.description, c.status, c.priority, {CASE_UPDATED_AT_SQL} AS updatedAt
         FROM cases c
-        WHERE c.updatedAt >= %s
+        WHERE {CASE_UPDATED_AT_SQL} >= %s
           AND {visibility_clause}
-        ORDER BY c.updatedAt DESC
+        ORDER BY updatedAt DESC
         LIMIT %s
         """,
         [cutoff_str, *visibility_params, PER_SOURCE_LIMIT],
