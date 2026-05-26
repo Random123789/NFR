@@ -43,17 +43,20 @@ KNOCK_CONFIG = EntityCrudConfig(
 
 @router.get("", response_model=List[KnockRecord])
 async def list_knocks(
+    request: Request,
     q: Optional[str] = Query(None),
     limit: int = Query(10),
     offset: int = Query(0),
 ) -> List[KnockRecord]:
     """List all knocks."""
+    await require_auth_user(request)
     return await list_entities(KNOCK_CONFIG, q, limit, offset)
 
 
 @router.get("/{recordId}", response_model=KnockRecord)
-async def get_knock(recordId: str) -> KnockRecord:
+async def get_knock(recordId: str, request: Request) -> KnockRecord:
     """Get knock detail."""
+    await require_auth_user(request)
     return await get_entity_or_404(KNOCK_CONFIG, recordId)
 
 
@@ -84,6 +87,7 @@ async def delete_knock(recordId: str, request: Request) -> dict[str, str]:
 
 
 @router.post("/{recordId}/history", response_model=KnockRecord)
-async def add_knock_history(recordId: str, entry: HistoryEntryCreate) -> KnockRecord:
+async def add_knock_history(recordId: str, entry: HistoryEntryCreate, request: Request) -> KnockRecord:
     """Add a history entry."""
+    await require_auth_user(request)
     return await add_entity_history(KNOCK_CONFIG, recordId, entry)

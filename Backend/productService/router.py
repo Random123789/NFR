@@ -86,17 +86,20 @@ async def ensure_product_schema() -> None:
 
 @router.get("", response_model=List[ProductRecord])
 async def list_products(
+    request: Request,
     q: Optional[str] = Query(None),
     limit: int = Query(10),
     offset: int = Query(0),
 ) -> List[ProductRecord]:
     """List all products."""
+    await require_auth_user(request)
     return await list_entities(PRODUCT_CONFIG, q, limit, offset)
 
 
 @router.get("/{recordId}", response_model=ProductRecord)
-async def get_product(recordId: str) -> ProductRecord:
+async def get_product(recordId: str, request: Request) -> ProductRecord:
     """Get product detail."""
+    await require_auth_user(request)
     return await get_entity_or_404(PRODUCT_CONFIG, recordId)
 
 
@@ -126,6 +129,7 @@ async def delete_product(recordId: str, request: Request) -> dict[str, str]:
 
 
 @router.post("/{recordId}/history", response_model=ProductRecord)
-async def add_product_history(recordId: str, entry: HistoryEntryCreate) -> ProductRecord:
+async def add_product_history(recordId: str, entry: HistoryEntryCreate, request: Request) -> ProductRecord:
     """Add a history entry."""
+    await require_auth_user(request)
     return await add_entity_history(PRODUCT_CONFIG, recordId, entry)

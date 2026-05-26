@@ -120,25 +120,6 @@ class CaseRecord(BaseModel):
     history: List[HistoryEntry] = Field(default_factory=list)
 
 
-class ReportValue(BaseModel):
-    """Report data point."""
-    id: str
-    label: str
-    value: int
-
-
-class ReportSummary(BaseModel):
-    """Report summary statistics."""
-    totalCases: int = 0
-    openCases: int = 0
-    inProgressCases: int = 0
-    escalatedCases: int = 0
-    closedCases: int = 0
-    highPriorityCases: int = 0
-    totalAccounts: int = 0
-    totalProjects: int = 0
-
-
 class ReportFilters(BaseModel):
     """Saved report filter configuration."""
     dateRange: str = "last-30-days"
@@ -272,15 +253,11 @@ class KnockCreate(BaseModel):
 
 
 class CaseCreate(BaseModel):
-    # account/product/mantisId/knockId are accepted as legacy input only; the
-    # canonical relationships are the list fields below and case_entity_links.
-    account: Optional[str] = None
     accountIds: Optional[List[str]] = None
     project: Optional[str] = None
     category: Optional[CaseCategory] = None
     escalationType: Optional[CaseEscalationType] = None
     escalationNote: Optional[str] = None
-    product: Optional[str] = None
     productIds: Optional[List[str]] = None
     closeDate: Optional[str] = None
     description: str
@@ -288,9 +265,7 @@ class CaseCreate(BaseModel):
     assignedTo: Optional[str] = None
     priority: Optional[CasePriority] = None
     status: Optional[CaseStatus] = None
-    knockId: Optional[str] = None
     knockRecordIds: Optional[List[str]] = None
-    mantisId: Optional[str] = None
     mantisRecordIds: Optional[List[str]] = None
 
 

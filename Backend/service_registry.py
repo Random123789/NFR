@@ -62,6 +62,8 @@ async def startup_services() -> None:
     for service in SERVICES:
         if service.startup:
             try:
+                logger.info("Running bootstrap for %s", service.name)
                 await service.startup()
             except Exception:
                 logger.exception("Service bootstrap failed for %s", service.name)
+                raise

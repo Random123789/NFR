@@ -214,29 +214,6 @@ export interface CaseWatcherInput {
   userId?: number | null;
 }
 
-export interface ReportSummary {
-  totalCases: number;
-  openCases: number;
-  inProgressCases?: number;
-  escalatedCases: number;
-  closedCases: number;
-  highPriorityCases?: number;
-  totalAccounts?: number;
-  totalProjects?: number;
-}
-
-export interface ReportValue {
-  id?: string;
-  label: string;
-  value: number;
-}
-
-export interface ReportTimelineValue {
-  monthLabel: string;
-  created: number;
-  closed: number;
-}
-
 export interface ReportFilters {
   dateRange: string;
   owner: string;

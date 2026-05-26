@@ -191,17 +191,20 @@ def _mantis_payload_with_url(data: MantisCreate) -> dict[str, object]:
 
 @router.get("", response_model=List[MantisRecord])
 async def list_mantis(
+    request: Request,
     q: Optional[str] = Query(None),
     limit: int = Query(10),
     offset: int = Query(0),
 ) -> List[MantisRecord]:
     """List all Mantis records."""
+    await require_auth_user(request)
     return await list_entities(MANTIS_CONFIG, q, limit, offset)
 
 
 @router.get("/{recordId}", response_model=MantisRecord)
-async def get_mantis(recordId: str) -> MantisRecord:
+async def get_mantis(recordId: str, request: Request) -> MantisRecord:
     """Get Mantis detail."""
+    await require_auth_user(request)
     return await get_entity_or_404(MANTIS_CONFIG, recordId)
 
 
@@ -232,6 +235,7 @@ async def delete_mantis(recordId: str, request: Request) -> dict[str, str]:
 
 
 @router.post("/{recordId}/history", response_model=MantisRecord)
-async def add_mantis_history(recordId: str, entry: HistoryEntryCreate) -> MantisRecord:
+async def add_mantis_history(recordId: str, entry: HistoryEntryCreate, request: Request) -> MantisRecord:
     """Add a history entry."""
+    await require_auth_user(request)
     return await add_entity_history(MANTIS_CONFIG, recordId, entry)

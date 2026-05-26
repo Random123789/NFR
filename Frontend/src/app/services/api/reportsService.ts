@@ -5,35 +5,7 @@ import type {
   ReportBuilderSchema,
   ReportQuerySpec,
   ReportRunResult,
-  ReportSummary,
-  ReportTimelineValue,
-  ReportValue,
 } from './types';
-
-function withRange(endpoint: string, range?: string) {
-  if (!range) return endpoint;
-  return `${endpoint}?range=${encodeURIComponent(range)}`;
-}
-
-export async function getReportSummary(range?: string) {
-  return fetchJson<ReportSummary>(withRange('/reports/summary', range));
-}
-
-export async function getCasesByStatusReport(range?: string) {
-  return fetchJson<ReportValue[]>(withRange('/reports/cases-by-status', range));
-}
-
-export async function getCasesByPriorityReport(range?: string) {
-  return fetchJson<ReportValue[]>(withRange('/reports/cases-by-priority', range));
-}
-
-export async function getCasesByProductReport(range?: string) {
-  return fetchJson<ReportValue[]>(withRange('/reports/cases-by-product', range));
-}
-
-export async function getCasesOverTimeReport(range?: string) {
-  return fetchJson<ReportTimelineValue[]>(withRange('/reports/cases-over-time', range));
-}
 
 export async function getCustomReports() {
   return fetchJson<CustomReportRecord[]>('/reports/custom');

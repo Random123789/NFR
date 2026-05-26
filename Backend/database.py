@@ -1,5 +1,6 @@
 """Database connection and query helpers."""
 
+from anyio import to_thread
 import json
 import mysql.connector
 from mysql.connector import pooling
@@ -37,19 +38,61 @@ def get_connection():
     return db_pool.get_connection()
 
 
-async def ping_database() -> bool:
-    """Test database connectivity."""
+def _parse_history_field(row: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if row and "history" in row and row["history"]:
+        try:
+            row["history"] = json.loads(row["history"])
+        except (json.JSONDecodeError, TypeError):
+            row["history"] = []
+    return row
+
+
+def _ping_database_sync() -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
         cursor.execute("SELECT 1")
         cursor.fetchone()
+        return True
+    finally:
         cursor.close()
         conn.close()
-        return True
+
+
+async def ping_database() -> bool:
+    """Test database connectivity without blocking the event loop."""
+    try:
+        return await to_thread.run_sync(_ping_database_sync)
     except Exception:
         logger.exception("Database ping failed")
         return False
+
+
+def _execute_query_sync(
+    sql: str,
+    params: Optional[List[Any]] = None,
+    fetch_one: bool = False,
+) -> Any:
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        if params is not None:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
+        
+        if fetch_one:
+            result = cursor.fetchone()
+            return _parse_history_field(result)
+
+        results = cursor.fetchall()
+        for row in results:
+            _parse_history_field(row)
+        return results
+    finally:
+        cursor.close()
+        conn.close()
 
 
 async def execute_query(
@@ -58,7 +101,7 @@ async def execute_query(
     fetch_one: bool = False,
 ) -> Any:
     """
-    Execute a SELECT query.
+    Execute a SELECT query without blocking the event loop.
     
     Args:
         sql: SQL query string with %s placeholders
@@ -68,58 +111,18 @@ async def execute_query(
     Returns:
         Single dict if fetch_one=True, list of dicts if fetch_one=False
     """
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    
-    try:
-        if params:
-            cursor.execute(sql, params)
-        else:
-            cursor.execute(sql)
-        
-        if fetch_one:
-            result = cursor.fetchone()
-            # Parse JSON history if present
-            if result and "history" in result and result["history"]:
-                try:
-                    result["history"] = json.loads(result["history"])
-                except (json.JSONDecodeError, TypeError):
-                    result["history"] = []
-            return result
-        else:
-            results = cursor.fetchall()
-            # Parse JSON history for all results
-            for row in results:
-                if "history" in row and row["history"]:
-                    try:
-                        row["history"] = json.loads(row["history"])
-                    except (json.JSONDecodeError, TypeError):
-                        row["history"] = []
-            return results
-    finally:
-        cursor.close()
-        conn.close()
+    return await to_thread.run_sync(_execute_query_sync, sql, params, fetch_one)
 
 
-async def execute_mutation(
+def _execute_mutation_sync(
     sql: str,
     params: Optional[List[Any]] = None,
 ) -> int:
-    """
-    Execute INSERT, UPDATE, or DELETE query.
-    
-    Args:
-        sql: SQL query string with %s placeholders
-        params: Query parameters
-    
-    Returns:
-        Number of affected rows or last insert ID
-    """
     conn = get_connection()
     cursor = conn.cursor()
     
     try:
-        if params:
+        if params is not None:
             cursor.execute(sql, params)
         else:
             cursor.execute(sql)
@@ -133,6 +136,23 @@ async def execute_mutation(
     finally:
         cursor.close()
         conn.close()
+
+
+async def execute_mutation(
+    sql: str,
+    params: Optional[List[Any]] = None,
+) -> int:
+    """
+    Execute INSERT, UPDATE, or DELETE query without blocking the event loop.
+    
+    Args:
+        sql: SQL query string with %s placeholders
+        params: Query parameters
+    
+    Returns:
+        Number of affected rows or last insert ID
+    """
+    return await to_thread.run_sync(_execute_mutation_sync, sql, params)
 
 
 def serialize_history(history: List[Dict[str, Any]]) -> str:
@@ -150,18 +170,7 @@ def deserialize_history(history_str: Optional[str]) -> List[Dict[str, Any]]:
         return []
 
 
-def generate_record_id(prefix: str, table_name: str) -> str:
-    """
-    Generate a new record ID with prefix and sequence.
-    
-    Args:
-        prefix: Record prefix (e.g., 'ACC', 'PRD', 'REC')
-        table_name: Table name to query for last ID
-    
-    Returns:
-        New record ID (e.g., 'ACC-005')
-    """
-    # This should be called synchronously from routes
+def _generate_record_id_sync(prefix: str, table_name: str) -> str:
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
     
@@ -176,3 +185,17 @@ def generate_record_id(prefix: str, table_name: str) -> str:
     finally:
         cursor.close()
         conn.close()
+
+
+async def generate_record_id(prefix: str, table_name: str) -> str:
+    """
+    Generate a new record ID with prefix and sequence without blocking the event loop.
+    
+    Args:
+        prefix: Record prefix (e.g., 'ACC', 'PRD', 'REC')
+        table_name: Table name to query for last ID
+    
+    Returns:
+        New record ID (e.g., 'ACC-005')
+    """
+    return await to_thread.run_sync(_generate_record_id_sync, prefix, table_name)

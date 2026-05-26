@@ -275,19 +275,55 @@ async def ensure_auth_tables() -> None:
     )
 
 
+async def _active_admin_exists() -> bool:
+    admin = await execute_query(
+        """
+        SELECT id
+        FROM users
+        WHERE isActive = 1
+          AND LOWER(TRIM(role)) IN ('admin', 'administrator')
+        LIMIT 1
+        """,
+        fetch_one=True,
+    )
+    return bool(admin)
+
+
 async def ensure_default_user() -> None:
     await ensure_auth_tables()
+    if await _active_admin_exists():
+        return
+
     existing = await execute_query("SELECT id FROM users WHERE email = %s LIMIT 1", [DEFAULT_USER_EMAIL], fetch_one=True)
     legacy = await execute_query("SELECT id FROM users WHERE email = %s LIMIT 1", [LEGACY_DEFAULT_USER_EMAIL], fetch_one=True)
     if existing:
         if legacy:
             await execute_mutation("DELETE FROM users WHERE id = %s", [legacy["id"]])
+        await execute_mutation(
+            """
+            UPDATE users
+            SET role = %s,
+                passwordHash = %s,
+                isActive = 1,
+                updatedAt = %s
+            WHERE id = %s
+            """,
+            [DEFAULT_USER_ROLE, _hash_password(DEFAULT_USER_PASSWORD), _now(), existing["id"]],
+        )
         return
 
     if legacy:
         await execute_mutation(
-            "UPDATE users SET email = %s, updatedAt = %s WHERE id = %s",
-            [DEFAULT_USER_EMAIL, _now(), legacy["id"]],
+            """
+            UPDATE users
+            SET email = %s,
+                role = %s,
+                passwordHash = %s,
+                isActive = 1,
+                updatedAt = %s
+            WHERE id = %s
+            """,
+            [DEFAULT_USER_EMAIL, DEFAULT_USER_ROLE, _hash_password(DEFAULT_USER_PASSWORD), _now(), legacy["id"]],
         )
         return
 
@@ -328,7 +364,6 @@ async def _get_user_from_token(token: str) -> Optional[dict]:
 
 
 async def require_auth_user(request: Request) -> dict:
-    await ensure_default_user()
     token = _get_token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -356,7 +391,6 @@ async def require_manager_or_admin_user(request: Request) -> dict:
 
 @router.post("/login", response_model=LoginResponse)
 async def login(data: LoginRequest) -> LoginResponse:
-    await ensure_default_user()
     identifier = data.email.strip().lower()
     matching_users = await execute_query(
         """

@@ -192,7 +192,7 @@ async def create_entity(
     await _ensure_unique_fields(config, data)
     await _ensure_no_duplicate_record(config, data)
 
-    record_id = generate_record_id(config.record_prefix, config.table_name)
+    record_id = await generate_record_id(config.record_prefix, config.table_name)
     now = _now()
     actor = actor_display_name or "System"
     history = [build_history_entry("Created", f"{config.entity_label} created", user=actor)]

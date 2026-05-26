@@ -426,7 +426,6 @@ async def _last_cleared_at(user_id: int) -> datetime | None:
 @router.get("/recent")
 async def get_recent_notifications(request: Request, hours: int = Query(24, ge=1, le=168)) -> List[Dict[str, Any]]:
     user = await require_auth_user(request)
-    await ensure_notification_tables()
 
     cutoff = datetime.now() - timedelta(hours=hours)
     cutoff_str = current_timestamp(cutoff)
@@ -462,7 +461,6 @@ async def get_recent_notifications(request: Request, hours: int = Query(24, ge=1
 @router.post("/dismiss")
 async def dismiss_notification(request: Request, payload: DismissNotificationRequest) -> Dict[str, bool]:
     user = await require_auth_user(request)
-    await ensure_notification_tables()
 
     notification_id = payload.notificationId.strip()
     if not notification_id:
@@ -483,7 +481,6 @@ async def dismiss_notification(request: Request, payload: DismissNotificationReq
 @router.post("/clear-all")
 async def clear_all_notifications(request: Request) -> Dict[str, bool]:
     user = await require_auth_user(request)
-    await ensure_notification_tables()
 
     now = current_timestamp()
     await execute_mutation(

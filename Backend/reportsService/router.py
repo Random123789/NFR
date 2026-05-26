@@ -16,8 +16,6 @@ from schemas import (
     ReportFilters,
     ReportQuerySpec,
     ReportRunResult,
-    ReportSummary,
-    ReportValue,
 )
 from utils import current_timestamp, format_datetime_minute, trim_timestamp_seconds
 
@@ -140,118 +138,9 @@ def _build_custom_report_record(row: dict) -> CustomReportRecord:
     )
 
 
-@router.get("/summary", response_model=ReportSummary)
-async def get_summary() -> ReportSummary:
-    """Get key metrics summary."""
-    
-    cases = await execute_query("SELECT status, priority FROM cases")
-    accounts = await execute_query("SELECT COUNT(*) as count FROM accounts")
-    projects = await execute_query("SELECT COUNT(*) as count FROM projects")
-    
-    total_cases = len(cases)
-    open_cases = sum(1 for c in cases if c.get("status") == "Open")
-    in_progress_cases = sum(1 for c in cases if c.get("status") == "In Progress")
-    escalated_cases = sum(1 for c in cases if c.get("status") == "Escalated")
-    closed_cases = sum(1 for c in cases if c.get("status") == "Closed")
-    high_priority_cases = sum(1 for c in cases if c.get("priority") == "High" or c.get("priority") == "Critical")
-    
-    return ReportSummary(
-        totalCases=total_cases,
-        openCases=open_cases,
-        inProgressCases=in_progress_cases,
-        escalatedCases=escalated_cases,
-        closedCases=closed_cases,
-        highPriorityCases=high_priority_cases,
-        totalAccounts=accounts[0]["count"] if accounts else 0,
-        totalProjects=projects[0]["count"] if projects else 0,
-    )
-
-
-@router.get("/cases-by-status", response_model=List[ReportValue])
-async def get_cases_by_status() -> List[ReportValue]:
-    """Get case count breakdown by status."""
-    
-    sql = "SELECT status as name, COUNT(*) as value FROM cases GROUP BY status"
-    results = await execute_query(sql)
-    
-    report = []
-    for idx, row in enumerate(results):
-        report.append(ReportValue(
-            id=f"status-{idx}",
-            label=row.get("name", "Unknown"),
-            value=row.get("value", 0)
-        ))
-    return report
-
-
-@router.get("/cases-by-priority", response_model=List[ReportValue])
-async def get_cases_by_priority() -> List[ReportValue]:
-    """Get case count breakdown by priority."""
-    
-    sql = "SELECT priority as name, COUNT(*) as value FROM cases GROUP BY priority"
-    results = await execute_query(sql)
-    
-    report = []
-    for idx, row in enumerate(results):
-        report.append(ReportValue(
-            id=f"priority-{idx}",
-            label=row.get("name", "Unknown"),
-            value=row.get("value", 0)
-        ))
-    return report
-
-
-@router.get("/cases-by-product", response_model=List[ReportValue])
-async def get_cases_by_product() -> List[ReportValue]:
-    """Get case count breakdown by product."""
-    
-    sql = """
-        SELECT p.recordId AS product, p.productName as name, COUNT(DISTINCT cel.caseRecordId) as value
-        FROM case_entity_links cel
-        INNER JOIN products p ON p.recordId = cel.entityRecordId
-        WHERE cel.entityType = 'product'
-        GROUP BY p.recordId, p.productName
-    """
-    results = await execute_query(sql)
-    
-    report = []
-    for idx, row in enumerate(results):
-        report.append(ReportValue(
-            id=f"product-{idx}",
-            label=row.get("name", "Unknown"),
-            value=row.get("value", 0)
-        ))
-    return report
-
-
-@router.get("/cases-over-time", response_model=List[ReportValue])
-async def get_cases_over_time() -> List[ReportValue]:
-    """Get case close-date trend over time."""
-    
-    sql = """
-        SELECT DATE(closeDate) as date, COUNT(*) as value
-        FROM cases
-        WHERE closeDate IS NOT NULL AND TRIM(closeDate) <> ''
-        GROUP BY DATE(closeDate)
-        ORDER BY date DESC
-        LIMIT 30
-    """
-    results = await execute_query(sql)
-    
-    report = []
-    for idx, row in enumerate(results):
-        report.append(ReportValue(
-            id=f"date-{idx}",
-            label=str(row.get("date", "Unknown")),
-            value=row.get("value", 0)
-        ))
-    return report
-
-
 @router.get("/custom", response_model=List[CustomReportRecord])
 async def list_custom_reports(request: Request) -> List[CustomReportRecord]:
     actor = await require_auth_user(request)
-    await ensure_custom_report_tables()
 
     rows = await execute_query(
         """
@@ -288,7 +177,6 @@ async def preview_report(request: Request, payload: ReportQuerySpec) -> ReportRu
 @router.post("/custom", response_model=CustomReportRecord)
 async def create_custom_report(request: Request, payload: CustomReportCreate) -> CustomReportRecord:
     actor = await require_auth_user(request)
-    await ensure_custom_report_tables()
 
     next_order_row = await execute_query(
         """
@@ -343,7 +231,6 @@ async def create_custom_report(request: Request, payload: CustomReportCreate) ->
 @router.put("/custom/{reportId}", response_model=CustomReportRecord)
 async def update_custom_report(reportId: int, request: Request, payload: CustomReportCreate) -> CustomReportRecord:
     actor = await require_auth_user(request)
-    await ensure_custom_report_tables()
 
     existing = await execute_query(
         "SELECT id FROM custom_reports WHERE id = %s AND userId = %s LIMIT 1",
@@ -398,7 +285,6 @@ async def update_custom_report(reportId: int, request: Request, payload: CustomR
 @router.get("/custom/{reportId}/run", response_model=ReportRunResult)
 async def run_custom_report(reportId: int, request: Request) -> ReportRunResult:
     actor = await require_auth_user(request)
-    await ensure_custom_report_tables()
 
     row = await execute_query(
         """
@@ -429,7 +315,6 @@ async def run_custom_report(reportId: int, request: Request) -> ReportRunResult:
 @router.delete("/custom/{reportId}")
 async def delete_custom_report(reportId: int, request: Request) -> dict:
     actor = await require_auth_user(request)
-    await ensure_custom_report_tables()
 
     existing = await execute_query(
         "SELECT id FROM custom_reports WHERE id = %s AND userId = %s LIMIT 1",

@@ -195,17 +195,20 @@ async def ensure_project_schema() -> None:
 
 @router.get("", response_model=List[ProjectRecord])
 async def list_projects(
+    request: Request,
     q: Optional[str] = Query(None),
     limit: int = Query(10),
     offset: int = Query(0),
 ) -> List[ProjectRecord]:
     """List all projects."""
+    await require_auth_user(request)
     return await list_entities(PROJECT_CONFIG, q, limit, offset)
 
 
 @router.get("/{recordId}", response_model=ProjectRecord)
-async def get_project(recordId: str) -> ProjectRecord:
+async def get_project(recordId: str, request: Request) -> ProjectRecord:
     """Get project detail."""
+    await require_auth_user(request)
     return await get_entity_or_404(PROJECT_CONFIG, recordId)
 
 
@@ -232,6 +235,7 @@ async def delete_project(recordId: str, request: Request) -> dict[str, str]:
 
 
 @router.post("/{recordId}/history", response_model=ProjectRecord)
-async def add_project_history(recordId: str, entry: HistoryEntryCreate) -> ProjectRecord:
+async def add_project_history(recordId: str, entry: HistoryEntryCreate, request: Request) -> ProjectRecord:
     """Add a history entry."""
+    await require_auth_user(request)
     return await add_entity_history(PROJECT_CONFIG, recordId, entry)

@@ -103,7 +103,6 @@ async def _get_or_create_user_read_state(user_id: int) -> str:
 @router.get("", response_model=RecordReadStateResponse)
 async def get_record_read_state(request: Request) -> RecordReadStateResponse:
     user = await require_auth_user(request)
-    await ensure_record_read_tables()
 
     baseline_at = await _get_or_create_user_read_state(user["id"])
     rows = await execute_query(
@@ -131,7 +130,6 @@ async def get_record_read_state(request: Request) -> RecordReadStateResponse:
 @router.post("/mark-read", response_model=RecordReadEntry)
 async def mark_record_read(request: Request, payload: MarkRecordReadRequest) -> RecordReadEntry:
     user = await require_auth_user(request)
-    await ensure_record_read_tables()
 
     entity_type = _normalize_entity_type(payload.entityType)
     entity_id = _normalize_entity_id(payload.entityId)

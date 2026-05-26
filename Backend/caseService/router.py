@@ -681,30 +681,6 @@ async def cleanup_case_entity_links() -> None:
         )
 
 
-async def _lookup_mantis_record_id(mantis_id: Optional[str]) -> Optional[str]:
-    if not mantis_id:
-        return None
-
-    mantis = await execute_query(
-        "SELECT recordId FROM mantis WHERE mantisId = %s LIMIT 1",
-        [mantis_id],
-        fetch_one=True,
-    )
-    return mantis["recordId"] if mantis else None
-
-
-async def _lookup_knock_record_id(knock_id: Optional[str]) -> Optional[str]:
-    if not knock_id:
-        return None
-
-    knock = await execute_query(
-        "SELECT recordId FROM knocks WHERE knockId = %s LIMIT 1",
-        [knock_id],
-        fetch_one=True,
-    )
-    return knock["recordId"] if knock else None
-
-
 async def _upsert_case_entity_link(record_id: str, entity_type: str, entity_record_id: str, actor_display_name: str) -> None:
     await execute_mutation(
         """
@@ -718,22 +694,9 @@ async def _upsert_case_entity_link(record_id: str, entity_type: str, entity_reco
 
 async def _case_link_ids_from_data(data: CaseCreate) -> dict[str, list[str]]:
     account_ids = _unique_clean_ids(data.accountIds)
-    if data.account:
-        account_ids = _unique_clean_ids([*account_ids, data.account])
-
     product_ids = _unique_clean_ids(data.productIds)
-    if data.product:
-        product_ids = _unique_clean_ids([*product_ids, data.product])
-
     mantis_ids = _unique_clean_ids(data.mantisRecordIds)
-    legacy_mantis_record_id = await _lookup_mantis_record_id(data.mantisId)
-    if legacy_mantis_record_id:
-        mantis_ids = _unique_clean_ids([*mantis_ids, legacy_mantis_record_id])
-
     knock_ids = _unique_clean_ids(data.knockRecordIds)
-    legacy_knock_record_id = await _lookup_knock_record_id(data.knockId)
-    if legacy_knock_record_id:
-        knock_ids = _unique_clean_ids([*knock_ids, legacy_knock_record_id])
 
     return {
         "account": account_ids,
@@ -746,13 +709,13 @@ async def _case_link_ids_from_data(data: CaseCreate) -> dict[str, list[str]]:
 def _case_link_field_was_provided(data: CaseCreate, entity_type: str) -> bool:
     fields = data.__fields_set__
     if entity_type == "account":
-        return "accountIds" in fields or "account" in fields
+        return "accountIds" in fields
     if entity_type == "product":
-        return "productIds" in fields or "product" in fields
+        return "productIds" in fields
     if entity_type == "mantis":
-        return "mantisRecordIds" in fields or "mantisId" in fields
+        return "mantisRecordIds" in fields
     if entity_type == "knock":
-        return "knockRecordIds" in fields or "knockId" in fields
+        return "knockRecordIds" in fields
     return False
 
 
@@ -1173,11 +1136,8 @@ async def list_cases(
 @router.get("/linked")
 async def get_linked_cases(request: Request, entityType: str = Query(...), entityRecordId: str = Query(...)) -> list[dict]:
     actor = await require_auth_user(request)
-    await ensure_case_link_tables()
 
     entity_type = entityType.strip().lower()
-    if entity_type == "nfr":
-        entity_type = "mantis"
     if entity_type not in CASE_LINK_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported entity type")
 
@@ -1205,9 +1165,8 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
     """Create a new case."""
 
     actor = await require_auth_user(request)
-    await ensure_case_link_tables()
 
-    record_id = generate_record_id("REC", "cases")
+    record_id = await generate_record_id("REC", "cases")
     payload = _case_payload(data)
 
     sql = f"""
@@ -1302,7 +1261,6 @@ async def add_case_watcher(recordId: str, payload: CaseWatcherRequest, request: 
     """Add a watcher to a visible case."""
 
     actor = await require_auth_user(request)
-    await ensure_case_link_tables()
 
     existing = await get_case_or_404(recordId)
     if not await _case_is_visible_to_actor(existing, actor):
@@ -1330,7 +1288,6 @@ async def remove_case_watcher(recordId: str, request: Request, displayName: str 
     """Remove a watcher from a visible case."""
 
     actor = await require_auth_user(request)
-    await ensure_case_link_tables()
 
     existing = await get_case_or_404(recordId)
     if not await _case_is_visible_to_actor(existing, actor):
@@ -1375,7 +1332,6 @@ async def delete_case(recordId: str, request: Request):
 @router.get("/{recordId}/links")
 async def get_case_links(recordId: str, request: Request) -> dict:
     actor = await require_auth_user(request)
-    await ensure_case_link_tables()
 
     case_row = await get_case_or_404(recordId)
     if not await _case_is_visible_to_actor(case_row, actor):
@@ -1387,15 +1343,12 @@ async def get_case_links(recordId: str, request: Request) -> dict:
 @router.post("/{recordId}/links")
 async def add_case_link(recordId: str, request: Request, payload: CaseLinkRequest) -> dict:
     actor = await require_auth_user(request)
-    await ensure_case_link_tables()
 
     case_row = await get_case_or_404(recordId)
     if not await _case_is_visible_to_actor(case_row, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
     entity_type = payload.entityType.strip().lower()
-    if entity_type == "nfr":
-        entity_type = "mantis"
     if entity_type not in CASE_LINK_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported entity type")
 
@@ -1429,15 +1382,12 @@ async def add_case_link(recordId: str, request: Request, payload: CaseLinkReques
 @router.delete("/{recordId}/links/{entityType}/{entityRecordId}")
 async def remove_case_link(recordId: str, entityType: str, entityRecordId: str, request: Request) -> dict:
     actor = await require_auth_user(request)
-    await ensure_case_link_tables()
 
     case_row = await get_case_or_404(recordId)
     if not await _case_is_visible_to_actor(case_row, actor):
         raise HTTPException(status_code=404, detail="Case not found")
 
     entity_type = entityType.strip().lower()
-    if entity_type == "nfr":
-        entity_type = "mantis"
     if entity_type not in CASE_LINK_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported entity type")
 

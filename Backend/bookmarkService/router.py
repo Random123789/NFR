@@ -61,7 +61,6 @@ def _to_timestamp(value: object) -> int:
 @router.get("", response_model=List[BookmarkResponse])
 async def list_bookmarks(request: Request) -> List[BookmarkResponse]:
     user = await require_auth_user(request)
-    await ensure_bookmark_tables()
 
     rows = await execute_query(
         """
@@ -88,7 +87,6 @@ async def list_bookmarks(request: Request) -> List[BookmarkResponse]:
 @router.post("", response_model=dict)
 async def add_bookmark(request: Request, item: BookmarkItem):
     user = await require_auth_user(request)
-    await ensure_bookmark_tables()
 
     if item.type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="Invalid bookmark type")
@@ -108,7 +106,6 @@ async def add_bookmark(request: Request, item: BookmarkItem):
 @router.delete("/{entity_type}/{entity_id}")
 async def remove_bookmark(request: Request, entity_type: str, entity_id: str):
     user = await require_auth_user(request)
-    await ensure_bookmark_tables()
 
     if entity_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="Invalid bookmark type")

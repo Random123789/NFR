@@ -1,12 +1,7 @@
 import { fetchJson } from './http';
 import type { CaseLinkEntityType, CaseLinksResponse, CaseRecord, CaseWatcherInput, HistoryEntry } from './types';
 
-type CaseCreateInput = Pick<CaseRecord, 'description'> & Partial<Omit<CaseRecord, 'recordId'>> & {
-  account?: string | null;
-  product?: string | null;
-  mantisId?: string | null;
-  knockId?: string | null;
-};
+type CaseCreateInput = Pick<CaseRecord, 'description'> & Partial<Omit<CaseRecord, 'recordId'>>;
 
 export async function listCases() {
   return fetchJson<CaseRecord[]>('/cases?limit=10000');
