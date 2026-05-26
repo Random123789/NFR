@@ -6,7 +6,7 @@ from typing import List, Optional
 import json
 import logging
 
-from authService import require_auth_user
+from authService import require_auth_user, require_manager_or_admin_user
 from database import execute_mutation, execute_query, generate_record_id
 from email_notifications import send_case_update_notification
 from schemas import CaseCreate, CaseRecord, HistoryEntryCreate
@@ -14,6 +14,7 @@ from utils import build_history_entry, build_update_history_entries, current_tim
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 logger = logging.getLogger(__name__)
+_DUPLICATE_NULL_SENTINEL = "__nfr_duplicate_null__"
 
 CASE_FIELDS = [
     "recordId",
@@ -62,6 +63,14 @@ CASE_LINK_ARRAY_FIELDS = {
 class CaseLinkRequest(BaseModel):
     entityType: str
     entityRecordId: str
+
+
+class CaseWatcherRequest(BaseModel):
+    displayName: Optional[str] = None
+    userId: Optional[int] = None
+
+
+_CASE_WATCHERS_BACKFILLED = False
 
 
 async def _column_exists(table_name: str, column_name: str) -> bool:
@@ -211,6 +220,221 @@ def _history_from_record(record: dict) -> list[dict]:
     return list(history) if isinstance(history, list) else []
 
 
+def _canonical_duplicate_value(value) -> str:
+    if value is None:
+        return _DUPLICATE_NULL_SENTINEL
+
+    if isinstance(value, bool):
+        return "1" if value else "0"
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned.lower() if cleaned else _DUPLICATE_NULL_SENTINEL
+
+    return json.dumps(value, sort_keys=True, default=str).strip().lower()
+
+
+def _duplicate_field_condition(field: str) -> str:
+    return f"COALESCE(NULLIF(LOWER(TRIM(CAST(`{field}` AS CHAR))), ''), %s) = %s"
+
+
+def _clean_watcher_display_name(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    if text.lower() in {"-", "none", "null", "unassigned", "no se owner"}:
+        return ""
+
+    return text
+
+
+def _unique_watcher_names(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen = set()
+    for value in values:
+        display_name = _clean_watcher_display_name(value)
+        key = display_name.lower()
+        if display_name and key not in seen:
+            cleaned.append(display_name)
+            seen.add(key)
+    return cleaned
+
+
+def _watcher_names_from_case_record(case_record: dict) -> list[str]:
+    names = [case_record.get("seOwner"), case_record.get("assignedTo")]
+    history = case_record.get("history")
+
+    if isinstance(history, list):
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+
+            field = str(entry.get("field") or "").strip().lower()
+            changes = str(entry.get("changes") or "").strip().lower()
+            if field in {"status", "escalation status"} or "status changed" in changes or "escalation status changed" in changes:
+                names.append(entry.get("user"))
+
+            if field in {"se owner", "assigned to"}:
+                names.extend([entry.get("previousValue"), entry.get("newValue")])
+
+    return _unique_watcher_names(names)
+
+
+async def _resolve_case_watcher_identity(display_name: Optional[str] = None, user_id: Optional[int] = None) -> Optional[dict]:
+    if user_id:
+        user = await execute_query(
+            """
+            SELECT id, displayName
+            FROM users
+            WHERE id = %s
+              AND isActive = 1
+            LIMIT 1
+            """,
+            [user_id],
+            fetch_one=True,
+        )
+        if user:
+            return {"userId": user["id"], "displayName": user["displayName"]}
+
+    cleaned = _clean_watcher_display_name(display_name)
+    if not cleaned:
+        return None
+
+    normalized = cleaned.lower()
+    user = await execute_query(
+        """
+        SELECT id, displayName
+        FROM users
+        WHERE isActive = 1
+          AND (LOWER(TRIM(displayName)) = %s OR LOWER(TRIM(email)) = %s)
+        ORDER BY CASE
+          WHEN LOWER(TRIM(displayName)) = %s THEN 0
+          ELSE 1
+        END, id ASC
+        LIMIT 1
+        """,
+        [normalized, normalized, normalized],
+        fetch_one=True,
+    )
+    if user:
+        return {"userId": user["id"], "displayName": user["displayName"]}
+
+    return {"userId": None, "displayName": cleaned}
+
+
+async def _upsert_case_watcher(record_id: str, user_id: Optional[int], display_name: str, watched_by: Optional[str]) -> None:
+    cleaned = _clean_watcher_display_name(display_name)
+    if not cleaned:
+        return
+
+    await execute_mutation(
+        """
+        DELETE FROM case_watcher_opt_outs
+        WHERE caseRecordId = %s
+          AND LOWER(TRIM(displayName)) = %s
+        """,
+        [record_id, cleaned.lower()],
+    )
+
+    now = current_timestamp()
+    await execute_mutation(
+        """
+        INSERT INTO case_watchers (caseRecordId, userId, displayName, watchedAt, watchedBy)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+          userId = VALUES(userId),
+          watchedAt = VALUES(watchedAt),
+          watchedBy = VALUES(watchedBy)
+        """,
+        [record_id, user_id, cleaned, now, watched_by],
+    )
+
+
+async def _case_watcher_has_opted_out(record_id: str, display_name: str) -> bool:
+    cleaned = _clean_watcher_display_name(display_name)
+    if not cleaned:
+        return False
+
+    row = await execute_query(
+        """
+        SELECT 1
+        FROM case_watcher_opt_outs
+        WHERE caseRecordId = %s
+          AND LOWER(TRIM(displayName)) = %s
+        LIMIT 1
+        """,
+        [record_id, cleaned.lower()],
+        fetch_one=True,
+    )
+    return bool(row)
+
+
+async def _add_case_watcher_opt_out(record_id: str, display_name: str, opted_out_by: Optional[str]) -> None:
+    cleaned = _clean_watcher_display_name(display_name)
+    if not cleaned:
+        return
+
+    await execute_mutation(
+        """
+        INSERT INTO case_watcher_opt_outs (caseRecordId, displayName, optedOutAt, optedOutBy)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+          optedOutAt = VALUES(optedOutAt),
+          optedOutBy = VALUES(optedOutBy)
+        """,
+        [record_id, cleaned, current_timestamp(), opted_out_by],
+    )
+
+
+async def _add_case_watcher_by_display_name(
+    record_id: str,
+    display_name: Optional[str],
+    watched_by: Optional[str],
+    respect_opt_out: bool = True,
+) -> None:
+    identity = await _resolve_case_watcher_identity(display_name=display_name)
+    if not identity:
+        return
+
+    if respect_opt_out and await _case_watcher_has_opted_out(record_id, identity["displayName"]):
+        return
+
+    await _upsert_case_watcher(record_id, identity.get("userId"), identity["displayName"], watched_by)
+
+
+async def _add_case_watchers_by_names(record_id: str, names: list[str], watched_by: Optional[str]) -> None:
+    for display_name in _unique_watcher_names(names):
+        await _add_case_watcher_by_display_name(record_id, display_name, watched_by)
+
+
+async def _add_case_people_watchers(record_id: str, *case_records: dict, watched_by: Optional[str]) -> None:
+    names: list[str] = []
+    for case_record in case_records:
+        names.extend([case_record.get("seOwner"), case_record.get("assignedTo")])
+    await _add_case_watchers_by_names(record_id, names, watched_by)
+
+
+async def _backfill_case_watchers_once() -> None:
+    global _CASE_WATCHERS_BACKFILLED
+    if _CASE_WATCHERS_BACKFILLED:
+        return
+
+    case_rows = await execute_query(f"SELECT {CASE_SELECT} FROM cases")
+    for case_row in case_rows:
+        record_id = case_row.get("recordId")
+        if not record_id:
+            continue
+
+        normalized_case = normalize_record(dict(case_row))
+        await _add_case_watchers_by_names(record_id, _watcher_names_from_case_record(normalized_case), "System")
+
+    _CASE_WATCHERS_BACKFILLED = True
+
+
 async def _normalize_foreign_key_values() -> None:
     for table_name, column_name in (
         ("cases", "project"),
@@ -351,6 +575,20 @@ async def ensure_case_link_tables() -> None:
         )
         """
     )
+    await execute_mutation(
+        """
+        CREATE TABLE IF NOT EXISTS case_watcher_opt_outs (
+          caseRecordId VARCHAR(32) NOT NULL,
+          displayName VARCHAR(120) NOT NULL,
+          optedOutAt DATETIME NOT NULL,
+          optedOutBy VARCHAR(120) NULL,
+          PRIMARY KEY (caseRecordId, displayName),
+          INDEX idx_case_watcher_opt_outs_case (caseRecordId),
+          FOREIGN KEY (caseRecordId) REFERENCES cases(recordId) ON DELETE CASCADE ON UPDATE CASCADE
+        )
+        """
+    )
+    await _backfill_case_watchers_once()
     await execute_mutation("UPDATE case_entity_links SET entityType = 'mantis' WHERE entityType = 'nfr'")
     await cleanup_case_entity_links()
     await _add_foreign_key_if_missing(
@@ -531,6 +769,86 @@ async def _replace_case_links_from_data(record_id: str, data: CaseCreate, actor_
             await _upsert_case_entity_link(record_id, entity_type, entity_record_id, actor_display_name)
 
 
+async def _current_case_link_ids(record_id: str) -> dict[str, list[str]]:
+    rows = await execute_query(
+        """
+        SELECT entityType, entityRecordId
+        FROM case_entity_links
+        WHERE caseRecordId = %s
+          AND entityType IN ('account', 'product', 'mantis', 'knock')
+        """,
+        [record_id],
+    )
+    link_ids = {entity_type: [] for entity_type in CASE_LINK_TARGET_TABLES}
+    for row in rows:
+        entity_type = row.get("entityType")
+        entity_record_id = row.get("entityRecordId")
+        if entity_type in link_ids and entity_record_id:
+            link_ids[entity_type].append(entity_record_id)
+    return {entity_type: _unique_clean_ids(values) for entity_type, values in link_ids.items()}
+
+
+async def _effective_case_link_ids(record_id: Optional[str], data: CaseCreate) -> dict[str, list[str]]:
+    link_ids = await _case_link_ids_from_data(data)
+    if not record_id:
+        return link_ids
+
+    current_link_ids = await _current_case_link_ids(record_id)
+    for entity_type in CASE_LINK_TARGET_TABLES:
+        if not _case_link_field_was_provided(data, entity_type):
+            link_ids[entity_type] = current_link_ids.get(entity_type, [])
+    return link_ids
+
+
+async def _ensure_no_duplicate_case(
+    payload: dict,
+    link_ids: dict[str, list[str]],
+    record_id: Optional[str] = None,
+) -> None:
+    conditions = []
+    params = []
+
+    for field in CASE_DATA_FIELDS:
+        conditions.append(_duplicate_field_condition(field))
+        params.extend([_DUPLICATE_NULL_SENTINEL, _canonical_duplicate_value(payload.get(field))])
+
+    where_clause = " AND ".join(conditions)
+    if record_id:
+        where_clause += " AND recordId <> %s"
+        params.append(record_id)
+
+    candidates = await execute_query(
+        f"SELECT recordId FROM cases WHERE {where_clause} LIMIT 50",
+        params,
+    )
+    candidate_ids = [row.get("recordId") for row in candidates if row.get("recordId")]
+    if not candidate_ids:
+        return
+
+    candidate_links = {candidate_id: {entity_type: set() for entity_type in CASE_LINK_TARGET_TABLES} for candidate_id in candidate_ids}
+    placeholders = ", ".join(["%s"] * len(candidate_ids))
+    rows = await execute_query(
+        f"""
+        SELECT caseRecordId, entityType, entityRecordId
+        FROM case_entity_links
+        WHERE caseRecordId IN ({placeholders})
+          AND entityType IN ('account', 'product', 'mantis', 'knock')
+        """,
+        candidate_ids,
+    )
+    for row in rows:
+        case_record_id = row.get("caseRecordId")
+        entity_type = row.get("entityType")
+        entity_record_id = row.get("entityRecordId")
+        if case_record_id in candidate_links and entity_type in candidate_links[case_record_id] and entity_record_id:
+            candidate_links[case_record_id][entity_type].add(entity_record_id)
+
+    target_links = {entity_type: set(_unique_clean_ids(link_ids.get(entity_type, []))) for entity_type in CASE_LINK_TARGET_TABLES}
+    for candidate_id, candidate_link_ids in candidate_links.items():
+        if all(candidate_link_ids[entity_type] == target_links[entity_type] for entity_type in CASE_LINK_TARGET_TABLES):
+            raise HTTPException(status_code=409, detail=f"Duplicate Case found ({candidate_id}).")
+
+
 async def get_case_or_404(record_id: str) -> dict:
     case_row = await execute_query(
         f"SELECT {CASE_SELECT} FROM cases WHERE recordId = %s",
@@ -703,18 +1021,27 @@ def _case_visibility_clause(actor: dict, case_alias: str = "") -> tuple[str, lis
         conditions.append(f"(LOWER(TRIM({qualifier}`seOwner`)) = %s OR LOWER(TRIM({qualifier}`assignedTo`)) = %s)")
         params.extend([actor_name, actor_name])
 
+    watcher_conditions = []
+    watcher_params: list[str] = []
     if actor_id:
+        watcher_conditions.append("visible_watcher.userId = %s")
+        watcher_params.append(actor_id)
+    if actor_name:
+        watcher_conditions.append("LOWER(TRIM(visible_watcher.displayName)) = %s")
+        watcher_params.append(actor_name)
+
+    if watcher_conditions:
         conditions.append(
             f"""
             EXISTS (
                 SELECT 1
                 FROM case_watchers visible_watcher
                 WHERE visible_watcher.caseRecordId = {qualifier}`recordId`
-                  AND visible_watcher.userId = %s
+                  AND ({' OR '.join(watcher_conditions)})
             )
             """
         )
-        params.append(actor_id)
+        params.extend(watcher_params)
 
     if actor_vertical:
         conditions.append(
@@ -748,16 +1075,25 @@ async def _case_is_visible_to_actor(case_record: dict, actor: dict) -> bool:
             return True
 
     actor_id = actor.get("id")
+    watcher_conditions = []
+    watcher_params: list[str] = [case_record.get("recordId")]
     if actor_id:
+        watcher_conditions.append("userId = %s")
+        watcher_params.append(actor_id)
+    if actor_name:
+        watcher_conditions.append("LOWER(TRIM(displayName)) = %s")
+        watcher_params.append(actor_name)
+
+    if watcher_conditions:
         visible_watcher = await execute_query(
-            """
+            f"""
             SELECT 1
             FROM case_watchers
             WHERE caseRecordId = %s
-              AND userId = %s
+              AND ({' OR '.join(watcher_conditions)})
             LIMIT 1
             """,
-            [case_record.get("recordId"), actor_id],
+            watcher_params,
             fetch_one=True,
         )
         if visible_watcher:
@@ -788,18 +1124,7 @@ async def _add_case_watcher(record_id: str, actor: dict) -> None:
     if not display_name:
         return
 
-    now = current_timestamp()
-    await execute_mutation(
-        """
-        INSERT INTO case_watchers (caseRecordId, userId, displayName, watchedAt, watchedBy)
-        VALUES (%s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-          userId = VALUES(userId),
-          watchedAt = VALUES(watchedAt),
-          watchedBy = VALUES(watchedBy)
-        """,
-        [record_id, actor.get("id"), display_name, now, display_name],
-    )
+    await _upsert_case_watcher(record_id, actor.get("id"), display_name, display_name)
 
 
 @router.get("", response_model=List[CaseRecord])
@@ -882,6 +1207,8 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
 
     record_id = generate_record_id("REC", "cases")
     payload = _case_payload(data)
+    link_ids = await _effective_case_link_ids(None, data)
+    await _ensure_no_duplicate_case(payload, link_ids)
 
     sql = f"""
         INSERT INTO cases (
@@ -894,6 +1221,7 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
 
     await execute_mutation(sql, params)
     await _replace_case_links_from_data(record_id, data, actor["displayName"], replace_all=True)
+    await _add_case_people_watchers(record_id, payload, watched_by=actor["displayName"])
 
     result = await get_case_or_404(record_id)
     return await enrich_case_record(result)
@@ -909,6 +1237,8 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
         raise HTTPException(status_code=404, detail="Case not found")
 
     payload = _case_payload(data)
+    link_ids = await _effective_case_link_ids(recordId, data)
+    await _ensure_no_duplicate_case(payload, link_ids, recordId)
     status_changed = (existing.get("status") or "") != (payload.get("status") or "")
     history = _history_from_record(existing)
     update_entries = build_update_history_entries(
@@ -927,6 +1257,7 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
     params.append(recordId)
 
     await execute_mutation(sql, params)
+    await _add_case_people_watchers(recordId, existing, payload, watched_by=actor["displayName"])
     if status_changed:
         await _add_case_watcher(recordId, actor)
     await _replace_case_links_from_data(recordId, data, actor["displayName"], replace_all=False)
@@ -968,11 +1299,72 @@ async def add_case_history(recordId: str, entry: HistoryEntryCreate, request: Re
     return await enrich_case_record(result)
 
 
+@router.post("/{recordId}/watchers", response_model=CaseRecord)
+async def add_case_watcher(recordId: str, payload: CaseWatcherRequest, request: Request) -> CaseRecord:
+    """Add a watcher to a visible case."""
+
+    actor = await require_auth_user(request)
+    await ensure_case_link_tables()
+
+    existing = await get_case_or_404(recordId)
+    if not await _case_is_visible_to_actor(existing, actor):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    identity = await _resolve_case_watcher_identity(display_name=payload.displayName, user_id=payload.userId)
+    if not identity:
+        raise HTTPException(status_code=400, detail="Watcher display name is required")
+
+    actor_display_name = _clean_watcher_display_name(actor.get("displayName"))
+    if (
+        identity["displayName"].lower() != actor_display_name.lower()
+        and await _case_watcher_has_opted_out(recordId, identity["displayName"])
+    ):
+        raise HTTPException(status_code=409, detail="Watcher has removed themselves from this watchlist")
+
+    await _upsert_case_watcher(recordId, identity.get("userId"), identity["displayName"], actor["displayName"])
+
+    result = await get_case_or_404(recordId)
+    return await enrich_case_record(result)
+
+
+@router.delete("/{recordId}/watchers", response_model=CaseRecord)
+async def remove_case_watcher(recordId: str, request: Request, displayName: str = Query(...)) -> CaseRecord:
+    """Remove a watcher from a visible case."""
+
+    actor = await require_auth_user(request)
+    await ensure_case_link_tables()
+
+    existing = await get_case_or_404(recordId)
+    if not await _case_is_visible_to_actor(existing, actor):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    cleaned_display_name = _clean_watcher_display_name(displayName)
+    if not cleaned_display_name:
+        raise HTTPException(status_code=400, detail="Watcher display name is required")
+
+    actor_display_name = _clean_watcher_display_name(actor.get("displayName"))
+    if cleaned_display_name.lower() != actor_display_name.lower():
+        raise HTTPException(status_code=403, detail="Only the watcher can remove themselves")
+
+    await _add_case_watcher_opt_out(recordId, cleaned_display_name, actor_display_name)
+    await execute_mutation(
+        """
+        DELETE FROM case_watchers
+        WHERE caseRecordId = %s
+          AND LOWER(TRIM(displayName)) = %s
+        """,
+        [recordId, cleaned_display_name.lower()],
+    )
+
+    result = await get_case_or_404(recordId)
+    return await enrich_case_record(result)
+
+
 @router.delete("/{recordId}")
 async def delete_case(recordId: str, request: Request):
     """Delete a case."""
 
-    actor = await require_auth_user(request)
+    actor = await require_manager_or_admin_user(request)
     existing = await get_case_or_404(recordId)
     if not await _case_is_visible_to_actor(existing, actor):
         raise HTTPException(status_code=404, detail="Case not found")

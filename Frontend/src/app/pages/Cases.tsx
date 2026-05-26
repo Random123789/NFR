@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, Download, Edit2, Save, UserRound, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Bookmark, Download, Edit2, Eye, Save, Trash2, UserPlus, UserRound, X } from "lucide-react";
 import {
+  addCaseWatcher,
   addCaseLink,
   addCaseHistory,
+  deleteCase,
   getCase,
   getCaseLinks,
   listAssignableUsers,
+  removeCaseWatcher,
   removeCaseLink,
   updateCase,
   type AssignableUser,
@@ -18,6 +21,7 @@ import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { MultiRecordDropdown, SearchableSelect, type SelectOption } from "../components/SearchableSelect";
+import { TypeaheadTextarea } from "../components/TypeaheadInput";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
@@ -44,6 +48,7 @@ import {
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { fieldSuggestions } from "../utils/typeaheadOptions";
 import { getRecordActivityTimestamp } from "../utils/recordActivity";
 import { unreadRowClassName } from "../utils/unreadRows";
 import {
@@ -169,6 +174,10 @@ function uniqueNonEmptyValues(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
+function normalizePersonKey(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+
 function normalizeFilterValues(value: unknown) {
   if (Array.isArray(value)) {
     return uniqueNonEmptyValues(value.filter((item): item is string => typeof item === "string" && item !== "All"));
@@ -225,6 +234,8 @@ export function Cases() {
     getKnockById,
     getCaseById,
     upsertCase,
+    removeCase,
+    refreshRecords,
   } = useRecords();
   const {
     selectedRecord: selectedCase,
@@ -252,6 +263,14 @@ export function Cases() {
     onError: (message) => showToast(message, "error"),
   });
   const selectedCaseActivityAt = getRecordActivityTimestamp(selectedCase);
+  const caseDescriptionSuggestions = useMemo(
+    () => fieldSuggestions(cases, "description", selectedCase?.recordId),
+    [cases, selectedCase?.recordId],
+  );
+  const caseEscalationNoteSuggestions = useMemo(
+    () => fieldSuggestions(cases, "escalationNote", selectedCase?.recordId),
+    [cases, selectedCase?.recordId],
+  );
 
   useEffect(() => {
     if (!selectedCase) return;
@@ -279,6 +298,8 @@ export function Cases() {
   const [editedMantisIds, setEditedMantisIds] = useState<string[]>([]);
   const [editedKnockIds, setEditedKnockIds] = useState<string[]>([]);
   const [linkDrafts, setLinkDrafts] = useState<LinkDrafts>(() => emptyLinkDrafts());
+  const [watcherDraftUserId, setWatcherDraftUserId] = useState("");
+  const [isUpdatingWatchers, setIsUpdatingWatchers] = useState(false);
   const [searchFilters, setSearchFilters] = useState<Record<CaseSearchKey, string>>(() => normalizeSearchFilters(locationState?.searchFilters));
   const [sortConfig, setSortConfig] = useState<SortConfig<CaseColumnKey>>({
     key: "",
@@ -294,6 +315,18 @@ export function Cases() {
   );
   const seOwnerSelectOptions = useMemo(
     () => activeAssignableUsers.filter((assignableUser) => isSeOwnerRole(assignableUser.role)).map(toAssignableUserOption),
+    [activeAssignableUsers],
+  );
+  const watcherSelectOptions = useMemo(
+    () =>
+      activeAssignableUsers.map((assignableUser) => ({
+        value: String(assignableUser.id),
+        label: assignableUser.displayName,
+        description: [
+          assignableUser.email,
+          isManagerRole(assignableUser.role) ? "Manager" : assignableUser.vertical,
+        ].filter(Boolean).join(" | "),
+      })),
     [activeAssignableUsers],
   );
 
@@ -322,10 +355,12 @@ export function Cases() {
       setEditedMantisIds([]);
       setEditedKnockIds([]);
       setLinkDrafts(emptyLinkDrafts());
+      setWatcherDraftUserId("");
       return;
     }
 
     setLinkDrafts(emptyLinkDrafts());
+    setWatcherDraftUserId("");
 
     let cancelled = false;
     void (async () => {
@@ -380,6 +415,10 @@ export function Cases() {
   const availableProjectsForLink = projects.filter((item) => !linkedProjectRecordIds.has(item.recordId));
   const availableMantisForLink = mantisRecords.filter((item) => !linkedMantisRecordIds.has(item.recordId));
   const availableKnocksForLink = knocks.filter((item) => !linkedKnockRecordIds.has(item.recordId));
+  const selectedWatcherNames = selectedCase?.watcherNames ?? [];
+  const selectedWatcherNameKeys = new Set(selectedWatcherNames.map(normalizePersonKey).filter(Boolean));
+  const availableWatcherSelectOptions = watcherSelectOptions.filter((option) => !selectedWatcherNameKeys.has(normalizePersonKey(option.label)));
+  const isCurrentUserWatching = Boolean(user?.displayName && selectedWatcherNameKeys.has(normalizePersonKey(user.displayName)));
   const visibleCaseColumns = CASE_TABLE_COLUMNS.filter((column) => visibleCaseColumnKeys.includes(column.key));
 
   const handleSort = (key: CaseColumnKey) => {
@@ -577,6 +616,27 @@ export function Cases() {
     }
   };
 
+  const canDeleteRecords = user?.role === "manager" || user?.role === "admin";
+
+  const handleDelete = async () => {
+    if (!selectedCase) return;
+    const confirmed = window.confirm(`Delete case "${selectedCase.recordId}"? Linked records will be detached.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteCase(selectedCase.recordId);
+      removeBookmark(selectedCase.recordId, "case");
+      removeCase(selectedCase.recordId);
+      setSelectedCase(null);
+      await refreshRecords();
+      showToast("Case deleted.", "success");
+      navigate("/cases");
+    } catch (error) {
+      console.error("Failed to delete case:", error);
+      showToast(error instanceof Error ? error.message : "Failed to delete case.", "error");
+    }
+  };
+
   const refreshSelectedCase = async (recordId: string) => {
     const refreshed = await getCase(recordId);
     upsertCase(refreshed);
@@ -596,6 +656,68 @@ export function Cases() {
 
     await refreshSelectedCase(selectedCase.recordId);
     await refreshCaseLinks(selectedCase.recordId);
+  };
+
+  const applyWatcherUpdate = (updatedCase: CaseRecord) => {
+    upsertCase(updatedCase);
+    setSelectedCase(updatedCase);
+    if (editedCase?.recordId === updatedCase.recordId) {
+      setEditedCase({ ...editedCase, watcherNames: updatedCase.watcherNames });
+    }
+  };
+
+  const handleAddWatcher = async () => {
+    if (!selectedCase || !watcherDraftUserId) return;
+
+    const watcherUser = activeAssignableUsers.find((assignableUser) => String(assignableUser.id) === watcherDraftUserId);
+    if (!watcherUser) return;
+
+    setIsUpdatingWatchers(true);
+    try {
+      const updated = await addCaseWatcher(selectedCase.recordId, { userId: watcherUser.id });
+      applyWatcherUpdate(updated);
+      setWatcherDraftUserId("");
+      showToast("Watchlist updated.", "success");
+    } catch (error) {
+      console.error("Failed to update watchlist:", error);
+      showToast("Failed to update watchlist.", "error");
+    } finally {
+      setIsUpdatingWatchers(false);
+    }
+  };
+
+  const handleToggleMyWatcher = async () => {
+    if (!selectedCase || !user?.displayName) return;
+
+    setIsUpdatingWatchers(true);
+    try {
+      const updated = isCurrentUserWatching
+        ? await removeCaseWatcher(selectedCase.recordId, user.displayName)
+        : await addCaseWatcher(selectedCase.recordId, { userId: user.id, displayName: user.displayName });
+      applyWatcherUpdate(updated);
+      showToast("Watchlist updated.", "success");
+    } catch (error) {
+      console.error("Failed to update watchlist:", error);
+      showToast("Failed to update watchlist.", "error");
+    } finally {
+      setIsUpdatingWatchers(false);
+    }
+  };
+
+  const handleRemoveWatcher = async (displayName: string) => {
+    if (!selectedCase) return;
+
+    setIsUpdatingWatchers(true);
+    try {
+      const updated = await removeCaseWatcher(selectedCase.recordId, displayName);
+      applyWatcherUpdate(updated);
+      showToast("Watchlist updated.", "success");
+    } catch (error) {
+      console.error("Failed to update watchlist:", error);
+      showToast("Failed to update watchlist.", "error");
+    } finally {
+      setIsUpdatingWatchers(false);
+    }
   };
 
   const handleLinkEntity = async (key: LinkKey) => {
@@ -908,6 +1030,15 @@ export function Cases() {
                 >
                   <Bookmark className={`h-5 w-5 ${isBookmarked(selectedCase.recordId, "case") ? "fill-current" : ""}`} />
                 </button>
+                {canDeleteRecords && !isEditing ? (
+                  <button
+                    onClick={() => void handleDelete()}
+                    className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-[#B5122B] transition-colors hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </button>
+                ) : null}
                 {!isEditing ? (
                   <button
                     onClick={handleEdit}
@@ -1257,9 +1388,10 @@ export function Cases() {
                 <div className="order-[14] detail-cell sm:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Description</label>
                   {isEditing && editedCase ? (
-                    <textarea
+                    <TypeaheadTextarea
                       value={editedCase.description}
-                      onChange={(event) => setEditedCase({ ...editedCase, description: event.target.value })}
+                      onChange={(description) => setEditedCase({ ...editedCase, description })}
+                      options={caseDescriptionSuggestions}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                       rows={3}
                     />
@@ -1270,9 +1402,10 @@ export function Cases() {
                 <div className="order-[15] detail-cell sm:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Escalation Note</label>
                   {isEditing && editedCase ? (
-                    <textarea
+                    <TypeaheadTextarea
                       value={editedCase.escalationNote || ""}
-                      onChange={(event) => setEditedCase({ ...editedCase, escalationNote: event.target.value })}
+                      onChange={(escalationNote) => setEditedCase({ ...editedCase, escalationNote })}
+                      options={caseEscalationNoteSuggestions}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                       rows={2}
                     />
@@ -1549,6 +1682,79 @@ export function Cases() {
               </div>
 
               <div className="min-w-0 self-start rounded-lg border border-gray-200 bg-white p-4 xl:sticky xl:top-24 xl:max-h-[calc(100vh-8rem)] xl:overflow-x-hidden xl:overflow-y-auto">
+                <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-gray-900">Watchlist</h3>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleMyWatcher()}
+                      disabled={isUpdatingWatchers || !user?.displayName}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        isCurrentUserWatching
+                          ? "bg-red-50 text-[#B5122B] hover:bg-red-100"
+                          : "bg-white text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                      }`}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      {isCurrentUserWatching ? "Remove me" : "Add me"}
+                    </button>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedWatcherNames.length > 0 ? (
+                      selectedWatcherNames.map((watcherName) => {
+                        const canRemoveWatcher = normalizePersonKey(watcherName) === normalizePersonKey(user?.displayName);
+                        return (
+                        <span
+                          key={watcherName}
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-gray-200"
+                          title={watcherName}
+                        >
+                          <span className="truncate">{watcherName}</span>
+                          {canRemoveWatcher ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveWatcher(watcherName)}
+                            disabled={isUpdatingWatchers}
+                            className="rounded-full text-gray-400 transition-colors hover:text-[#B5122B] disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label={`Remove ${watcherName} from watchlist`}
+                            title={`Remove ${watcherName}`}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                          ) : null}
+                        </span>
+                      );
+                    })
+                    ) : (
+                      <span className="text-sm text-gray-500">No watchers</span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <div className="min-w-0 flex-1">
+                      <SearchableSelect
+                        label="watcher"
+                        value={watcherDraftUserId}
+                        options={availableWatcherSelectOptions}
+                        emptyLabel="Select watcher"
+                        searchPlaceholder="Search users"
+                        noOptionsLabel="No additional users"
+                        onChange={setWatcherDraftUserId}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleAddWatcher()}
+                      disabled={isUpdatingWatchers || !watcherDraftUserId}
+                      className="inline-flex min-h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[#E31937] px-3 text-sm font-medium text-white transition-colors hover:bg-[#c41230] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <UserPlus className="h-4 w-4" />
+                      Add
+                    </button>
+                  </div>
+                </div>
+
                 <h3 className="mb-4 text-lg font-semibold text-gray-900">History</h3>
 
                 <div className="mb-4 border-b border-gray-200 pb-4">

@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
-import { addProductHistory, updateProduct } from "../data/apiClient";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark, Trash2 } from "lucide-react";
+import { addProductHistory, deleteProduct, updateProduct } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
 import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { SearchableSelect } from "../components/SearchableSelect";
+import { TypeaheadInput } from "../components/TypeaheadInput";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
@@ -30,6 +31,7 @@ import {
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { findDuplicateProduct, productFieldSuggestions } from "../utils/productDuplicates";
 import { getRecordActivityTimestamp } from "../utils/recordActivity";
 import { unreadRowClassName } from "../utils/unreadRows";
 
@@ -67,7 +69,7 @@ export function Product() {
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { searchTerm } = useSearch();
-  const { accounts, projects, products, cases, getProductById, upsertProduct } = useRecords();
+  const { accounts, projects, products, cases, getProductById, upsertProduct, removeProduct, refreshRecords } = useRecords();
   const {
     selectedRecord: selectedProduct,
     setSelectedRecord: setSelectedProduct,
@@ -110,6 +112,26 @@ export function Product() {
     onError: (message) => showToast(message, "error"),
   });
   const selectedProductActivityAt = getRecordActivityTimestamp(selectedProduct);
+  const productNameSuggestions = useMemo(
+    () => productFieldSuggestions(products, "productName", selectedProduct?.recordId),
+    [products, selectedProduct?.recordId],
+  );
+  const productFamilySuggestions = useMemo(
+    () => productFieldSuggestions(products, "productFamily", selectedProduct?.recordId),
+    [products, selectedProduct?.recordId],
+  );
+  const productVersionSuggestions = useMemo(
+    () => productFieldSuggestions(products, "productVersion", selectedProduct?.recordId),
+    [products, selectedProduct?.recordId],
+  );
+  const productUrlSuggestions = useMemo(
+    () => productFieldSuggestions(products, "productUrl", selectedProduct?.recordId),
+    [products, selectedProduct?.recordId],
+  );
+  const duplicateEditedProduct = useMemo(
+    () => editedProduct ? findDuplicateProduct(products, editedProduct, editedProduct.recordId) : undefined,
+    [editedProduct, products],
+  );
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -160,7 +182,28 @@ export function Product() {
       showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save product:", error);
-      showToast("Failed to save changes. Please try again.", "error");
+      showToast(error instanceof Error ? error.message : "Failed to save changes. Please try again.", "error");
+    }
+  };
+
+  const canDeleteRecords = user?.role === "manager" || user?.role === "admin";
+
+  const handleDelete = async () => {
+    if (!selectedProduct) return;
+    const confirmed = window.confirm(`Delete product "${selectedProduct.productName}"? Linked cases will be detached.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteProduct(selectedProduct.recordId);
+      removeBookmark(selectedProduct.recordId, "product");
+      removeProduct(selectedProduct.recordId);
+      setSelectedProduct(null);
+      await refreshRecords();
+      showToast("Product deleted.", "success");
+      navigate("/product");
+    } catch (error) {
+      console.error("Failed to delete product:", error);
+      showToast(error instanceof Error ? error.message : "Failed to delete product.", "error");
     }
   };
 
@@ -403,6 +446,15 @@ export function Product() {
                 >
                   <Bookmark className={`w-5 h-5 ${isBookmarked(selectedProduct!.recordId, 'product') ? 'fill-current' : ''}`} />
                 </button>
+                {canDeleteRecords && !isEditing ? (
+                  <button
+                    onClick={() => void handleDelete()}
+                    className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-[#B5122B] transition-colors hover:bg-red-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                ) : null}
                 {isEditing ? (
                   <>
                     <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] transition-colors">
@@ -434,10 +486,11 @@ export function Product() {
                 <div className="order-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Product Family</label>
                   {isEditing && editedProduct ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedProduct.productFamily ?? ""}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, productFamily: e.target.value })}
+                      onChange={(productFamily) => setEditedProduct({ ...editedProduct, productFamily })}
+                      options={productFamilySuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -447,10 +500,11 @@ export function Product() {
                 <div className="order-1">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Product Name</label>
                   {isEditing && editedProduct ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedProduct.productName}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, productName: e.target.value })}
+                      onChange={(productName) => setEditedProduct({ ...editedProduct, productName })}
+                      options={productNameSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -460,10 +514,11 @@ export function Product() {
                 <div className="order-3 sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Version</label>
                   {isEditing && editedProduct ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedProduct.productVersion ?? ""}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, productVersion: e.target.value })}
+                      onChange={(productVersion) => setEditedProduct({ ...editedProduct, productVersion })}
+                      options={productVersionSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                       placeholder="7.6, 2026.1, GA"
                     />
@@ -474,10 +529,11 @@ export function Product() {
                 <div className="order-4 sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Product URL</label>
                   {isEditing && editedProduct ? (
-                    <input
+                    <TypeaheadInput
                       type="url"
                       value={editedProduct.productUrl ?? ""}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, productUrl: e.target.value })}
+                      onChange={(productUrl) => setEditedProduct({ ...editedProduct, productUrl })}
+                      options={productUrlSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : selectedProduct.productUrl ? (
@@ -502,6 +558,17 @@ export function Product() {
                     <p className="text-gray-900">{selectedProduct.description || "-"}</p>
                   )}
                 </div>
+                {isEditing && duplicateEditedProduct ? (
+                  <div className="order-6 sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <div className="font-medium">Matching product exists: {duplicateEditedProduct.productName}</div>
+                    <div className="mt-0.5 text-xs text-amber-800">
+                      {[duplicateEditedProduct.productFamily, duplicateEditedProduct.productVersion, duplicateEditedProduct.productUrl]
+                        .map((part) => part?.trim())
+                        .filter(Boolean)
+                        .join(" | ") || duplicateEditedProduct.recordId}
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className={activeDetailTab === "linkedCases" ? "pt-1" : "hidden"}>

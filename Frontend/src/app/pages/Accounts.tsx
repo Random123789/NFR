@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
-import { addAccountHistory, updateAccount, updateProject, type ProjectRecord } from "../data/apiClient";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark, Trash2 } from "lucide-react";
+import { addAccountHistory, deleteAccount, updateAccount, updateProject, type ProjectRecord } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedCasesList, LinkedEntityList } from "../components/LinkedEntityCard";
 import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { SearchableSelect } from "../components/SearchableSelect";
+import { TypeaheadInput } from "../components/TypeaheadInput";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
@@ -31,6 +32,7 @@ import {
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { fieldSuggestions } from "../utils/typeaheadOptions";
 import { getRecordActivityTimestamp } from "../utils/recordActivity";
 import { unreadRowClassName } from "../utils/unreadRows";
 
@@ -83,7 +85,7 @@ export function Accounts() {
   const { searchTerm } = useSearch();
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { isRecordUnread, markRecordRead } = useRecordReadState();
-  const { accounts, projects, cases, getAccountById, getProjectsByAccountId, upsertAccount, upsertProject } = useRecords();
+  const { accounts, projects, cases, getAccountById, getProjectsByAccountId, upsertAccount, upsertProject, removeAccount, refreshRecords } = useRecords();
   const {
     selectedRecord: selectedAccount,
     setSelectedRecord: setSelectedAccount,
@@ -126,6 +128,14 @@ export function Accounts() {
     onError: (message) => showToast(message, "error"),
   });
   const selectedAccountActivityAt = getRecordActivityTimestamp(selectedAccount);
+  const accountNameSuggestions = useMemo(
+    () => fieldSuggestions(accounts, "accountName", selectedAccount?.recordId),
+    [accounts, selectedAccount?.recordId],
+  );
+  const accountWebsiteSuggestions = useMemo(
+    () => fieldSuggestions(accounts, "website", selectedAccount?.recordId),
+    [accounts, selectedAccount?.recordId],
+  );
 
   useEffect(() => {
     if (!selectedAccount) return;
@@ -191,6 +201,27 @@ export function Accounts() {
     } catch (error) {
       console.error("Failed to save account:", error);
       showToast("Failed to save changes. Please try again.", "error");
+    }
+  };
+
+  const canDeleteRecords = user?.role === "manager" || user?.role === "admin";
+
+  const handleDelete = async () => {
+    if (!selectedAccount) return;
+    const confirmed = window.confirm(`Delete account "${selectedAccount.accountName}"? Linked projects and cases will be detached.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteAccount(selectedAccount.recordId);
+      removeBookmark(selectedAccount.recordId, "account");
+      removeAccount(selectedAccount.recordId);
+      setSelectedAccount(null);
+      await refreshRecords();
+      showToast("Account deleted.", "success");
+      navigate("/accounts");
+    } catch (error) {
+      console.error("Failed to delete account:", error);
+      showToast(error instanceof Error ? error.message : "Failed to delete account.", "error");
     }
   };
 
@@ -460,6 +491,15 @@ export function Accounts() {
                 >
                   <Bookmark className={`w-5 h-5 ${isBookmarked(selectedAccount!.recordId, 'account') ? 'fill-current' : ''}`} />
                 </button>
+                {canDeleteRecords && !isEditing ? (
+                  <button
+                    onClick={() => void handleDelete()}
+                    className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-[#B5122B] transition-colors hover:bg-red-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                ) : null}
                 {!isEditing ? (
                   <button
                     onClick={handleEdit}
@@ -503,10 +543,11 @@ export function Accounts() {
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Account Name</label>
                   {isEditing && editedAccount ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedAccount.accountName}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, accountName: e.target.value })}
+                      onChange={(accountName) => setEditedAccount({ ...editedAccount, accountName })}
+                      options={accountNameSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -554,10 +595,11 @@ export function Accounts() {
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Website</label>
                   {isEditing && editedAccount ? (
-                    <input
+                    <TypeaheadInput
                       type="url"
                       value={editedAccount.website ?? ""}
-                      onChange={(e) => setEditedAccount({ ...editedAccount, website: e.target.value || null })}
+                      onChange={(website) => setEditedAccount({ ...editedAccount, website: website || null })}
+                      options={accountWebsiteSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                       placeholder="https://example.com"
                     />

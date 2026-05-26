@@ -175,6 +175,16 @@ CREATE TABLE IF NOT EXISTS case_watchers (
   FOREIGN KEY (userId) REFERENCES users(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS case_watcher_opt_outs (
+  caseRecordId VARCHAR(32) NOT NULL,
+  displayName VARCHAR(120) NOT NULL,
+  optedOutAt DATETIME NOT NULL,
+  optedOutBy VARCHAR(120),
+  PRIMARY KEY (caseRecordId, displayName),
+  INDEX idx_case_watcher_opt_outs_case (caseRecordId),
+  FOREIGN KEY (caseRecordId) REFERENCES cases(recordId) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS user_sessions (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   userId INT NOT NULL,

@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query, Request
 
-from authService import require_auth_user
+from authService import require_auth_user, require_manager_or_admin_user
 from database import execute_mutation
 from entity_crud import (
     EntityCrudConfig,
@@ -72,8 +72,9 @@ async def update_knock(recordId: str, data: KnockCreate, request: Request) -> Kn
 
 
 @router.delete("/{recordId}")
-async def delete_knock(recordId: str) -> dict[str, str]:
+async def delete_knock(recordId: str, request: Request) -> dict[str, str]:
     """Delete a knock."""
+    await require_manager_or_admin_user(request)
     existing = await get_entity_or_404(KNOCK_CONFIG, recordId)
     await execute_mutation(
         "DELETE FROM case_entity_links WHERE entityType = 'knock' AND entityRecordId = %s",

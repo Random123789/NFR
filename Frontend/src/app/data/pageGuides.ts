@@ -245,7 +245,7 @@ export const managerHomeGuideSteps: PageGuideStep[] = [
   {
     targetId: "manager-home-intro",
     title: "Manager overview",
-    description: "The manager dashboard summarizes open pipeline, high-risk cases, watched cases, and team coverage.",
+    description: "The manager dashboard summarizes open pipeline, high-risk cases, watchlists, and team coverage.",
   },
   {
     targetId: "manager-home-verticals",
@@ -278,7 +278,7 @@ export const seHomeGuideSteps: PageGuideStep[] = [
   {
     targetId: "se-home-widgets",
     title: "Start from the widgets",
-    description: "Widgets show open cases, critical work, pipeline, and assigned cases. Click them to jump into the related records.",
+    description: "Widgets show open cases, watchlist, critical work, pipeline, and assigned cases. Click them to jump into the related records.",
   },
   {
     targetId: "se-home-attention",

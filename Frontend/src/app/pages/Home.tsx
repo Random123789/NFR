@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, FolderKanban, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
+import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, Eye, FolderKanban, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
 import { useRecords } from "../context/RecordsContext";
 import { useAuth } from "../context/AuthContext";
 import { casePriorityColors, caseStatusColors, knockStatusColors, mantisStatusColors, projectStageColors } from "../data/recordStyles";
@@ -367,7 +367,7 @@ function ManagerHome() {
     ? openCases.filter((caseItem) => (caseItem.assignedTo ?? "").trim().toLowerCase() === managerKey)
     : [];
   const managerWatchedCases = managerKey
-    ? openCases.filter((caseItem) => isCaseWatchedBy(caseItem, managerDisplayName))
+    ? filteredCases.filter((caseItem) => isCaseWatchedBy(caseItem, managerDisplayName))
     : [];
   const totalOpenPipeline = openProjects.reduce((sum, project) => sum + projectValue(project), 0);
   const highRiskCases = openCases.filter((caseItem) =>
@@ -494,15 +494,14 @@ function ManagerHome() {
         }),
     },
     {
-      label: "Cases Watched",
+      label: "Watchlist",
       value: managerWatchedCases.length.toString(),
-      detail: "open cases you are watching",
-      icon: AlertCircle,
+      detail: "cases you are watching",
+      icon: Eye,
       color: "bg-[#8f1024]",
       onClick: () =>
         navigate("/cases", {
           state: withManagerVerticalFilters({
-            statusFilters: OPEN_CASE_STATUS_FILTERS,
             watcherFilters: managerDisplayName ? [managerDisplayName] : [],
           }),
         }),
@@ -842,6 +841,9 @@ function SalesEngineerHome() {
     ? visibleOpenCases.filter((caseItem) => (caseItem.seOwner ?? "").trim().toLowerCase() === userName)
     : [];
   const ownedOpenCases = visibleOpenCases.filter((caseItem) => isCaseOwnedBy(caseItem, user?.displayName));
+  const watchedCases = user?.displayName
+    ? cases.filter((caseItem) => isCaseWatchedBy(caseItem, user.displayName))
+    : [];
   const focusCases = user?.role === "user" && ownedOpenCases.length > 0 ? ownedOpenCases : visibleOpenCases;
   const focusCaseProjectIds = new Set(focusCases.map((caseItem) => caseItem.project).filter(Boolean) as string[]);
   const seOwnerSearchFilters = user?.displayName ? { seOwner: user.displayName } : {};
@@ -978,6 +980,19 @@ function SalesEngineerHome() {
       onClick: () => navigate("/cases"),
     },
     {
+      label: "Watchlist",
+      value: watchedCases.length.toString(),
+      detail: "cases you are watching",
+      icon: Eye,
+      color: "bg-[#8f1024]",
+      onClick: () =>
+        navigate("/cases", {
+          state: {
+            watcherFilters: user?.displayName ? [user.displayName] : [],
+          },
+        }),
+    },
+    {
       label: "Critical Cases",
       value: highRiskCases.length.toString(),
       detail: "escalated or high priority",
@@ -1036,7 +1051,7 @@ function SalesEngineerHome() {
         </div>
       </div>
 
-      <div data-guide-id="se-home-widgets" className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div data-guide-id="se-home-widgets" className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
         {stats.map((stat) => (
           <button
             key={stat.label}

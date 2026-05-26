@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query, Request
 
-from authService import require_auth_user
+from authService import require_auth_user, require_manager_or_admin_user
 from database import execute_mutation, execute_query
 from entity_crud import (
     EntityCrudConfig,
@@ -36,6 +36,7 @@ PRODUCT_CONFIG = EntityCrudConfig(
     },
     search_fields=("recordId", "productName", "productFamily", "productVersion", "description", "ownedBy"),
     nullable_fields=("productFamily", "productVersion", "productUrl", "description", "metaData"),
+    duplicate_fields=("productFamily", "productName", "productVersion", "productUrl"),
 )
 
 
@@ -114,8 +115,9 @@ async def update_product(recordId: str, data: ProductCreate, request: Request) -
 
 
 @router.delete("/{recordId}")
-async def delete_product(recordId: str) -> dict[str, str]:
+async def delete_product(recordId: str, request: Request) -> dict[str, str]:
     """Delete a product."""
+    await require_manager_or_admin_user(request)
     await execute_mutation(
         "DELETE FROM case_entity_links WHERE entityType = 'product' AND entityRecordId = %s",
         [recordId],

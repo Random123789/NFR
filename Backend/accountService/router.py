@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from authService import require_auth_user
+from authService import require_auth_user, require_manager_or_admin_user
 from database import execute_mutation, execute_query
 from entity_crud import (
     EntityCrudConfig,
@@ -177,7 +177,7 @@ async def update_account(recordId: str, data: AccountCreate, request: Request) -
 @router.delete("/{recordId}")
 async def delete_account(recordId: str, request: Request) -> dict[str, str]:
     """Delete an account."""
-    actor = await require_auth_user(request)
+    actor = await require_manager_or_admin_user(request)
     await _get_visible_account_or_404(recordId, actor)
     await execute_mutation("UPDATE projects SET accountId = NULL WHERE accountId = %s", [recordId])
     await execute_mutation(

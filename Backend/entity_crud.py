@@ -14,6 +14,9 @@ from schemas import HistoryEntryCreate
 from utils import build_history_entry, build_update_history_entries, current_timestamp, normalize_record
 
 
+_DUPLICATE_NULL_SENTINEL = "__nfr_duplicate_null__"
+
+
 @dataclass(frozen=True)
 class EntityCrudConfig:
     """Configuration for a simple entity table with common record metadata."""
@@ -27,6 +30,7 @@ class EntityCrudConfig:
     search_fields: Sequence[str]
     nullable_fields: Sequence[str] = ()
     unique_fields: Sequence[str] = ()
+    duplicate_fields: Optional[Sequence[str]] = None
 
 
 def _now() -> str:
@@ -60,6 +64,60 @@ def _history_from_record(record: Mapping[str, Any]) -> list[dict[str, Any]]:
     if isinstance(history, str):
         return json.loads(history) if history else []
     return list(history or [])
+
+
+def _canonical_duplicate_value(value: Any) -> str:
+    if value is None:
+        return _DUPLICATE_NULL_SENTINEL
+
+    if isinstance(value, bool):
+        return "1" if value else "0"
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned.lower() if cleaned else _DUPLICATE_NULL_SENTINEL
+
+    return json.dumps(value, sort_keys=True, default=str).strip().lower()
+
+
+def _duplicate_field_condition(field: str) -> str:
+    return f"COALESCE(NULLIF(LOWER(TRIM(CAST(`{field}` AS CHAR))), ''), %s) = %s"
+
+
+async def _ensure_no_duplicate_record(
+    config: EntityCrudConfig,
+    data: Payload,
+    record_id: Optional[str] = None,
+) -> None:
+    conditions = []
+    params: list[Any] = []
+
+    duplicate_fields = config.duplicate_fields or config.data_fields
+    for field in duplicate_fields:
+        conditions.append(_duplicate_field_condition(field))
+        params.extend([_DUPLICATE_NULL_SENTINEL, _canonical_duplicate_value(_db_value(config, data, field))])
+
+    if not conditions:
+        return
+
+    where_clause = " AND ".join(conditions)
+    if record_id:
+        where_clause += " AND recordId <> %s"
+        params.append(record_id)
+
+    existing = await execute_query(
+        f"SELECT recordId FROM {config.table_name} WHERE {where_clause} LIMIT 1",
+        params,
+        fetch_one=True,
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate {config.entity_label} found ({existing['recordId']}).",
+        )
 
 
 async def _ensure_unique_fields(
@@ -132,6 +190,7 @@ async def create_entity(
 ) -> dict[str, Any]:
     """Create a standard entity record."""
     await _ensure_unique_fields(config, data)
+    await _ensure_no_duplicate_record(config, data)
 
     record_id = generate_record_id(config.record_prefix, config.table_name)
     now = _now()
@@ -184,6 +243,7 @@ async def update_entity(
     """Update a standard entity record and append field-level history entries."""
     existing = await get_entity_or_404(config, record_id)
     await _ensure_unique_fields(config, data, record_id)
+    await _ensure_no_duplicate_record(config, data, record_id)
 
     now = _now()
     update_payload = _payload_to_update(config, data)

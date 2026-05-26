@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, ExternalLink, Save, Bookmark } from "lucide-react";
-import { addProjectHistory, listAssignableUsers, updateProject, type AssignableUser, type ProjectRecord } from "../data/apiClient";
+import { ArrowLeft, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, ExternalLink, Save, Bookmark, Trash2 } from "lucide-react";
+import { addProjectHistory, deleteProject, listAssignableUsers, updateProject, type AssignableUser, type ProjectRecord } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList, LinkedCasesList } from "../components/LinkedEntityCard";
 import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { SearchableSelect } from "../components/SearchableSelect";
+import { TypeaheadInput } from "../components/TypeaheadInput";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
@@ -34,6 +35,7 @@ import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { isActiveAssignableUser, isSeOwnerRole, toAssignableUserOption } from "../utils/assignableUsers";
 import { formatUsdInteger, parseUsdIntegerInput } from "../utils/currency";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { fieldSuggestions } from "../utils/typeaheadOptions";
 import { getRecordActivityTimestamp } from "../utils/recordActivity";
 import { unreadRowClassName } from "../utils/unreadRows";
 
@@ -101,7 +103,7 @@ export function Projects() {
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { searchTerm } = useSearch();
-  const { accounts, projects, cases, getAccountById, getProjectById, upsertProject } = useRecords();
+  const { accounts, projects, cases, getAccountById, getProjectById, upsertProject, removeProject, refreshRecords } = useRecords();
   const {
     selectedRecord: selectedProject,
     setSelectedRecord: setSelectedProject,
@@ -144,6 +146,18 @@ export function Projects() {
     onError: (message) => showToast(message, "error"),
   });
   const selectedProjectActivityAt = getRecordActivityTimestamp(selectedProject);
+  const projectNameSuggestions = useMemo(
+    () => fieldSuggestions(projects, "projectName", selectedProject?.recordId),
+    [projects, selectedProject?.recordId],
+  );
+  const projectSfdcSuggestions = useMemo(
+    () => fieldSuggestions(projects, "sfdc", selectedProject?.recordId),
+    [projects, selectedProject?.recordId],
+  );
+  const projectSfdcValueSuggestions = useMemo(
+    () => fieldSuggestions(projects, "sfdcValue", selectedProject?.recordId),
+    [projects, selectedProject?.recordId],
+  );
 
   useEffect(() => {
     if (!selectedProject) return;
@@ -230,6 +244,27 @@ export function Projects() {
     } catch (error) {
       console.error("Failed to save project:", error);
       showToast("Failed to save changes. Please try again.", "error");
+    }
+  };
+
+  const canDeleteRecords = user?.role === "manager" || user?.role === "admin";
+
+  const handleDelete = async () => {
+    if (!selectedProject) return;
+    const confirmed = window.confirm(`Delete project "${selectedProject.projectName}"? Linked cases will be detached.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteProject(selectedProject.recordId);
+      removeBookmark(selectedProject.recordId, "project");
+      removeProject(selectedProject.recordId);
+      setSelectedProject(null);
+      await refreshRecords();
+      showToast("Project deleted.", "success");
+      navigate("/projects");
+    } catch (error) {
+      console.error("Failed to delete project:", error);
+      showToast(error instanceof Error ? error.message : "Failed to delete project.", "error");
     }
   };
 
@@ -566,6 +601,15 @@ export function Projects() {
                 >
                   <Bookmark className={`w-5 h-5 ${isBookmarked(selectedProject!.recordId, 'project') ? 'fill-current' : ''}`} />
                 </button>
+                {canDeleteRecords && !isEditing ? (
+                  <button
+                    onClick={() => void handleDelete()}
+                    className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-[#B5122B] transition-colors hover:bg-red-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                ) : null}
                 {isEditing ? (
                   <>
                     <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] transition-colors">
@@ -597,10 +641,11 @@ export function Projects() {
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">Project Name</label>
                   {isEditing && editedProject ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedProject.projectName}
-                      onChange={(e) => setEditedProject({ ...editedProject, projectName: e.target.value })}
+                      onChange={(projectName) => setEditedProject({ ...editedProject, projectName })}
+                      options={projectNameSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -730,10 +775,11 @@ export function Projects() {
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">SFDC</label>
                   {isEditing && editedProject ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedProject.sfdc ?? ""}
-                      onChange={(e) => setEditedProject({ ...editedProject, sfdc: e.target.value })}
+                      onChange={(sfdc) => setEditedProject({ ...editedProject, sfdc })}
+                      options={projectSfdcSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -755,12 +801,13 @@ export function Projects() {
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">SFDC Value (USD)</label>
                   {isEditing && editedProject ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
-                      value={editedProject.sfdcValue ?? ""}
+                      value={editedProject.sfdcValue === null || editedProject.sfdcValue === undefined ? "" : String(editedProject.sfdcValue)}
                       inputMode="numeric"
                       pattern="[0-9]*"
-                      onChange={(e) => setEditedProject({ ...editedProject, sfdcValue: parseUsdIntegerInput(e.target.value) })}
+                      onChange={(sfdcValue) => setEditedProject({ ...editedProject, sfdcValue: parseUsdIntegerInput(sfdcValue) })}
+                      options={projectSfdcValueSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (

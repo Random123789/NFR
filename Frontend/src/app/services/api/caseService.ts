@@ -1,5 +1,5 @@
 import { fetchJson } from './http';
-import type { CaseLinkEntityType, CaseLinksResponse, CaseRecord, HistoryEntry } from './types';
+import type { CaseLinkEntityType, CaseLinksResponse, CaseRecord, CaseWatcherInput, HistoryEntry } from './types';
 
 type CaseCreateInput = Pick<CaseRecord, 'description'> & Partial<Omit<CaseRecord, 'recordId'>> & {
   account?: string | null;
@@ -55,6 +55,20 @@ export async function removeCaseLink(id: string, entityType: CaseLinkEntityType,
     `/cases/${id}/links/${encodeURIComponent(entityType)}/${encodeURIComponent(entityRecordId)}`,
     { method: 'DELETE' },
   );
+}
+
+export async function addCaseWatcher(id: string, data: CaseWatcherInput) {
+  return fetchJson<CaseRecord>(`/cases/${id}/watchers`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function removeCaseWatcher(id: string, displayName: string) {
+  const query = new URLSearchParams({ displayName });
+  return fetchJson<CaseRecord>(`/cases/${id}/watchers?${query.toString()}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function addCaseHistory(id: string, entry: Partial<HistoryEntry>) {

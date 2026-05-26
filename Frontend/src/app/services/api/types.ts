@@ -209,6 +209,11 @@ export interface CaseLinksResponse {
   knocks: KnockRecord[];
 }
 
+export interface CaseWatcherInput {
+  displayName?: string | null;
+  userId?: number | null;
+}
+
 export interface ReportSummary {
   totalCases: number;
   openCases: number;

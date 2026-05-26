@@ -23,6 +23,12 @@ type RecordsContextValue = {
   upsertMantis: (record: MantisRecord) => void;
   upsertKnock: (record: KnockRecord) => void;
   upsertCase: (record: CaseRecord) => void;
+  removeAccount: (recordId: string) => void;
+  removeProduct: (recordId: string) => void;
+  removeProject: (recordId: string) => void;
+  removeMantis: (recordId: string) => void;
+  removeKnock: (recordId: string) => void;
+  removeCase: (recordId: string) => void;
   getAccountById: (id: string | null | undefined) => AccountRecord | undefined;
   getProductById: (id: string | null | undefined) => ProductRecord | undefined;
   getProjectById: (id: string | null | undefined) => ProjectRecord | undefined;
@@ -51,6 +57,10 @@ function upsertByRecordId<T extends { recordId: string }>(records: T[], record: 
   const next = [...records];
   next[index] = record;
   return next;
+}
+
+function removeByRecordId<T extends { recordId: string }>(records: T[], recordId: string) {
+  return records.filter((item) => item.recordId !== recordId);
 }
 
 export function RecordsProvider({ children }: { children: React.ReactNode }) {
@@ -117,6 +127,12 @@ export function RecordsProvider({ children }: { children: React.ReactNode }) {
     upsertMantis: (record) => setMantisRecords((current) => upsertByRecordId(current, record)),
     upsertKnock: (record) => setKnocks((current) => upsertByRecordId(current, record)),
     upsertCase: (record) => setCases((current) => upsertByRecordId(current, record)),
+    removeAccount: (recordId) => setAccounts((current) => removeByRecordId(current, recordId)),
+    removeProduct: (recordId) => setProducts((current) => removeByRecordId(current, recordId)),
+    removeProject: (recordId) => setProjects((current) => removeByRecordId(current, recordId)),
+    removeMantis: (recordId) => setMantisRecords((current) => removeByRecordId(current, recordId)),
+    removeKnock: (recordId) => setKnocks((current) => removeByRecordId(current, recordId)),
+    removeCase: (recordId) => setCases((current) => removeByRecordId(current, recordId)),
     getAccountById: (id) => {
       if (!id) return undefined;
       return accounts.find((account) => account.recordId === id);

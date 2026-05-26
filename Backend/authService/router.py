@@ -347,6 +347,13 @@ async def require_admin_user(request: Request) -> dict:
     return user
 
 
+async def require_manager_or_admin_user(request: Request) -> dict:
+    user = await require_auth_user(request)
+    if user.get("role") not in {"admin", "manager"}:
+        raise HTTPException(status_code=403, detail="Manager access required")
+    return user
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(data: LoginRequest) -> LoginResponse:
     await ensure_default_user()

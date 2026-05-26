@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query, Request
 
-from authService import require_auth_user
+from authService import require_auth_user, require_manager_or_admin_user
 from database import execute_mutation, execute_query
 from entity_crud import (
     EntityCrudConfig,
@@ -223,8 +223,9 @@ async def update_project(recordId: str, data: ProjectCreate, request: Request) -
 
 
 @router.delete("/{recordId}")
-async def delete_project(recordId: str) -> dict[str, str]:
+async def delete_project(recordId: str, request: Request) -> dict[str, str]:
     """Delete a project."""
+    await require_manager_or_admin_user(request)
     await execute_mutation("UPDATE cases SET project = NULL WHERE project = %s", [recordId])
     return await delete_entity(PROJECT_CONFIG, recordId)
 

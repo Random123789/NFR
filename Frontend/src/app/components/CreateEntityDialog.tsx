@@ -10,6 +10,7 @@ import {
 } from "./ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Checkbox } from "./ui/checkbox";
+import { TypeaheadInput, TypeaheadTextarea } from "./TypeaheadInput";
 import {
   addCaseLink,
   createAccount,
@@ -36,6 +37,8 @@ import { buildKnockUrl } from "../data/knockOptions";
 import { buildMantisUrl, mantisCategories, mantisStatuses } from "../data/mantisOptions";
 import { projectStages } from "../data/projectOptions";
 import { formatRelatedCaseOption, getRelatedCaseLabelParts } from "../utils/caseLabels";
+import { findDuplicateProduct, productFieldSuggestions } from "../utils/productDuplicates";
+import { fieldSuggestions } from "../utils/typeaheadOptions";
 import {
   isActiveAssignableUser,
   isSeUserRole,
@@ -671,6 +674,24 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     }))),
     [products],
   );
+  const productNameSuggestions = useMemo(() => productFieldSuggestions(products, "productName"), [products]);
+  const productFamilySuggestions = useMemo(() => productFieldSuggestions(products, "productFamily"), [products]);
+  const productVersionSuggestions = useMemo(() => productFieldSuggestions(products, "productVersion"), [products]);
+  const productUrlSuggestions = useMemo(() => productFieldSuggestions(products, "productUrl"), [products]);
+  const duplicateProduct = useMemo(() => findDuplicateProduct(products, formData.product), [formData.product, products]);
+  const duplicateQuickProduct = useMemo(() => findDuplicateProduct(products, quickProductDraft), [products, quickProductDraft]);
+  const accountNameSuggestions = useMemo(() => fieldSuggestions(accounts, "accountName"), [accounts]);
+  const accountWebsiteSuggestions = useMemo(() => fieldSuggestions(accounts, "website"), [accounts]);
+  const projectNameSuggestions = useMemo(() => fieldSuggestions(projects, "projectName"), [projects]);
+  const projectSfdcSuggestions = useMemo(() => fieldSuggestions(projects, "sfdc"), [projects]);
+  const projectSfdcValueSuggestions = useMemo(() => fieldSuggestions(projects, "sfdcValue"), [projects]);
+  const caseDescriptionSuggestions = useMemo(() => fieldSuggestions(cases, "description"), [cases]);
+  const caseEscalationNoteSuggestions = useMemo(() => fieldSuggestions(cases, "escalationNote"), [cases]);
+  const mantisDescriptionSuggestions = useMemo(() => fieldSuggestions(mantisRecords, "description"), [mantisRecords]);
+  const mantisIdSuggestions = useMemo(() => fieldSuggestions(mantisRecords, "mantisId"), [mantisRecords]);
+  const knockDescriptionSuggestions = useMemo(() => fieldSuggestions(knocks, "description"), [knocks]);
+  const knockIdSuggestions = useMemo(() => fieldSuggestions(knocks, "knockId"), [knocks]);
+  const knockStatusSuggestions = useMemo(() => fieldSuggestions(knocks, "status"), [knocks]);
   const seOwnerSelectOptions = useMemo<SelectOption[]>(
     () => sortSelectOptions(activeAssignableUsers.filter((assignableUser) => isSeOwnerRole(assignableUser.role)).map(toAssignableUserOption)),
     [activeAssignableUsers],
@@ -837,10 +858,11 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className={labelClassName}>Account Name *</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickAccountDraft.accountName}
-              onChange={(event) => setQuickAccountDraft({ ...quickAccountDraft, accountName: event.target.value })}
+              onChange={(accountName) => setQuickAccountDraft({ ...quickAccountDraft, accountName })}
+              options={accountNameSuggestions}
               className={inputClassName}
             />
           </div>
@@ -874,10 +896,11 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           </div>
           <div className="sm:col-span-2">
             <label className={labelClassName}>Website</label>
-            <input
+            <TypeaheadInput
               type="url"
               value={quickAccountDraft.website}
-              onChange={(event) => setQuickAccountDraft({ ...quickAccountDraft, website: event.target.value })}
+              onChange={(website) => setQuickAccountDraft({ ...quickAccountDraft, website })}
+              options={accountWebsiteSuggestions}
               className={inputClassName}
               placeholder="https://example.com"
             />
@@ -1142,10 +1165,11 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <div className="grid grid-cols-1 gap-3">
           <div>
             <label className={labelClassName}>Project Name *</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickProjectDraft.projectName}
-              onChange={(event) => setQuickProjectDraft({ ...quickProjectDraft, projectName: event.target.value })}
+              onChange={(projectName) => setQuickProjectDraft({ ...quickProjectDraft, projectName })}
+              options={projectNameSuggestions}
               className={inputClassName}
             />
           </div>
@@ -1205,22 +1229,24 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           </div>
           <div>
             <label className={labelClassName}>SFDC</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickProjectDraft.sfdc}
-              onChange={(event) => setQuickProjectDraft({ ...quickProjectDraft, sfdc: event.target.value })}
+              onChange={(sfdc) => setQuickProjectDraft({ ...quickProjectDraft, sfdc })}
+              options={projectSfdcSuggestions}
               className={inputClassName}
               placeholder="Opportunity ID or Salesforce URL"
             />
           </div>
           <div>
             <label className={labelClassName}>SFDC Value (USD)</label>
-            <input
+            <TypeaheadInput
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
               value={quickProjectDraft.sfdcValue}
-              onChange={(event) => setQuickProjectDraft({ ...quickProjectDraft, sfdcValue: normalizeUsdIntegerInput(event.target.value) })}
+              onChange={(sfdcValue) => setQuickProjectDraft({ ...quickProjectDraft, sfdcValue: normalizeUsdIntegerInput(sfdcValue) })}
+              options={projectSfdcValueSuggestions}
               className={inputClassName}
               placeholder="250000"
             />
@@ -1244,43 +1270,54 @@ export function CreateEntityDialog<T extends CreateEntityType>({
   const renderQuickProductFields = (onSelect: (recordId: string) => void) => {
     if (!quickProductOpen) return null;
 
+    const selectExistingProduct = (recordId: string) => {
+      onSelect(recordId);
+      setQuickProductDraft(createEmptyQuickProductDraft());
+      setQuickProductOpen(false);
+      setQuickProductError("");
+    };
+
     return (
       <div className="mt-2 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
         <div className="grid grid-cols-1 gap-3">
           <div>
             <label className={labelClassName}>Product Name *</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickProductDraft.productName}
-              onChange={(event) => setQuickProductDraft({ ...quickProductDraft, productName: event.target.value })}
+              onChange={(productName) => setQuickProductDraft({ ...quickProductDraft, productName })}
+              options={productNameSuggestions}
               className={inputClassName}
             />
           </div>
           <div>
             <label className={labelClassName}>Product Family</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickProductDraft.productFamily}
-              onChange={(event) => setQuickProductDraft({ ...quickProductDraft, productFamily: event.target.value })}
+              onChange={(productFamily) => setQuickProductDraft({ ...quickProductDraft, productFamily })}
+              options={productFamilySuggestions}
               className={inputClassName}
             />
           </div>
           <div>
             <label className={labelClassName}>Version</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickProductDraft.productVersion}
-              onChange={(event) => setQuickProductDraft({ ...quickProductDraft, productVersion: event.target.value })}
+              onChange={(productVersion) => setQuickProductDraft({ ...quickProductDraft, productVersion })}
+              options={productVersionSuggestions}
               className={inputClassName}
               placeholder="7.6, 2026.1, GA"
             />
           </div>
           <div>
             <label className={labelClassName}>Product URL</label>
-            <input
+            <TypeaheadInput
               type="url"
               value={quickProductDraft.productUrl}
-              onChange={(event) => setQuickProductDraft({ ...quickProductDraft, productUrl: event.target.value })}
+              onChange={(productUrl) => setQuickProductDraft({ ...quickProductDraft, productUrl })}
+              options={productUrlSuggestions}
               className={inputClassName}
               placeholder="https://www.fortinet.com/products"
             />
@@ -1295,6 +1332,21 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             />
           </div>
         </div>
+        {duplicateQuickProduct ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <div className="font-medium">Matching product exists: {duplicateQuickProduct.productName}</div>
+            <div className="mt-0.5 text-xs text-amber-800">
+              {joinDescriptionParts([duplicateQuickProduct.productFamily, duplicateQuickProduct.productVersion, duplicateQuickProduct.productUrl]) || duplicateQuickProduct.recordId}
+            </div>
+            <button
+              type="button"
+              onClick={() => selectExistingProduct(duplicateQuickProduct.recordId)}
+              className="mt-2 text-sm font-medium text-[#B5122B] hover:underline"
+            >
+              Use existing
+            </button>
+          </div>
+        ) : null}
         {quickCreateActions({
           error: quickProductError,
           isCreating: isCreatingQuickProduct,
@@ -1318,25 +1370,27 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <div className="grid grid-cols-1 gap-3">
           <div>
             <label className={labelClassName}>Description *</label>
-            <textarea
+            <TypeaheadTextarea
               value={quickMantisDraft.description}
-              onChange={(event) => setQuickMantisDraft({ ...quickMantisDraft, description: event.target.value })}
+              onChange={(description) => setQuickMantisDraft({ ...quickMantisDraft, description })}
+              options={mantisDescriptionSuggestions}
               className={inputClassName}
               rows={3}
             />
           </div>
           <div>
             <label className={labelClassName}>Mantis ID</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickMantisDraft.mantisId}
-              onChange={(event) =>
+              onChange={(mantisId) =>
                 setQuickMantisDraft({
                   ...quickMantisDraft,
-                  mantisId: event.target.value,
-                  mantisUrl: buildMantisUrl(event.target.value),
+                  mantisId,
+                  mantisUrl: buildMantisUrl(mantisId),
                 })
               }
+              options={mantisIdSuggestions}
               className={inputClassName}
             />
           </div>
@@ -1420,34 +1474,37 @@ export function CreateEntityDialog<T extends CreateEntityType>({
         <div className="grid grid-cols-1 gap-3">
           <div>
             <label className={labelClassName}>Description *</label>
-            <textarea
+            <TypeaheadTextarea
               value={quickKnockDraft.description}
-              onChange={(event) => setQuickKnockDraft({ ...quickKnockDraft, description: event.target.value })}
+              onChange={(description) => setQuickKnockDraft({ ...quickKnockDraft, description })}
+              options={knockDescriptionSuggestions}
               className={inputClassName}
               rows={3}
             />
           </div>
           <div>
             <label className={labelClassName}>Knock ID</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickKnockDraft.knockId}
-              onChange={(event) =>
+              onChange={(knockId) =>
                 setQuickKnockDraft({
                   ...quickKnockDraft,
-                  knockId: event.target.value,
-                  knockUrl: buildKnockUrl(event.target.value),
+                  knockId,
+                  knockUrl: buildKnockUrl(knockId),
                 })
               }
+              options={knockIdSuggestions}
               className={inputClassName}
             />
           </div>
           <div>
             <label className={labelClassName}>Status</label>
-            <input
+            <TypeaheadInput
               type="text"
               value={quickKnockDraft.status}
-              onChange={(event) => setQuickKnockDraft({ ...quickKnockDraft, status: event.target.value })}
+              onChange={(status) => setQuickKnockDraft({ ...quickKnockDraft, status })}
+              options={knockStatusSuggestions}
               className={inputClassName}
             />
           </div>
@@ -1640,9 +1697,10 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     <div className="space-y-4">
       <div>
         <label className={labelClassName}>Description *</label>
-        <textarea
+        <TypeaheadTextarea
           value={formData.case.description}
-          onChange={(event) => setFormData({ ...formData, case: { ...formData.case, description: event.target.value } })}
+          onChange={(description) => setFormData({ ...formData, case: { ...formData.case, description } })}
+          options={caseDescriptionSuggestions}
           className={inputClassName}
           rows={4}
           placeholder="Describe the customer case"
@@ -1899,9 +1957,10 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       </div>
         <div>
           <label className={labelClassName}>Escalation Note</label>
-          <textarea
+          <TypeaheadTextarea
             value={formData.case.escalationNote}
-            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, escalationNote: event.target.value } })}
+            onChange={(escalationNote) => setFormData({ ...formData, case: { ...formData.case, escalationNote } })}
+            options={caseEscalationNoteSuggestions}
             className={inputClassName}
             rows={3}
           />
@@ -1913,10 +1972,11 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
         <label className={labelClassName}>Account Name *</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.account.accountName}
-          onChange={(event) => setFormData({ ...formData, account: { ...formData.account, accountName: event.target.value } })}
+          onChange={(accountName) => setFormData({ ...formData, account: { ...formData.account, accountName } })}
+          options={accountNameSuggestions}
           className={inputClassName}
         />
       </div>
@@ -1950,10 +2010,11 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       </div>
       <div className="sm:col-span-2">
         <label className={labelClassName}>Website</label>
-        <input
+        <TypeaheadInput
           type="url"
           value={formData.account.website}
-          onChange={(event) => setFormData({ ...formData, account: { ...formData.account, website: event.target.value } })}
+          onChange={(website) => setFormData({ ...formData, account: { ...formData.account, website } })}
+          options={accountWebsiteSuggestions}
           className={inputClassName}
           placeholder="https://example.com"
         />
@@ -1972,18 +2033,42 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
         <label className={labelClassName}>Project Name *</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.project.projectName}
-          onChange={(event) => setFormData({ ...formData, project: { ...formData.project, projectName: event.target.value } })}
+          onChange={(projectName) => setFormData({ ...formData, project: { ...formData.project, projectName } })}
+          options={projectNameSuggestions}
           className={inputClassName}
         />
       </div>
-      {renderAccountSelect({
-        value: formData.project.accountId,
-        onChange: (accountId) => setFormData({ ...formData, project: { ...formData.project, accountId } }),
-        emptyLabel: "No account",
-      })}
+      <div>
+        <label className={labelClassName}>Account</label>
+        <div className="flex gap-2">
+          <div className="min-w-0 flex-1">
+            <SearchableSelect
+              label="Account"
+              value={formData.project.accountId}
+              options={accountSelectOptions}
+              emptyLabel="No account"
+              searchPlaceholder="Search accounts"
+              onChange={(accountId) => setFormData({ ...formData, project: { ...formData.project, accountId } })}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setQuickAccountOpen(true);
+              setQuickAccountError("");
+            }}
+            className="inline-flex h-[38px] shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            New
+          </button>
+        </div>
+        {renderQuickAccountFields((recordId) =>
+          setFormData({ ...formData, project: { ...formData.project, accountId: recordId } }),
+        )}
+      </div>
       <div>
         <label className={labelClassName}>Stage</label>
         <select
@@ -2051,21 +2136,23 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       </div>
       <div>
         <label className={labelClassName}>SFDC</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.project.sfdc}
-          onChange={(event) => setFormData({ ...formData, project: { ...formData.project, sfdc: event.target.value } })}
+          onChange={(sfdc) => setFormData({ ...formData, project: { ...formData.project, sfdc } })}
+          options={projectSfdcSuggestions}
           className={inputClassName}
         />
       </div>
       <div>
         <label className={labelClassName}>SFDC Value (USD)</label>
-        <input
+        <TypeaheadInput
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           value={formData.project.sfdcValue}
-          onChange={(event) => setFormData({ ...formData, project: { ...formData.project, sfdcValue: normalizeUsdIntegerInput(event.target.value) } })}
+          onChange={(sfdcValue) => setFormData({ ...formData, project: { ...formData.project, sfdcValue: normalizeUsdIntegerInput(sfdcValue) } })}
+          options={projectSfdcValueSuggestions}
           className={inputClassName}
           placeholder="250000"
         />
@@ -2084,38 +2171,42 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
         <label className={labelClassName}>Product Name *</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.product.productName}
-          onChange={(event) => setFormData({ ...formData, product: { ...formData.product, productName: event.target.value } })}
+          onChange={(productName) => setFormData({ ...formData, product: { ...formData.product, productName } })}
+          options={productNameSuggestions}
           className={inputClassName}
         />
       </div>
       <div>
         <label className={labelClassName}>Product Family</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.product.productFamily}
-          onChange={(event) => setFormData({ ...formData, product: { ...formData.product, productFamily: event.target.value } })}
+          onChange={(productFamily) => setFormData({ ...formData, product: { ...formData.product, productFamily } })}
+          options={productFamilySuggestions}
           className={inputClassName}
         />
       </div>
       <div>
         <label className={labelClassName}>Version</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.product.productVersion}
-          onChange={(event) => setFormData({ ...formData, product: { ...formData.product, productVersion: event.target.value } })}
+          onChange={(productVersion) => setFormData({ ...formData, product: { ...formData.product, productVersion } })}
+          options={productVersionSuggestions}
           className={inputClassName}
           placeholder="7.6, 2026.1, GA"
         />
       </div>
-      <div>
+      <div className="sm:col-span-2">
         <label className={labelClassName}>Product URL</label>
-        <input
+        <TypeaheadInput
           type="url"
           value={formData.product.productUrl}
-          onChange={(event) => setFormData({ ...formData, product: { ...formData.product, productUrl: event.target.value } })}
+          onChange={(productUrl) => setFormData({ ...formData, product: { ...formData.product, productUrl } })}
+          options={productUrlSuggestions}
           className={inputClassName}
           placeholder="https://www.fortinet.com/products"
         />
@@ -2129,6 +2220,14 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           rows={3}
         />
       </div>
+      {entityType === "product" && duplicateProduct ? (
+        <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <div className="font-medium">Matching product exists: {duplicateProduct.productName}</div>
+          <div className="mt-0.5 text-xs text-amber-800">
+            {joinDescriptionParts([duplicateProduct.productFamily, duplicateProduct.productVersion, duplicateProduct.productUrl]) || duplicateProduct.recordId}
+          </div>
+        </div>
+      ) : null}
       {!hideLinkedCaseSelect && (
       <div className="sm:col-span-2">
         {renderLinkedCaseSelect(formData.product.linkedCase, (value) =>
@@ -2143,28 +2242,30 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
         <label className={labelClassName}>Description *</label>
-        <textarea
+        <TypeaheadTextarea
           value={formData.mantis.description}
-          onChange={(event) => setFormData({ ...formData, mantis: { ...formData.mantis, description: event.target.value } })}
+          onChange={(description) => setFormData({ ...formData, mantis: { ...formData.mantis, description } })}
+          options={mantisDescriptionSuggestions}
           className={inputClassName}
           rows={4}
         />
       </div>
       <div>
         <label className={labelClassName}>Mantis ID</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.mantis.mantisId}
-          onChange={(event) =>
+          onChange={(mantisId) =>
             setFormData({
               ...formData,
               mantis: {
                 ...formData.mantis,
-                mantisId: event.target.value,
-                mantisUrl: buildMantisUrl(event.target.value),
+                mantisId,
+                mantisUrl: buildMantisUrl(mantisId),
               },
             })
           }
+          options={mantisIdSuggestions}
           className={inputClassName}
         />
       </div>
@@ -2238,37 +2339,40 @@ export function CreateEntityDialog<T extends CreateEntityType>({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
         <label className={labelClassName}>Description *</label>
-        <textarea
+        <TypeaheadTextarea
           value={formData.knock.description}
-          onChange={(event) => setFormData({ ...formData, knock: { ...formData.knock, description: event.target.value } })}
+          onChange={(description) => setFormData({ ...formData, knock: { ...formData.knock, description } })}
+          options={knockDescriptionSuggestions}
           className={inputClassName}
           rows={4}
         />
       </div>
       <div>
         <label className={labelClassName}>Knock ID</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.knock.knockId}
-          onChange={(event) =>
+          onChange={(knockId) =>
             setFormData({
               ...formData,
               knock: {
                 ...formData.knock,
-                knockId: event.target.value,
-                knockUrl: buildKnockUrl(event.target.value),
+                knockId,
+                knockUrl: buildKnockUrl(knockId),
               },
             })
           }
+          options={knockIdSuggestions}
           className={inputClassName}
         />
       </div>
       <div>
         <label className={labelClassName}>Status</label>
-        <input
+        <TypeaheadInput
           type="text"
           value={formData.knock.status}
-          onChange={(event) => setFormData({ ...formData, knock: { ...formData.knock, status: event.target.value } })}
+          onChange={(status) => setFormData({ ...formData, knock: { ...formData.knock, status } })}
+          options={knockStatusSuggestions}
           className={inputClassName}
         />
       </div>

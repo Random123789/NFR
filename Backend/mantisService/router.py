@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
 
-from authService import require_auth_user
+from authService import require_auth_user, require_manager_or_admin_user
 from database import execute_mutation, execute_query
 from entity_crud import (
     EntityCrudConfig,
@@ -218,8 +218,9 @@ async def update_mantis(recordId: str, data: MantisCreate, request: Request) -> 
 
 
 @router.delete("/{recordId}")
-async def delete_mantis(recordId: str) -> dict[str, str]:
+async def delete_mantis(recordId: str, request: Request) -> dict[str, str]:
     """Delete a Mantis record."""
+    await require_manager_or_admin_user(request)
     existing = await get_entity_or_404(MANTIS_CONFIG, recordId)
     await execute_mutation(
         "DELETE FROM case_entity_links WHERE entityType = 'mantis' AND entityRecordId = %s",

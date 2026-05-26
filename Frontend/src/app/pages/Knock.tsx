@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark } from "lucide-react";
-import { addKnockHistory, updateKnock } from "../data/apiClient";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Download, Edit2, Save, Bookmark, Trash2 } from "lucide-react";
+import { addKnockHistory, deleteKnock, updateKnock } from "../data/apiClient";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedCasesList } from "../components/LinkedEntityCard";
 import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { SearchableSelect } from "../components/SearchableSelect";
+import { TypeaheadInput, TypeaheadTextarea } from "../components/TypeaheadInput";
 import { TableFieldSelector } from "../components/TableFieldSelector";
 import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
@@ -32,6 +33,7 @@ import {
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatRelatedCaseOption } from "../utils/caseLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { fieldSuggestions } from "../utils/typeaheadOptions";
 import { getRecordActivityTimestamp } from "../utils/recordActivity";
 import { unreadRowClassName } from "../utils/unreadRows";
 
@@ -70,7 +72,7 @@ export function Knock() {
   const { addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const { isRecordUnread, markRecordRead } = useRecordReadState();
   const { searchTerm } = useSearch();
-  const { accounts, projects, knocks, cases, getKnockById, upsertKnock } = useRecords();
+  const { accounts, projects, knocks, cases, getKnockById, upsertKnock, removeKnock, refreshRecords } = useRecords();
   const {
     selectedRecord: selectedKnock,
     setSelectedRecord: setSelectedKnock,
@@ -113,6 +115,18 @@ export function Knock() {
     onError: (message) => showToast(message, "error"),
   });
   const selectedKnockActivityAt = getRecordActivityTimestamp(selectedKnock);
+  const knockDescriptionSuggestions = useMemo(
+    () => fieldSuggestions(knocks, "description", selectedKnock?.recordId),
+    [knocks, selectedKnock?.recordId],
+  );
+  const knockIdSuggestions = useMemo(
+    () => fieldSuggestions(knocks, "knockId", selectedKnock?.recordId),
+    [knocks, selectedKnock?.recordId],
+  );
+  const knockStatusSuggestions = useMemo(
+    () => fieldSuggestions(knocks, "status", selectedKnock?.recordId),
+    [knocks, selectedKnock?.recordId],
+  );
 
   useEffect(() => {
     if (!selectedKnock) return;
@@ -165,6 +179,28 @@ export function Knock() {
     } catch (error) {
       console.error("Failed to save knock:", error);
       showToast("Failed to save changes. Please try again.", "error");
+    }
+  };
+
+  const canDeleteRecords = user?.role === "manager" || user?.role === "admin";
+
+  const handleDelete = async () => {
+    if (!selectedKnock) return;
+    const label = selectedKnock.knockId || selectedKnock.description;
+    const confirmed = window.confirm(`Delete Knock "${label}"? Linked cases will be detached.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteKnock(selectedKnock.recordId);
+      removeBookmark(selectedKnock.recordId, "knock");
+      removeKnock(selectedKnock.recordId);
+      setSelectedKnock(null);
+      await refreshRecords();
+      showToast("Knock deleted.", "success");
+      navigate("/knock");
+    } catch (error) {
+      console.error("Failed to delete knock:", error);
+      showToast(error instanceof Error ? error.message : "Failed to delete knock.", "error");
     }
   };
 
@@ -426,6 +462,15 @@ export function Knock() {
                 >
                   <Bookmark className={`w-5 h-5 ${isBookmarked(selectedKnock!.recordId, 'knock') ? 'fill-current' : ''}`} />
                 </button>
+                {canDeleteRecords && !isEditing ? (
+                  <button
+                    onClick={() => void handleDelete()}
+                    className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-[#B5122B] transition-colors hover:bg-red-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                ) : null}
                 {isEditing ? (
                   <>
                     <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-[#E31937] text-white rounded-lg hover:bg-[#c41230] transition-colors">
@@ -457,10 +502,11 @@ export function Knock() {
                 <div className="order-1">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Knock ID</label>
                   {isEditing && editedKnock ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedKnock.knockId ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, knockId: e.target.value, knockUrl: buildKnockUrl(e.target.value) })}
+                      onChange={(knockId) => setEditedKnock({ ...editedKnock, knockId, knockUrl: buildKnockUrl(knockId) })}
+                      options={knockIdSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -470,10 +516,11 @@ export function Knock() {
                 <div className="order-3">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
                   {isEditing && editedKnock ? (
-                    <input
+                    <TypeaheadInput
                       type="text"
                       value={editedKnock.status ?? ""}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, status: e.target.value })}
+                      onChange={(status) => setEditedKnock({ ...editedKnock, status })}
+                      options={knockStatusSuggestions}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
                   ) : (
@@ -531,9 +578,10 @@ export function Knock() {
                 <div className="order-6 sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-600 mb-1">Description</label>
                   {isEditing && editedKnock ? (
-                    <textarea
+                    <TypeaheadTextarea
                       value={editedKnock.description}
-                      onChange={(e) => setEditedKnock({ ...editedKnock, description: e.target.value })}
+                      onChange={(description) => setEditedKnock({ ...editedKnock, description })}
+                      options={knockDescriptionSuggestions}
                       rows={3}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     />
