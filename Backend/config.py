@@ -33,6 +33,18 @@ class Settings:
 
     cors_origin: str = os.getenv("CORS_ORIGIN", "http://localhost:5173")
 
+    app_base_url: str = os.getenv("APP_BASE_URL", os.getenv("CORS_ORIGIN", "http://localhost:5173")).rstrip("/")
+
+    email_notifications_enabled: bool = os.getenv("EMAIL_NOTIFICATIONS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    smtp_host: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username: str = os.getenv("SMTP_USERNAME", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", os.getenv("SMTP_USERNAME", ""))
+    smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "NFR CRM")
+    smtp_use_starttls: bool = os.getenv("SMTP_USE_STARTTLS", "true").strip().lower() not in {"0", "false", "no", "off"}
+    smtp_timeout_seconds: float = float(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
+
     @property
     def cors_origins(self) -> list[str]:
         """Configured CORS origins, deduplicated while preserving order."""

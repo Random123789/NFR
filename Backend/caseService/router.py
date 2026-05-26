@@ -8,6 +8,7 @@ import logging
 
 from authService import require_auth_user
 from database import execute_mutation, execute_query, generate_record_id
+from email_notifications import send_case_update_notification
 from schemas import CaseCreate, CaseRecord, HistoryEntryCreate
 from utils import build_history_entry, build_update_history_entries, current_timestamp, normalize_record
 
@@ -910,14 +911,13 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
     payload = _case_payload(data)
     status_changed = (existing.get("status") or "") != (payload.get("status") or "")
     history = _history_from_record(existing)
-    history.extend(
-        build_update_history_entries(
-            existing,
-            payload,
-            actor["displayName"],
-            field_labels=CASE_FIELD_LABELS,
-        )
+    update_entries = build_update_history_entries(
+        existing,
+        payload,
+        actor["displayName"],
+        field_labels=CASE_FIELD_LABELS,
     )
+    history.extend(update_entries)
 
     update_fields = [*CASE_DATA_FIELDS, "history"]
     assignments = ", ".join(f"`{field}` = %s" for field in update_fields)
@@ -932,7 +932,10 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
     await _replace_case_links_from_data(recordId, data, actor["displayName"], replace_all=False)
 
     result = await get_case_or_404(recordId)
-    return await enrich_case_record(result)
+    enriched_result = await enrich_case_record(result)
+    if update_entries:
+        await send_case_update_notification(enriched_result, update_entries, actor["displayName"])
+    return enriched_result
 
 
 @router.post("/{recordId}/history", response_model=CaseRecord)
