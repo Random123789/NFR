@@ -179,3 +179,15 @@
     line-height: 1.5;
   }
 }
+
+@layer utilities {
+  .page-guide-highlight {
+    position: relative;
+    z-index: 60;
+    border-radius: 0.75rem;
+    box-shadow:
+      0 0 0 4px rgba(227, 25, 55, 0.28),
+      0 18px 40px rgba(15, 23, 42, 0.16);
+    transition: box-shadow 180ms ease;
+  }
+}

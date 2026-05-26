@@ -19,6 +19,7 @@ import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { MultiRecordDropdown, SearchableSelect, type SelectOption } from "../components/SearchableSelect";
 import { TableFieldSelector } from "../components/TableFieldSelector";
+import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
 import { useAuth } from "../context/AuthContext";
 import { useBookmarks } from "../context/BookmarksContext";
@@ -28,6 +29,7 @@ import { useSearch } from "../context/SearchContext";
 import { useToast } from "../context/ToastContext";
 import { accountVerticals } from "../data/accountOptions";
 import { caseCategories, caseEscalationTypes, casePriorities, caseStatuses } from "../data/caseOptions";
+import { caseGuideSteps } from "../data/pageGuides";
 import { casePriorityColors, caseStatusColors } from "../data/recordStyles";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
 import { useRecordComments } from "../hooks/useRecordComments";
@@ -752,15 +754,16 @@ export function Cases() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
+        <div data-guide-id="cases-intro">
           <h1 className="text-2xl font-bold text-gray-900">Cases</h1>
           <p className="mt-1 text-gray-600">Manage and track all customer cases</p>
         </div>
+        <PageGuide label="Cases" steps={caseGuideSteps} />
       </div>
 
       <div className={`rounded-xl border border-gray-200 bg-white shadow-sm ${selectedCase ? "hidden" : ""}`}>
         <div className="flex flex-col gap-3 border-b border-gray-200 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+          <div data-guide-id="cases-filters" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <div className="w-full sm:w-44">
               <MultiRecordDropdown
                 label="status"
@@ -808,7 +811,7 @@ export function Cases() {
             </button>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div data-guide-id="cases-actions" className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <p className="text-sm text-gray-500">{visibleCaseColumns.length} of {CASE_TABLE_COLUMNS.length} fields shown</p>
             <button
               type="button"
@@ -829,7 +832,7 @@ export function Cases() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div data-guide-id="cases-table" className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -877,7 +880,7 @@ export function Cases() {
       </div>
 
       {selectedCase && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div data-guide-id="cases-detail" className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="w-full">
             <div className="sticky top-[-1.5rem] z-10 flex items-center justify-between border-b border-gray-200 bg-white p-6">
               <h2 className="text-xl font-semibold text-gray-900">Case Details</h2>

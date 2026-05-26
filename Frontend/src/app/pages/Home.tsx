@@ -8,6 +8,7 @@ import { casePriorityColors, caseStatusColors, knockStatusColors, mantisStatusCo
 import type { AccountRecord, CaseRecord, HistoryEntry, KnockRecord, MantisRecord, ProjectRecord } from "../data/apiClient";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Checkbox } from "../components/ui/checkbox";
+import { PageGuide } from "../components/PageGuide";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import {
   DropdownMenu,
@@ -20,6 +21,7 @@ import {
 } from "../components/ui/dropdown-menu";
 import { accountVerticals, type AccountVertical } from "../data/accountOptions";
 import { caseStatuses, casePriorities } from "../data/caseOptions";
+import { homeGuideSteps, managerHomeGuideSteps, seHomeGuideSteps } from "../data/pageGuides";
 import { createDetailPath } from "../navigation/detailNavigation";
 import { formatUsdInteger } from "../utils/currency";
 
@@ -518,50 +520,55 @@ function ManagerHome() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
+        <div data-guide-id="manager-home-intro">
           <h1 className="text-2xl font-bold text-gray-900">Manager Dashboard</h1>
           <p className="mt-1 text-gray-600">Pipeline, risk, and focus areas for the SE team.</p>
         </div>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="Filter manager dashboard by vertical"
-              className="inline-flex w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#E31937] md:w-auto md:min-w-44"
-            >
-              <span className="truncate">{verticalFilterLabel}</span>
-              <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>Verticals</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {accountVerticals.map((vertical) => (
-              <DropdownMenuCheckboxItem
-                key={vertical}
-                checked={selectedVerticals.includes(vertical)}
-                onCheckedChange={() => toggleVertical(vertical)}
-                onSelect={(event) => event.preventDefault()}
-              >
-                {vertical}
-              </DropdownMenuCheckboxItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={!hasVerticalFilter}
-              onSelect={(event) => {
-                event.preventDefault();
-                setSelectedVerticals([]);
-              }}
-            >
-              Overall view
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex items-center gap-2">
+          <div data-guide-id="manager-home-verticals">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Filter manager dashboard by vertical"
+                  className="inline-flex w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#E31937] md:w-auto md:min-w-44"
+                >
+                  <span className="truncate">{verticalFilterLabel}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Verticals</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {accountVerticals.map((vertical) => (
+                  <DropdownMenuCheckboxItem
+                    key={vertical}
+                    checked={selectedVerticals.includes(vertical)}
+                    onCheckedChange={() => toggleVertical(vertical)}
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    {vertical}
+                  </DropdownMenuCheckboxItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={!hasVerticalFilter}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setSelectedVerticals([]);
+                  }}
+                >
+                  Overall view
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <PageGuide label="Manager Dashboard" steps={managerHomeGuideSteps} />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <div data-guide-id="manager-home-widgets" className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {managerStats.map((stat) => (
           <button
             key={stat.label}
@@ -583,7 +590,7 @@ function ManagerHome() {
         ))}
       </div>
 
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div data-guide-id="manager-home-aging" className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-gray-200 p-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Status Aging</h2>
@@ -720,7 +727,7 @@ function ManagerHome() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div data-guide-id="manager-home-focus" className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-200 p-5">
             <h2 className="text-lg font-semibold text-gray-900">Recommended Focus</h2>
             <p className="mt-1 text-sm text-gray-500">Projects ranked by value, urgency, and open case pressure.</p>
@@ -1013,7 +1020,7 @@ function SalesEngineerHome() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
+        <div data-guide-id="se-home-intro">
           <h1 className="text-2xl font-bold text-gray-900">SE Focus</h1>
           <p className="mt-1 text-gray-600">
             {user?.role === "user" && ownedOpenCases.length > 0
@@ -1021,12 +1028,15 @@ function SalesEngineerHome() {
               : "Active cases, projects, and product asks across your visible accounts."}
           </p>
         </div>
-        <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 shadow-sm">
+        <div className="flex items-center gap-2">
+          <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 shadow-sm">
           {focusProjects.length} active projects · {activeMantis.length} Mantis · {activeKnocks.length} Knocks
+          </div>
+          <PageGuide label="SE Focus" steps={seHomeGuideSteps} />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div data-guide-id="se-home-widgets" className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {stats.map((stat) => (
           <button
             key={stat.label}
@@ -1049,7 +1059,7 @@ function SalesEngineerHome() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div data-guide-id="se-home-attention" className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-200 p-5">
             <h2 className="text-lg font-semibold text-gray-900">Attention Queue</h2>
             <p className="mt-1 text-sm text-gray-500">Ranked by escalation, priority, and deadline pressure.</p>
@@ -1180,7 +1190,7 @@ function SalesEngineerHome() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div data-guide-id="se-home-asks" className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-200 p-5">
             <h2 className="text-lg font-semibold text-gray-900">Mantis and Knock Follow-Ups</h2>
             <p className="mt-1 text-sm text-gray-500">Active product asks sorted by target pressure and case linkage.</p>
@@ -1429,19 +1439,23 @@ function TeamHome() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <div>
+        <div data-guide-id="home-intro">
           <h1 className="text-2xl font-bold text-gray-900">Home</h1>
           <p className="text-gray-600 mt-1">Overview of your metrics and activity</p>
         </div>
-        <button 
-          onClick={openNewWidgetModal}
-          className="flex items-center gap-2 rounded-md bg-[#E31937] px-4 py-2 text-sm font-medium text-white hover:bg-[#c41230] focus:outline-none focus:ring-2 focus:ring-[#E31937] focus:ring-offset-2 transition-colors"
-        >
-          <Plus className="h-4 w-4" /> Add Widget
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            data-guide-id="home-custom-widget"
+            onClick={openNewWidgetModal}
+            className="flex items-center gap-2 rounded-md bg-[#E31937] px-4 py-2 text-sm font-medium text-white hover:bg-[#c41230] focus:outline-none focus:ring-2 focus:ring-[#E31937] focus:ring-offset-2 transition-colors"
+          >
+            <Plus className="h-4 w-4" /> Add Widget
+          </button>
+          <PageGuide label="Home" steps={homeGuideSteps} />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div data-guide-id="home-widgets" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {allStats.map((stat) => (
           <div 
             key={stat.label + (stat.id || "")} 
@@ -1484,7 +1498,7 @@ function TeamHome() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div data-guide-id="home-charts" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h2 className="font-semibold text-lg text-gray-900 mb-4">Cases by Status</h2>
           <ResponsiveContainer width="100%" height={250}>
@@ -1515,7 +1529,7 @@ function TeamHome() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+      <div data-guide-id="home-recent" className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="p-6 border-b border-gray-200 space-y-4">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>

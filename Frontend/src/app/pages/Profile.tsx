@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 import { AlertTriangle, ArrowLeft, Check, KeyRound, Save, Trash2 } from "lucide-react";
 import { createManagedUser, deleteCurrentUser, listManagedUsers, updateCurrentUserProfile, updateManagedUser, updateManagedUserPassword, type ManagedUser } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
+import { PageGuide } from "../components/PageGuide";
 import { accountVerticals, type AccountVertical } from "../data/accountOptions";
+import { adminProfileGuideStep, profileGuideSteps } from "../data/pageGuides";
 import { formatRoleLabel, managedRoleOptions, type ManagedRole } from "../data/roleLabels";
 import { formatTimestampMinute } from "../utils/dateTime";
 
@@ -66,6 +68,8 @@ export function Profile() {
   if (!user) {
     return null;
   }
+
+  const guideSteps = user.role === "admin" ? [...profileGuideSteps, adminProfileGuideStep] : profileGuideSteps;
 
   const handleSaveProfile = async () => {
     setProfileMessage("");
@@ -274,7 +278,7 @@ export function Profile() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <div>
+        <div data-guide-id="profile-intro">
           <button
             onClick={() => navigate(-1)}
             className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-3"
@@ -285,10 +289,11 @@ export function Profile() {
           <h1 className="text-2xl font-bold text-gray-900">Profile</h1>
           <p className="text-gray-600 mt-1">Manage your account details and security settings</p>
         </div>
+        <PageGuide label="Profile" steps={guideSteps} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-6">
+        <div data-guide-id="profile-details" className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-6">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Account Details</h2>
             <p className="text-sm text-gray-600 mt-1">Edit the profile fields shown in the header.</p>
@@ -343,7 +348,7 @@ export function Profile() {
             </button>
           </div>
 
-          <div className="border-t border-gray-200 pt-6 space-y-4">
+          <div data-guide-id="profile-password" className="border-t border-gray-200 pt-6 space-y-4">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Reset Password</h2>
               <p className="text-sm text-gray-600 mt-1">Change the password for this profile.</p>
@@ -391,7 +396,7 @@ export function Profile() {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
+        <div data-guide-id="profile-summary" className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Account Summary</h2>
             <p className="text-sm text-gray-600 mt-1">Your current login and permissions.</p>
@@ -434,7 +439,7 @@ export function Profile() {
       </div>
 
       {user.role === "admin" && (
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
+        <div data-guide-id="profile-admin" className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Admin User Management</h2>
             <p className="text-sm text-gray-600 mt-1">Create accounts, update users, and reset passwords for other users.</p>

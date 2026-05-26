@@ -7,6 +7,7 @@ import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { SearchableSelect } from "../components/SearchableSelect";
 import { TableFieldSelector } from "../components/TableFieldSelector";
+import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
@@ -14,6 +15,7 @@ import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
 import { useRecordReadState } from "../context/RecordReadContext";
 import { useToast } from "../context/ToastContext";
+import { productGuideSteps } from "../data/pageGuides";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
 import { useLinkedCases } from "../hooks/useLinkedCases";
 import { useRecordComments } from "../hooks/useRecordComments";
@@ -289,9 +291,12 @@ export function Product() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Fortinet Products</h1>
-        <p className="text-gray-600 mt-1">Manage Fortinet product catalog and security solutions</p>
+      <div className="flex items-start justify-between gap-3">
+        <div data-guide-id="products-intro">
+          <h1 className="text-2xl font-bold text-gray-900">Fortinet Products</h1>
+          <p className="text-gray-600 mt-1">Manage Fortinet product catalog and security solutions</p>
+        </div>
+        <PageGuide label="Products" steps={productGuideSteps} />
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedProduct ? "hidden" : ""}`}>
@@ -300,7 +305,7 @@ export function Product() {
             <h2 className="text-base font-semibold text-gray-900">Product Records</h2>
             <p className="text-sm text-gray-500">{visibleProductColumns.length} of {PRODUCT_TABLE_COLUMNS.length} fields shown</p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div data-guide-id="products-actions" className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <button
               type="button"
               onClick={handleExportCsv}
@@ -322,7 +327,7 @@ export function Product() {
             />
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div data-guide-id="products-table" className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -370,7 +375,7 @@ export function Product() {
       </div>
 
       {selectedProduct && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div data-guide-id="products-detail" className="bg-white rounded-xl shadow-sm border border-gray-200">
           <div className="w-full">
             <div className="sticky top-[-1.5rem] z-10 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-xl">
               <h2 className="text-xl font-semibold text-gray-900">Product Details</h2>

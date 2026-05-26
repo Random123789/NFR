@@ -11,6 +11,8 @@ import {
 } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import { PageGuide } from "../components/PageGuide";
+import { appFeedbackGuideSteps } from "../data/pageGuides";
 import { formatTimestampMinute } from "../utils/dateTime";
 
 const FEEDBACK_CATEGORIES: Array<{ value: AppFeedbackCategory; label: string }> = [
@@ -212,20 +214,23 @@ export function AppFeedback() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
+        <div data-guide-id="feedback-intro">
           <h1 className="text-2xl font-bold text-gray-900">App Feedback</h1>
           <p className="mt-1 text-gray-600">Share bugs, improvements, and feature requests.</p>
         </div>
-        {isAdmin ? (
-          <div className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm">
-            <ShieldCheck className="h-4 w-4 text-[#E31937]" />
-            Admin view
-          </div>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {isAdmin ? (
+            <div className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm">
+              <ShieldCheck className="h-4 w-4 text-[#E31937]" />
+              Admin view
+            </div>
+          ) : null}
+          <PageGuide label="Feedback" steps={appFeedbackGuideSteps} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <form onSubmit={handleSubmit} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <form data-guide-id="feedback-form" onSubmit={handleSubmit} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <div className="mb-5 flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#E31937] text-white">
               <MessageSquare className="h-5 w-5" />
@@ -272,7 +277,7 @@ export function AppFeedback() {
               />
             </div>
 
-            <div>
+            <div data-guide-id="feedback-images">
               <label className="mb-2 block text-sm font-medium text-gray-700">Images</label>
               <div className="flex flex-wrap items-center gap-3">
                 <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">
@@ -321,7 +326,7 @@ export function AppFeedback() {
           </div>
         </form>
 
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div data-guide-id="feedback-review" className="rounded-xl border border-gray-200 bg-white shadow-sm">
           {isAdmin ? (
             <>
               <div className="flex items-center justify-between gap-3 border-b border-gray-200 p-5">

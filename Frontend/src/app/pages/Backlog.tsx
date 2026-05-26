@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Clock, History, Search, Trash2 } from "luc
 import { useNavigate } from "react-router";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
+import { PageGuide, type PageGuideStep } from "../components/PageGuide";
 import type { HistoryEntry } from "../data/apiClient";
 import { createDetailPath, createDetailSlug, createOpenDetailState, type DetailEntityType } from "../navigation/detailNavigation";
 import { formatTimestampMinute } from "../utils/dateTime";
@@ -51,6 +52,34 @@ const entityBadgeClasses: Record<DetailEntityType, string> = {
   mantis: "bg-yellow-50 text-yellow-800 border-yellow-200",
   knock: "bg-violet-50 text-violet-700 border-violet-200",
 };
+
+const backlogGuideSteps: PageGuideStep[] = [
+  {
+    targetId: "backlog-intro",
+    title: "Your personal follow-up list",
+    description: "Backlog shows records you have touched. If someone updates one of those records after your latest action, it is highlighted here so you know to follow up.",
+  },
+  {
+    targetId: "backlog-summary",
+    title: "Read the counters first",
+    description: "Actions counts your activity entries. Items counts unique records you have worked on. Updated counts records with newer activity from someone else.",
+  },
+  {
+    targetId: "backlog-filters",
+    title: "Narrow the list",
+    description: "Use search for a specific record, choose a record type, or switch to New Updates when you only want records that changed after you last touched them.",
+  },
+  {
+    targetId: "backlog-list",
+    title: "Scan the activity cards",
+    description: "Each card shows the record type, ID, title, your latest action, and any newer update. Yellow cards are the ones that need attention.",
+  },
+  {
+    targetId: "backlog-actions",
+    title: "Close the loop",
+    description: "Open a card to inspect the record. Use Acknowledge to clear a new-update highlight, or Delete to remove the item from your backlog view.",
+  },
+];
 
 function cleanText(value: string | null | undefined) {
   const trimmed = value?.trim();
@@ -297,11 +326,14 @@ export function Backlog() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Backlog</h1>
-          <p className="mt-1 text-gray-600">Your activity across visible records, with items updated after your latest action highlighted.</p>
+        <div className="flex items-start gap-3">
+          <div data-guide-id="backlog-intro">
+            <h1 className="text-2xl font-bold text-gray-900">Backlog</h1>
+            <p className="mt-1 text-gray-600">Your activity across visible records, with items updated after your latest action highlighted.</p>
+          </div>
+          <PageGuide label="Backlog" steps={backlogGuideSteps} />
         </div>
-        <div className="grid grid-cols-3 gap-3 sm:min-w-[28rem]">
+        <div data-guide-id="backlog-summary" className="grid grid-cols-3 gap-3 sm:min-w-[28rem]">
           <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
             <p className="text-xs font-medium uppercase text-gray-500">Actions</p>
             <p className="mt-1 text-xl font-semibold text-gray-900">{entries.length}</p>
@@ -318,7 +350,7 @@ export function Backlog() {
       </div>
 
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-gray-200 p-4 xl:flex-row xl:items-center xl:justify-between">
+        <div data-guide-id="backlog-filters" className="flex flex-col gap-3 border-b border-gray-200 p-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-1 flex-col gap-3 md:flex-row">
             <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -365,7 +397,7 @@ export function Backlog() {
           </div>
         </div>
 
-        <div className="divide-y divide-gray-200">
+        <div data-guide-id="backlog-list" className="divide-y divide-gray-200">
           {filteredEntries.length === 0 ? (
             <div className="flex min-h-80 flex-col items-center justify-center px-6 py-12 text-center">
               <History className="mb-3 h-10 w-10 text-gray-400" />
@@ -436,7 +468,7 @@ export function Backlog() {
                         </div>
                       )}
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div data-guide-id="backlog-actions" className="mt-3 flex flex-wrap gap-2">
                       {entry.hasNewUpdates && (
                         <button
                           type="button"

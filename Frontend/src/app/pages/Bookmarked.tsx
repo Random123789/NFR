@@ -2,7 +2,9 @@ import { Bookmark } from "lucide-react";
 import { useBookmarks } from "../context/BookmarksContext";
 import { useRecords } from "../context/RecordsContext";
 import { useNavigate } from "react-router";
+import { PageGuide } from "../components/PageGuide";
 import { createDetailPath, createDetailSlug, createOpenDetailState, type DetailEntityType } from "../navigation/detailNavigation";
+import { bookmarkedGuideSteps } from "../data/pageGuides";
 import { formatTimestampMinute } from "../utils/dateTime";
 import type { BookmarkedItem } from "../data/apiClient";
 
@@ -113,19 +115,22 @@ export function Bookmarked() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Bookmarks</h1>
-        <p className="text-gray-600 mt-1">Your saved items across all sections</p>
+      <div className="flex items-start justify-between gap-3">
+        <div data-guide-id="bookmarks-intro">
+          <h1 className="text-2xl font-bold text-gray-900">Bookmarks</h1>
+          <p className="text-gray-600 mt-1">Your saved items across all sections</p>
+        </div>
+        <PageGuide label="Bookmarks" steps={bookmarkedGuideSteps} />
       </div>
 
       {bookmarked.length === 0 ? (
-        <div className="bg-white rounded-xl p-12 text-center border border-gray-200">
+        <div data-guide-id="bookmarks-list" className="bg-white rounded-xl p-12 text-center border border-gray-200">
           <Bookmark className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <p className="text-gray-600">No bookmarked items yet</p>
           <p className="text-sm text-gray-500 mt-2">Bookmark items to see them here</p>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div data-guide-id="bookmarks-list" className="space-y-6">
           {Object.entries(groupedByType).map(([type, items]) => (
             <div key={type}>
               <h2 className="text-lg font-semibold text-gray-900 mb-3">{typeLabels[type]}</h2>
@@ -156,6 +161,7 @@ export function Bookmarked() {
                           </p>
                         </div>
                         <button
+                          data-guide-id="bookmarks-remove"
                           onClick={(e) => {
                             e.stopPropagation();
                             removeBookmark(item.id, item.type);

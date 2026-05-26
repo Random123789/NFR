@@ -7,6 +7,7 @@ import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import { SearchableSelect } from "../components/SearchableSelect";
 import { TableFieldSelector } from "../components/TableFieldSelector";
+import { PageGuide } from "../components/PageGuide";
 import { useLocation, useNavigate } from "react-router";
 import { useSearch } from "../context/SearchContext";
 import { useBookmarks } from "../context/BookmarksContext";
@@ -15,6 +16,7 @@ import { useRecords } from "../context/RecordsContext";
 import { useRecordReadState } from "../context/RecordReadContext";
 import { useToast } from "../context/ToastContext";
 import { buildKnockUrl } from "../data/knockOptions";
+import { knockGuideSteps } from "../data/pageGuides";
 import { knockStatusColors } from "../data/recordStyles";
 import { useRoutedEntityDetail } from "../hooks/useEntityDetail";
 import { useLinkedCases } from "../hooks/useLinkedCases";
@@ -312,9 +314,12 @@ export function Knock() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Knock</h1>
-        <p className="text-gray-600 mt-1">Track Knock requests and integrations</p>
+      <div className="flex items-start justify-between gap-3">
+        <div data-guide-id="knock-intro">
+          <h1 className="text-2xl font-bold text-gray-900">Knock</h1>
+          <p className="text-gray-600 mt-1">Track Knock requests and integrations</p>
+        </div>
+        <PageGuide label="Knock" steps={knockGuideSteps} />
       </div>
 
       <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${selectedKnock ? "hidden" : ""}`}>
@@ -323,7 +328,7 @@ export function Knock() {
             <h2 className="text-base font-semibold text-gray-900">Knock Records</h2>
             <p className="text-sm text-gray-500">{visibleKnockColumns.length} of {KNOCK_TABLE_COLUMNS.length} fields shown</p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div data-guide-id="knock-actions" className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <button
               type="button"
               onClick={handleExportCsv}
@@ -345,7 +350,7 @@ export function Knock() {
             />
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div data-guide-id="knock-table" className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -393,7 +398,7 @@ export function Knock() {
       </div>
 
       {selectedKnock && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div data-guide-id="knock-detail" className="bg-white rounded-xl shadow-sm border border-gray-200">
           <div className="w-full">
             <div className="sticky top-[-1.5rem] z-10 bg-white border-b border-gray-200 p-6 flex items-center justify-between rounded-t-xl">
               <h2 className="text-xl font-semibold text-gray-900">Knock Details</h2>

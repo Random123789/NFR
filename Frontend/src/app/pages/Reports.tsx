@@ -53,6 +53,8 @@ import {
 } from "../data/apiClient";
 import { useAuth } from "../context/AuthContext";
 import { useRecords } from "../context/RecordsContext";
+import { PageGuide } from "../components/PageGuide";
+import { reportGuideSteps } from "../data/pageGuides";
 import { chartColors } from "../data/recordStyles";
 
 type ReportPageFilters = {
@@ -959,17 +961,18 @@ export function Reports() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+        <div data-guide-id="reports-intro">
           <h1 className="text-2xl font-bold text-gray-900">Reports & Analytics</h1>
           <p className="mt-1 text-gray-600">Build saved reports from joined records.</p>
         </div>
+        <PageGuide label="Reports" steps={reportGuideSteps} />
       </div>
 
       {error ? (
         <div className="border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
       ) : null}
 
-      <div className="border border-gray-200 bg-white p-4 shadow-sm">
+      <div data-guide-id="reports-global-filters" className="border border-gray-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
             <Filter className="h-4 w-4 text-[#E31937]" />
@@ -1058,7 +1061,7 @@ export function Reports() {
         </div>
       </div>
 
-      <div className="border border-gray-200 bg-white shadow-sm">
+      <div data-guide-id="reports-builder" className="border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-200 p-5">
           <div className="flex items-center gap-2">
             <Database className="h-5 w-5 text-[#E31937]" />
@@ -1472,7 +1475,7 @@ export function Reports() {
             </div>
           </div>
 
-          <div className="p-5">
+          <div data-guide-id="reports-preview" className="p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <h3 className="font-semibold text-gray-900">Result Preview</h3>
               <span className="text-sm text-gray-500">{currentSpec.mode === "table" ? "Record list" : "Grouped summary"}</span>
@@ -1482,7 +1485,7 @@ export function Reports() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div data-guide-id="reports-saved" className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {customReports.length === 0 ? (
           <div className="xl:col-span-2 border border-dashed border-gray-300 bg-gray-50 p-8 text-sm text-gray-600">
             No saved reports yet.
