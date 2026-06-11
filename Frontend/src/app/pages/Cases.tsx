@@ -288,6 +288,9 @@ export function Cases() {
   const [verticalFilters, setVerticalFilters] = useState<string[]>(() =>
     normalizeFilterValues(locationState?.verticalFilters ?? locationState?.verticalFilter),
   );
+  const [productFilters, setProductFilters] = useState<string[]>(() =>
+    normalizeFilterValues(locationState?.productFilters ?? locationState?.productFilter),
+  );
   const [caseFilterMatchMode, setCaseFilterMatchMode] = useState<CaseFilterMatchMode>(() => normalizeCaseFilterMatchMode(locationState?.caseFilterMatchMode));
   const [peopleFilters, setPeopleFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.peopleFilters ?? locationState?.ownerFilters));
   const [watcherFilters, setWatcherFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.watcherFilters ?? locationState?.watcherFilter));
@@ -309,6 +312,15 @@ export function Cases() {
   const statusFilterOptions = useMemo(() => toFilterOptions(caseStatuses), []);
   const priorityFilterOptions = useMemo(() => toFilterOptions(casePriorities), []);
   const verticalFilterOptions = useMemo(() => toFilterOptions([...accountVerticals]), []);
+  const productFilterOptions = useMemo(
+    () =>
+      products.map((product) => ({
+        value: product.recordId,
+        label: product.productName,
+        description: [product.productFamily, product.productVersion ? `v${product.productVersion}` : null].filter(Boolean).join(" | "),
+      })),
+    [products],
+  );
   const managerSelectOptions = useMemo(
     () => activeAssignableUsers.filter((assignableUser) => isManagerRole(assignableUser.role)).map(toAssignableUserOption),
     [activeAssignableUsers],
@@ -486,6 +498,7 @@ export function Cases() {
     statusFilters.length > 0 ||
     priorityFilters.length > 0 ||
     verticalFilters.length > 0 ||
+    productFilters.length > 0 ||
     peopleFilters.length > 0 ||
     watcherFilters.length > 0 ||
     daysToCloseFilter !== null ||
@@ -495,6 +508,7 @@ export function Cases() {
     setStatusFilters([]);
     setPriorityFilters([]);
     setVerticalFilters([]);
+    setProductFilters([]);
     setPeopleFilters([]);
     setWatcherFilters([]);
     setDaysToCloseFilter(null);
@@ -508,9 +522,11 @@ export function Cases() {
     const hasStatusFilters = statusFilters.length > 0;
     const hasPriorityFilters = priorityFilters.length > 0;
     const hasVerticalFilters = verticalFilters.length > 0;
+    const hasProductFilters = productFilters.length > 0;
     const matchesStatusFilters = hasStatusFilters && statusFilters.includes(caseItem.status || "");
     const matchesPriorityFilters = hasPriorityFilters && priorityFilters.includes(caseItem.priority || "");
     const matchesVerticalFilters = hasVerticalFilters && getCaseVerticals(caseItem).some((vertical) => verticalFilters.includes(vertical));
+    const matchesProductFilters = hasProductFilters && (caseItem.productIds ?? []).some((productId) => productFilters.includes(productId));
     const normalizedPeopleFilters = peopleFilters.map((person) => person.trim().toLowerCase()).filter(Boolean);
     const normalizedWatcherFilters = watcherFilters.map((watcher) => watcher.trim().toLowerCase()).filter(Boolean);
 
@@ -522,6 +538,7 @@ export function Cases() {
     }
 
     if (hasVerticalFilters && !matchesVerticalFilters) return false;
+    if (hasProductFilters && !matchesProductFilters) return false;
 
     if (normalizedPeopleFilters.length > 0) {
       const casePeople = [caseItem.assignedTo, caseItem.seOwner, ...(caseItem.watcherNames ?? [])]
@@ -917,6 +934,17 @@ export function Cases() {
                 emptyLabel="All Verticals"
                 searchPlaceholder="Search verticals"
                 onChange={setVerticalFilters}
+              />
+            </div>
+
+            <div className="w-full sm:w-52">
+              <MultiRecordDropdown
+                label="product"
+                values={productFilters}
+                options={productFilterOptions}
+                emptyLabel="All Products"
+                searchPlaceholder="Search products"
+                onChange={setProductFilters}
               />
             </div>
 

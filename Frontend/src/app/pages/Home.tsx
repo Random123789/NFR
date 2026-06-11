@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, Eye, FolderKanban, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
+import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, Eye, FolderKanban, PackageSearch, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
 import { useRecords } from "../context/RecordsContext";
 import { useAuth } from "../context/AuthContext";
 import { casePriorityColors, caseStatusColors, knockStatusColors, mantisStatusColors, projectStageColors } from "../data/recordStyles";
-import type { AccountRecord, CaseRecord, HistoryEntry, KnockRecord, MantisRecord, ProjectRecord } from "../data/apiClient";
+import type { AccountRecord, CaseRecord, HistoryEntry, KnockRecord, MantisRecord, ProductRecord, ProjectRecord } from "../data/apiClient";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Checkbox } from "../components/ui/checkbox";
 import { PageGuide } from "../components/PageGuide";
@@ -49,6 +49,10 @@ function getCasePeople(caseItem: CaseItem) {
     caseItem.seOwner?.trim(),
     ...(caseItem.watcherNames ?? []).map((watcherName) => watcherName.trim()),
   ].filter(Boolean) as string[];
+}
+
+function uniqueNonEmptyValues(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }
 
 function caseMatchesOwnerFilter(caseItem: CaseItem, selectedOwners: string[]) {
@@ -284,6 +288,16 @@ function getProjectForCase(projects: ProjectRecord[], caseItem: CaseRecord) {
   return projects.find((project) => project.recordId === caseItem.project);
 }
 
+function getProductTitle(product: ProductRecord | undefined, productId: string) {
+  return product?.productName || productId;
+}
+
+function getProductSubtitle(product: ProductRecord | undefined) {
+  if (!product) return "Product record unavailable";
+  const details = [product.productFamily, product.productVersion ? `v${product.productVersion}` : null].filter(Boolean);
+  return details.length > 0 ? details.join(" | ") : "No family or version";
+}
+
 function getAccountNamesForCase(accounts: AccountRecord[], caseItem: CaseRecord, project?: ProjectRecord) {
   const linkedAccountNames = (caseItem.accountIds ?? [])
     .map((accountId) => accounts.find((account) => account.recordId === accountId)?.accountName)
@@ -308,7 +322,7 @@ function countLinkedCasesForKnock(cases: CaseRecord[], record: KnockRecord) {
 }
 
 function ManagerHome() {
-  const { cases, accounts, projects } = useRecords();
+  const { cases, accounts, projects, products } = useRecords();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [selectedVerticals, setSelectedVerticals] = useState<AccountVertical[]>([]);
@@ -319,6 +333,7 @@ function ManagerHome() {
   const selectedVerticalSet = new Set<AccountVertical>(selectedVerticals);
   const accountsById = new Map(accounts.map((account) => [account.recordId, account]));
   const projectsById = new Map(projects.map((project) => [project.recordId, project]));
+  const productsById = new Map(products.map((product) => [product.recordId, product]));
   const verticalFilterLabel = selectedVerticals.length === 0
     ? "All verticals"
     : selectedVerticals.length === 1
@@ -403,6 +418,62 @@ function ManagerHome() {
     if (caseItem.priority === "Very High") acc[owner].veryHigh += 1;
     return acc;
   }, {})).sort((left, right) => (right.escalated * 3 + right.veryHigh * 2 + right.total) - (left.escalated * 3 + left.veryHigh * 2 + left.total));
+
+  const productCaseTotals = filteredCases.reduce<Record<string, number>>((acc, caseItem) => {
+    for (const productId of uniqueNonEmptyValues(caseItem.productIds ?? [])) {
+      acc[productId] = (acc[productId] ?? 0) + 1;
+    }
+    return acc;
+  }, {});
+
+  const productCaseHotspots = Object.values(openCases.reduce<Record<string, {
+    id: string;
+    productId: string;
+    productName: string;
+    productDetail: string;
+    openCases: number;
+    totalCases: number;
+    escalated: number;
+    veryHigh: number;
+    highPriority: number;
+    owners: Set<string>;
+  }>>((acc, caseItem) => {
+    for (const productId of uniqueNonEmptyValues(caseItem.productIds ?? [])) {
+      const product = productsById.get(productId);
+      acc[productId] = acc[productId] ?? {
+        id: `product-${productId}`,
+        productId,
+        productName: getProductTitle(product, productId),
+        productDetail: getProductSubtitle(product),
+        openCases: 0,
+        totalCases: productCaseTotals[productId] ?? 0,
+        escalated: 0,
+        veryHigh: 0,
+        highPriority: 0,
+        owners: new Set<string>(),
+      };
+
+      acc[productId].openCases += 1;
+      if (caseItem.status === "Escalated") acc[productId].escalated += 1;
+      if (caseItem.priority === "Very High") acc[productId].veryHigh += 1;
+      if (caseItem.priority === "High" || caseItem.priority === "Very High") acc[productId].highPriority += 1;
+
+      const owner = caseItem.seOwner || caseItem.assignedTo;
+      if (owner) acc[productId].owners.add(owner);
+    }
+    return acc;
+  }, {}))
+    .map(({ owners, ...product }) => ({ ...product, ownerCount: owners.size }))
+    .sort((left, right) =>
+      right.openCases - left.openCases ||
+      right.escalated - left.escalated ||
+      right.veryHigh - left.veryHigh ||
+      right.highPriority - left.highPriority ||
+      right.totalCases - left.totalCases ||
+      left.productName.localeCompare(right.productName)
+    )
+    .slice(0, 5);
+  const maxProductOpenCases = Math.max(1, ...productCaseHotspots.map((product) => product.openCases));
 
   const topFocusProjects = [...openProjects]
     .map((project) => {
@@ -773,6 +844,59 @@ function ManagerHome() {
         </div>
 
         <div className="space-y-6">
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Product Case Hotspots</h2>
+                <p className="mt-1 text-sm text-gray-500">Products with the most open linked case activity.</p>
+              </div>
+              <PackageSearch className="h-5 w-5 text-gray-400" />
+            </div>
+
+            <div className="space-y-3">
+              {productCaseHotspots.map((product) => (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() =>
+                    navigate("/cases", {
+                      state: withManagerVerticalFilters({
+                        statusFilters: OPEN_CASE_STATUS_FILTERS,
+                        productFilters: [product.productId],
+                      }),
+                    })
+                  }
+                  className="block w-full rounded-lg border border-gray-100 p-3 text-left transition-colors hover:border-red-100 hover:bg-red-50/40 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                >
+                  <div className="mb-2 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-gray-900">{product.productName}</p>
+                      <p className="mt-0.5 truncate text-xs text-gray-500">{product.productDetail}</p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-lg font-semibold leading-none text-gray-900">{product.openCases}</p>
+                      <p className="mt-0.5 text-xs text-gray-500">open</p>
+                    </div>
+                  </div>
+
+                  <div className="h-2 rounded-full bg-gray-100">
+                    <div
+                      className="h-2 rounded-full bg-[#E31937]"
+                      style={{ width: `${Math.max(8, (product.openCases / maxProductOpenCases) * 100)}%` }}
+                    />
+                  </div>
+
+                  <p className="mt-2 text-xs text-gray-500">
+                    {product.escalated} escalated, {product.highPriority} high priority, {product.totalCases} total linked
+                  </p>
+                </button>
+              ))}
+              {productCaseHotspots.length === 0 && (
+                <p className="py-6 text-sm text-gray-500">No open cases are linked to products in this view.</p>
+              )}
+            </div>
+          </div>
+
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900">Team Load</h2>
             <p className="mt-1 text-sm text-gray-500">Open case pressure by SE owner.</p>
