@@ -298,6 +298,44 @@ function getProductSubtitle(product: ProductRecord | undefined) {
   return details.length > 0 ? details.join(" | ") : "No family or version";
 }
 
+function getDateKey(value: string | null | undefined) {
+  const text = (value ?? "").trim();
+  if (!text) return null;
+
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return [
+    parsed.getFullYear(),
+    String(parsed.getMonth() + 1).padStart(2, "0"),
+    String(parsed.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function normalizeDateRange(startDate: string, endDate: string) {
+  if (startDate && endDate && startDate > endDate) {
+    return { startDate: endDate, endDate: startDate };
+  }
+
+  return {
+    startDate: startDate || null,
+    endDate: endDate || null,
+  };
+}
+
+function caseMatchesDateRange(caseItem: CaseRecord, startDate: string | null, endDate: string | null) {
+  if (!startDate && !endDate) return true;
+
+  const caseDate = getDateKey(caseItem.closeDate);
+  if (!caseDate) return false;
+  if (startDate && caseDate < startDate) return false;
+  if (endDate && caseDate > endDate) return false;
+  return true;
+}
+
 function getAccountNamesForCase(accounts: AccountRecord[], caseItem: CaseRecord, project?: ProjectRecord) {
   const linkedAccountNames = (caseItem.accountIds ?? [])
     .map((accountId) => accounts.find((account) => account.recordId === accountId)?.accountName)
@@ -328,6 +366,8 @@ function ManagerHome() {
   const [selectedVerticals, setSelectedVerticals] = useState<AccountVertical[]>([]);
   const [statusAgingBucketFilter, setStatusAgingBucketFilter] = useState<StatusAgingBucketId | "all">("all");
   const [statusAgingSort, setStatusAgingSort] = useState<StatusAgingSort>("oldest");
+  const [productTrendDateStart, setProductTrendDateStart] = useState("");
+  const [productTrendDateEnd, setProductTrendDateEnd] = useState("");
 
   const hasVerticalFilter = selectedVerticals.length > 0;
   const selectedVerticalSet = new Set<AccountVertical>(selectedVerticals);
@@ -376,6 +416,14 @@ function ManagerHome() {
   const filteredProjects = projects.filter(projectMatchesVerticalFilter);
   const openCases = filteredCases.filter(isOpenCase);
   const openProjects = filteredProjects.filter((project) => !project.isClosed);
+  const productTrendDateRange = normalizeDateRange(productTrendDateStart, productTrendDateEnd);
+  const hasProductTrendDateRange = Boolean(productTrendDateRange.startDate || productTrendDateRange.endDate);
+  const productTrendCases = openCases.filter((caseItem) =>
+    caseMatchesDateRange(caseItem, productTrendDateRange.startDate, productTrendDateRange.endDate)
+  );
+  const productTrendTotalCases = filteredCases.filter((caseItem) =>
+    caseMatchesDateRange(caseItem, productTrendDateRange.startDate, productTrendDateRange.endDate)
+  );
   const managerDisplayName = (user?.displayName ?? "").trim();
   const managerKey = managerDisplayName.toLowerCase();
   const managerAssignedCases = managerKey
@@ -419,14 +467,14 @@ function ManagerHome() {
     return acc;
   }, {})).sort((left, right) => (right.escalated * 3 + right.veryHigh * 2 + right.total) - (left.escalated * 3 + left.veryHigh * 2 + left.total));
 
-  const productCaseTotals = filteredCases.reduce<Record<string, number>>((acc, caseItem) => {
+  const productCaseTotals = productTrendTotalCases.reduce<Record<string, number>>((acc, caseItem) => {
     for (const productId of uniqueNonEmptyValues(caseItem.productIds ?? [])) {
       acc[productId] = (acc[productId] ?? 0) + 1;
     }
     return acc;
   }, {});
 
-  const productCaseHotspots = Object.values(openCases.reduce<Record<string, {
+  const productCaseHotspots = Object.values(productTrendCases.reduce<Record<string, {
     id: string;
     productId: string;
     productName: string;
@@ -845,12 +893,46 @@ function ManagerHome() {
 
         <div className="space-y-6">
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Product Case Hotspots</h2>
-                <p className="mt-1 text-sm text-gray-500">Products with the most open linked case activity.</p>
+            <div className="mb-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Product Case Hotspots</h2>
+                  <p className="mt-1 text-sm text-gray-500">Products with the most open linked case activity.</p>
+                </div>
+                <PackageSearch className="h-5 w-5 text-gray-400" />
               </div>
-              <PackageSearch className="h-5 w-5 text-gray-400" />
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                <label className="min-w-0 text-xs font-medium text-gray-600">
+                  <span className="mb-1 block">From close date</span>
+                  <input
+                    type="date"
+                    value={productTrendDateStart}
+                    onChange={(event) => setProductTrendDateStart(event.target.value)}
+                    className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                  />
+                </label>
+                <label className="min-w-0 text-xs font-medium text-gray-600">
+                  <span className="mb-1 block">To close date</span>
+                  <input
+                    type="date"
+                    value={productTrendDateEnd}
+                    onChange={(event) => setProductTrendDateEnd(event.target.value)}
+                    className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductTrendDateStart("");
+                    setProductTrendDateEnd("");
+                  }}
+                  disabled={!hasProductTrendDateRange}
+                  className="mt-5 inline-flex h-9 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-auto"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -892,7 +974,11 @@ function ManagerHome() {
                 </button>
               ))}
               {productCaseHotspots.length === 0 && (
-                <p className="py-6 text-sm text-gray-500">No open cases are linked to products in this view.</p>
+                <p className="py-6 text-sm text-gray-500">
+                  {hasProductTrendDateRange
+                    ? "No open cases are linked to products in this close date range."
+                    : "No open cases are linked to products in this view."}
+                </p>
               )}
             </div>
           </div>

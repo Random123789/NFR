@@ -14,10 +14,25 @@ import { formatTimestampMinute } from "../utils/dateTime";
 import { formatHistoryEntryText, sortHistoryEntries } from "../utils/historyEntries";
 
 type GraphPoint = { x: number; y: number };
+type HistoryGraphMode = "detail" | "week" | "month";
+type HistoryPeriodOption = {
+  key: string;
+  title: string;
+  entries: HistoryEntry[];
+};
+
+type HistoryGraphItem = {
+  id: string;
+  title: string;
+  user: string;
+  timestampLabel: string;
+  detailText: string;
+  action: string | null | undefined;
+};
 
 type HistoryGraphNode = {
   id: string;
-  entry: HistoryEntry;
+  item: HistoryGraphItem;
   sequence: number;
   x: number;
   y: number;
@@ -55,6 +70,13 @@ const GRAPH_PADDING = 28;
 const MIN_GRAPH_SCALE = 0.35;
 const MAX_GRAPH_SCALE = 2.5;
 const INITIAL_VIEWPORT: GraphViewportTransform = { x: 0, y: 0, scale: 1 };
+const GRAPH_MODES: Array<{ value: HistoryGraphMode; label: string }> = [
+  { value: "detail", label: "Detail" },
+  { value: "week", label: "Week" },
+  { value: "month", label: "Month" },
+];
+const EMPTY_PERIOD_OPTIONS: HistoryPeriodOption[] = [];
+const EMPTY_PERIOD_KEYS: string[] = [];
 
 let elkInstancePromise: Promise<ELK> | null = null;
 
@@ -107,7 +129,74 @@ function wrapSvgText(value: string, maxLineLength: number, maxLines: number) {
   return lines.slice(0, maxLines);
 }
 
-function createHistoryGraph(history: HistoryEntry[]): ElkNode {
+function formatGraphDate(date: Date) {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function toDateKey(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getWeekStart(date: Date) {
+  const weekStart = new Date(date);
+  const daysSinceMonday = (weekStart.getDay() + 6) % 7;
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+  weekStart.setHours(0, 0, 0, 0);
+  return weekStart;
+}
+
+function getHistoryBucket(entry: HistoryEntry, mode: Exclude<HistoryGraphMode, "detail">) {
+  const parsed = new Date(entry.timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return {
+      key: "unknown-date",
+      title: "Unknown date",
+    };
+  }
+
+  if (mode === "month") {
+    return {
+      key: `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`,
+      title: parsed.toLocaleString("en-US", { month: "long", year: "numeric" }),
+    };
+  }
+
+  const weekStart = getWeekStart(parsed);
+  return {
+    key: toDateKey(weekStart),
+    title: `Week of ${formatGraphDate(weekStart)}`,
+  };
+}
+
+function createPeriodOptions(history: HistoryEntry[], mode: Exclude<HistoryGraphMode, "detail">) {
+  const buckets = new Map<string, HistoryPeriodOption>();
+
+  for (const entry of history) {
+    const bucket = getHistoryBucket(entry, mode);
+    const existingBucket = buckets.get(bucket.key) ?? { key: bucket.key, title: bucket.title, entries: [] };
+    existingBucket.entries.push(entry);
+    buckets.set(bucket.key, existingBucket);
+  }
+
+  return [...buckets.values()];
+}
+
+function createHistoryGraphItems(history: HistoryEntry[]): HistoryGraphItem[] {
+  return history.map((entry, index) => ({
+    id: `history-item-${index}`,
+    title: entry.action || "Update",
+    user: entry.user || "Unknown user",
+    timestampLabel: formatTimestampMinute(entry.timestamp),
+    detailText: formatHistoryEntryText(entry),
+    action: entry.action,
+  }));
+}
+
+function createHistoryGraph(items: HistoryGraphItem[]): ElkNode {
   return {
     id: "history-graph",
     layoutOptions: {
@@ -117,12 +206,12 @@ function createHistoryGraph(history: HistoryEntry[]): ElkNode {
       "elk.layered.spacing.nodeNodeBetweenLayers": "76",
       "elk.edgeRouting": "ORTHOGONAL",
     },
-    children: history.map((_, index) => ({
+    children: items.map((_, index) => ({
       id: `history-node-${index}`,
       width: GRAPH_NODE_WIDTH,
       height: GRAPH_NODE_HEIGHT,
     })),
-    edges: history.slice(1).map((_, index) => ({
+    edges: items.slice(1).map((_, index) => ({
       id: `history-edge-${index}`,
       sources: [`history-node-${index}`],
       targets: [`history-node-${index + 1}`],
@@ -130,15 +219,15 @@ function createHistoryGraph(history: HistoryEntry[]): ElkNode {
   };
 }
 
-async function layoutHistoryGraph(history: HistoryEntry[]) {
+async function layoutHistoryGraph(items: HistoryGraphItem[]) {
   const elk = await getElkInstance();
-  const layout = await elk.layout(createHistoryGraph(history));
-  const entriesByNodeId = new Map(history.map((entry, index) => [`history-node-${index}`, entry]));
-  const sequencesByNodeId = new Map(history.map((_, index) => [`history-node-${index}`, index + 1]));
+  const layout = await elk.layout(createHistoryGraph(items));
+  const itemsByNodeId = new Map(items.map((item, index) => [`history-node-${index}`, item]));
+  const sequencesByNodeId = new Map(items.map((_, index) => [`history-node-${index}`, index + 1]));
 
   const nodes = (layout.children ?? []).map((node, index) => ({
     id: node.id,
-    entry: entriesByNodeId.get(node.id) ?? history[index],
+    item: itemsByNodeId.get(node.id) ?? items[index],
     sequence: sequencesByNodeId.get(node.id) ?? index + 1,
     x: node.x ?? 0,
     y: node.y ?? 0,
@@ -251,6 +340,126 @@ function GraphToolbar({
   );
 }
 
+function GraphModeToggle({
+  mode,
+  onModeChange,
+}: {
+  mode: HistoryGraphMode;
+  onModeChange: (nextMode: HistoryGraphMode) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+      {GRAPH_MODES.map((option) => {
+        const isActive = option.value === mode;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onModeChange(option.value)}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#E31937] ${
+              isActive ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:bg-white/70"
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PeriodSelect({
+  mode,
+  options,
+  values,
+  onChange,
+}: {
+  mode: Exclude<HistoryGraphMode, "detail">;
+  options: HistoryPeriodOption[];
+  values: string[];
+  onChange: (nextValues: string[]) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedOptions = options.filter((option) => values.includes(option.key));
+  const label = selectedOptions.length === 0
+    ? `Select ${mode === "week" ? "weeks" : "months"}`
+    : selectedOptions.length === 1
+      ? selectedOptions[0].title
+      : `${selectedOptions.length} ${mode === "week" ? "weeks" : "months"}`;
+
+  const toggleOption = (optionKey: string) => {
+    if (values.includes(optionKey)) {
+      onChange(values.length > 1 ? values.filter((value) => value !== optionKey) : values);
+      return;
+    }
+
+    onChange([...values, optionKey]);
+  };
+
+  return (
+    <div className="relative min-w-0 text-xs font-medium text-gray-600">
+      <span className="mb-1 block">{mode === "week" ? "Weeks" : "Months"}</span>
+      <button
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+        className="flex h-9 w-full min-w-56 items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+      >
+        <span className="truncate">{label}</span>
+        <span className="text-xs text-gray-500">{selectedOptions.reduce((sum, option) => sum + option.entries.length, 0)}</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 z-20 mt-2 w-72 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+          <div className="mb-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => onChange(options.map((option) => option.key))}
+              className="flex-1 rounded-md border border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange(options.at(-1)?.key ? [options.at(-1)!.key] : [])}
+              className="flex-1 rounded-md border border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              Latest
+            </button>
+          </div>
+
+          <div className="max-h-64 space-y-1 overflow-auto pr-1">
+            {options.map((option) => {
+              const checked = values.includes(option.key);
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => toggleOption(option.key)}
+                  className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-gray-50 ${
+                    checked ? "bg-red-50" : ""
+                  }`}
+                >
+                  <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                    checked ? "border-[#E31937] bg-[#E31937]" : "border-gray-300 bg-white"
+                  }`}>
+                    {checked && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-gray-900">{option.title}</span>
+                    <span className="mt-0.5 block text-xs text-gray-500">
+                      {option.entries.length} update{option.entries.length === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GraphSvg({ layout }: { layout: HistoryGraphLayout }) {
   return (
     <svg
@@ -287,23 +496,23 @@ function GraphSvg({ layout }: { layout: HistoryGraphLayout }) {
 }
 
 function HistoryNode({ node }: { node: HistoryGraphNode }) {
-  const changeLines = wrapSvgText(formatHistoryEntryText(node.entry), 31, 3);
+  const changeLines = wrapSvgText(node.item.detailText, 31, 3);
 
   return (
     <g transform={`translate(${node.x} ${node.y})`}>
       <rect width={node.width} height={node.height} rx="10" fill="#FFFFFF" stroke="#E5E7EB" />
-      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(node.entry.action)} />
+      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(node.item.action)} />
       <text x="16" y="26" fill="#6B7280" fontSize="11" fontWeight="600">
         Step {node.sequence}
       </text>
       <text x="16" y="47" fill="#111827" fontSize="14" fontWeight="700">
-        {truncateText(node.entry.action || "Update", 24)}
+        {truncateText(node.item.title, 24)}
       </text>
       <text x="16" y="68" fill="#4B5563" fontSize="12">
-        {truncateText(node.entry.user || "Unknown user", 30)}
+        {truncateText(node.item.user, 30)}
       </text>
       <text x="16" y="87" fill="#6B7280" fontSize="11">
-        {formatTimestampMinute(node.entry.timestamp)}
+        {truncateText(node.item.timestampLabel, 32)}
       </text>
       {changeLines.map((line, lineIndex) => (
         <text key={`${node.id}-line-${lineIndex}`} x="16" y={108 + lineIndex * 14} fill="#374151" fontSize="11">
@@ -324,12 +533,44 @@ export function RecordHistoryGraphDialog({
   onOpenChange: (nextOpen: boolean) => void;
 }) {
   const chronologicalHistory = useMemo(() => sortHistoryEntries(history, "asc"), [history]);
+  const [graphMode, setGraphMode] = useState<HistoryGraphMode>("detail");
+  const [selectedWeekKeys, setSelectedWeekKeys] = useState<string[]>([]);
+  const [selectedMonthKeys, setSelectedMonthKeys] = useState<string[]>([]);
+  const weekOptions = useMemo(() => createPeriodOptions(chronologicalHistory, "week"), [chronologicalHistory]);
+  const monthOptions = useMemo(() => createPeriodOptions(chronologicalHistory, "month"), [chronologicalHistory]);
+  const activePeriodOptions = graphMode === "week" ? weekOptions : graphMode === "month" ? monthOptions : EMPTY_PERIOD_OPTIONS;
+  const selectedPeriodKeys = graphMode === "week" ? selectedWeekKeys : graphMode === "month" ? selectedMonthKeys : EMPTY_PERIOD_KEYS;
+  const visibleHistory = useMemo(() => {
+    if (graphMode === "detail") return chronologicalHistory;
+
+    const selectedKeys = new Set(selectedPeriodKeys);
+    return activePeriodOptions
+      .filter((option) => selectedKeys.has(option.key))
+      .flatMap((option) => option.entries);
+  }, [activePeriodOptions, chronologicalHistory, graphMode, selectedPeriodKeys]);
+  const graphItems = useMemo(() => createHistoryGraphItems(visibleHistory), [visibleHistory]);
   const [layout, setLayout] = useState<HistoryGraphLayout | null>(null);
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [viewportTransform, setViewportTransform] = useState<GraphViewportTransform>(INITIAL_VIEWPORT);
   const [isPanning, setIsPanning] = useState(false);
   const graphViewportRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<GraphPanStart | null>(null);
+
+  useEffect(() => {
+    setSelectedWeekKeys((currentKeys) =>
+      currentKeys.some((key) => weekOptions.some((option) => option.key === key))
+        ? currentKeys.filter((key) => weekOptions.some((option) => option.key === key))
+        : weekOptions.at(-1)?.key ? [weekOptions.at(-1)!.key] : []
+    );
+  }, [weekOptions]);
+
+  useEffect(() => {
+    setSelectedMonthKeys((currentKeys) =>
+      currentKeys.some((key) => monthOptions.some((option) => option.key === key))
+        ? currentKeys.filter((key) => monthOptions.some((option) => option.key === key))
+        : monthOptions.at(-1)?.key ? [monthOptions.at(-1)!.key] : []
+    );
+  }, [monthOptions]);
 
   useEffect(() => {
     if (!open) return;
@@ -339,7 +580,7 @@ export function RecordHistoryGraphDialog({
     setLayoutError(null);
     setViewportTransform(INITIAL_VIEWPORT);
 
-    void layoutHistoryGraph(chronologicalHistory)
+    void layoutHistoryGraph(graphItems)
       .then((nextLayout) => {
         if (!isCancelled) setLayout(nextLayout);
       })
@@ -351,7 +592,7 @@ export function RecordHistoryGraphDialog({
     return () => {
       isCancelled = true;
     };
-  }, [chronologicalHistory, open]);
+  }, [graphItems, open]);
 
   const zoomBy = (factor: number) => {
     const centerPoint = getCenterPoint(graphViewportRef.current);
@@ -404,10 +645,25 @@ export function RecordHistoryGraphDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] max-w-[calc(100vw-2rem)] gap-4 overflow-hidden p-0 sm:max-w-[min(76rem,calc(100vw-2rem))]">
         <DialogHeader className="border-b border-gray-200 px-6 py-5">
-          <DialogTitle>History Graph</DialogTitle>
-          <DialogDescription>
-            Chronological update flow from creation through the latest recorded change.
-          </DialogDescription>
+          <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <DialogTitle>History Graph</DialogTitle>
+              <DialogDescription>
+                Chronological update flow from creation through the latest recorded change.
+              </DialogDescription>
+            </div>
+            <div className="flex flex-col gap-2 sm:items-end">
+              <GraphModeToggle mode={graphMode} onModeChange={setGraphMode} />
+              {graphMode !== "detail" && activePeriodOptions.length > 0 && (
+                <PeriodSelect
+                  mode={graphMode}
+                  options={activePeriodOptions}
+                  values={selectedPeriodKeys}
+                  onChange={graphMode === "week" ? setSelectedWeekKeys : setSelectedMonthKeys}
+                />
+              )}
+            </div>
+          </div>
         </DialogHeader>
 
         <div className="px-6 pb-6">
