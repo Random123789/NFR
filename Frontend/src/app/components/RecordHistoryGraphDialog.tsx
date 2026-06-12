@@ -1,6 +1,6 @@
 import type { HistoryEntry } from "../data/apiClient";
 import type { ELK, ElkNode } from "elkjs/lib/elk.bundled.js";
-import { Loader2, Minus, Move, Plus, RotateCcw } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
 import {
   useEffect,
   useMemo,
@@ -21,7 +21,8 @@ type HistoryPeriodOption = {
   entries: HistoryEntry[];
 };
 
-type HistoryGraphItem = {
+type HistoryGraphEntryItem = {
+  kind: "entry";
   id: string;
   title: string;
   user: string;
@@ -29,6 +30,20 @@ type HistoryGraphItem = {
   detailText: string;
   action: string | null | undefined;
 };
+
+type HistoryGraphPeriodItem = {
+  kind: "period";
+  id: string;
+  title: string;
+  periodMode: Exclude<HistoryGraphMode, "detail">;
+  updateCount: number;
+  timestampLabel: string;
+  detailText: string;
+  action: string | null | undefined;
+  entries: HistoryGraphEntryItem[];
+};
+
+type HistoryGraphItem = HistoryGraphEntryItem | HistoryGraphPeriodItem;
 
 type HistoryGraphNode = {
   id: string;
@@ -66,6 +81,17 @@ type GraphPanStart = GraphViewportTransform & {
 
 const GRAPH_NODE_WIDTH = 260;
 const GRAPH_NODE_HEIGHT = 146;
+const PERIOD_NODE_WIDTH = 320;
+const PERIOD_NODE_MIN_HEIGHT = 156;
+const PERIOD_NODE_HEADER_HEIGHT = 88;
+const DETAIL_NODE_DESCRIPTION_LINE_LENGTH = 31;
+const DETAIL_NODE_DESCRIPTION_START_Y = 108;
+const DETAIL_NODE_DESCRIPTION_LINE_HEIGHT = 14;
+const PERIOD_ENTRY_DESCRIPTION_LINE_LENGTH = 39;
+const PERIOD_ENTRY_DESCRIPTION_START_Y = 27;
+const PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT = 13;
+const PERIOD_ENTRY_META_GAP = 5;
+const PERIOD_ENTRY_META_BOTTOM_PADDING = 14;
 const GRAPH_PADDING = 28;
 const MIN_GRAPH_SCALE = 0.35;
 const MAX_GRAPH_SCALE = 2.5;
@@ -98,7 +124,7 @@ function truncateText(value: string, maxLength: number) {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
 }
 
-function wrapSvgText(value: string, maxLineLength: number, maxLines: number) {
+function wrapSvgText(value: string, maxLineLength: number) {
   const words = value.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
   if (words.length === 0) return ["No changes recorded"];
 
@@ -114,19 +140,11 @@ function wrapSvgText(value: string, maxLineLength: number, maxLines: number) {
     } else {
       currentLine = nextLine;
     }
-
-    if (lines.length === maxLines) break;
   }
 
-  if (lines.length < maxLines && currentLine) lines.push(currentLine);
+  if (currentLine) lines.push(currentLine);
 
-  const consumedText = lines.join(" ");
-  const originalText = words.join(" ");
-  if (lines.length === maxLines && consumedText.length < originalText.length) {
-    lines[maxLines - 1] = truncateText(lines[maxLines - 1], Math.max(4, maxLineLength - 3));
-  }
-
-  return lines.slice(0, maxLines);
+  return lines;
 }
 
 function formatGraphDate(date: Date) {
@@ -185,15 +203,94 @@ function createPeriodOptions(history: HistoryEntry[], mode: Exclude<HistoryGraph
   return [...buckets.values()];
 }
 
-function createHistoryGraphItems(history: HistoryEntry[]): HistoryGraphItem[] {
-  return history.map((entry, index) => ({
-    id: `history-item-${index}`,
+function formatUpdateCount(count: number) {
+  return `${count} update${count === 1 ? "" : "s"}`;
+}
+
+function formatPeriodDateRange(entries: HistoryEntry[]) {
+  const dates = entries
+    .map((entry) => new Date(entry.timestamp))
+    .filter((date) => !Number.isNaN(date.getTime()));
+
+  if (dates.length === 0) return "No dated updates";
+
+  const firstDate = dates[0];
+  const lastDate = dates[dates.length - 1];
+
+  if (toDateKey(firstDate) === toDateKey(lastDate)) return formatGraphDate(firstDate);
+  return `${formatGraphDate(firstDate)} - ${formatGraphDate(lastDate)}`;
+}
+
+function createHistoryGraphEntryItem(entry: HistoryEntry, index: number, idPrefix = "history-item"): HistoryGraphEntryItem {
+  return {
+    kind: "entry",
+    id: `${idPrefix}-${index}`,
     title: entry.action || "Update",
     user: entry.user || "Unknown user",
     timestampLabel: formatTimestampMinute(entry.timestamp),
     detailText: formatHistoryEntryText(entry),
     action: entry.action,
-  }));
+  };
+}
+
+function createHistoryGraphItems(history: HistoryEntry[]): HistoryGraphItem[] {
+  return history.map((entry, index) => createHistoryGraphEntryItem(entry, index));
+}
+
+function createHistoryPeriodGraphItems(
+  periods: HistoryPeriodOption[],
+  mode: Exclude<HistoryGraphMode, "detail">,
+): HistoryGraphItem[] {
+  return periods.map((period, periodIndex) => {
+    const entries = period.entries.map((entry, entryIndex) =>
+      createHistoryGraphEntryItem(entry, entryIndex, `history-period-${periodIndex}-entry`)
+    );
+
+    return {
+      kind: "period",
+      id: `history-period-${mode}-${period.key}`,
+      title: period.title,
+      periodMode: mode,
+      updateCount: entries.length,
+      timestampLabel: formatUpdateCount(entries.length),
+      detailText: formatPeriodDateRange(period.entries),
+      action: entries.at(-1)?.action,
+      entries,
+    };
+  });
+}
+
+function getDetailEntryNodeHeight(item: HistoryGraphEntryItem) {
+  const descriptionLines = wrapSvgText(item.detailText, DETAIL_NODE_DESCRIPTION_LINE_LENGTH);
+  return Math.max(
+    GRAPH_NODE_HEIGHT,
+    DETAIL_NODE_DESCRIPTION_START_Y + descriptionLines.length * DETAIL_NODE_DESCRIPTION_LINE_HEIGHT + 10,
+  );
+}
+
+function getPeriodEntryRowHeight(item: HistoryGraphEntryItem) {
+  const descriptionLines = wrapSvgText(item.detailText, PERIOD_ENTRY_DESCRIPTION_LINE_LENGTH);
+  const metaY = PERIOD_ENTRY_DESCRIPTION_START_Y
+    + descriptionLines.length * PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT
+    + PERIOD_ENTRY_META_GAP;
+
+  return metaY + PERIOD_ENTRY_META_BOTTOM_PADDING;
+}
+
+function getHistoryGraphItemDimensions(item: HistoryGraphItem) {
+  if (item.kind === "period") {
+    const entriesHeight = item.entries.reduce((height, entry) => height + getPeriodEntryRowHeight(entry), 0);
+
+    return {
+      width: PERIOD_NODE_WIDTH,
+      height: Math.max(PERIOD_NODE_MIN_HEIGHT, PERIOD_NODE_HEADER_HEIGHT + entriesHeight + 12),
+    };
+  }
+
+  return {
+    width: GRAPH_NODE_WIDTH,
+    height: getDetailEntryNodeHeight(item),
+  };
 }
 
 function createHistoryGraph(items: HistoryGraphItem[]): ElkNode {
@@ -206,11 +303,14 @@ function createHistoryGraph(items: HistoryGraphItem[]): ElkNode {
       "elk.layered.spacing.nodeNodeBetweenLayers": "76",
       "elk.edgeRouting": "ORTHOGONAL",
     },
-    children: items.map((_, index) => ({
-      id: `history-node-${index}`,
-      width: GRAPH_NODE_WIDTH,
-      height: GRAPH_NODE_HEIGHT,
-    })),
+    children: items.map((item, index) => {
+      const { width, height } = getHistoryGraphItemDimensions(item);
+      return {
+        id: `history-node-${index}`,
+        width,
+        height,
+      };
+    }),
     edges: items.slice(1).map((_, index) => ({
       id: `history-edge-${index}`,
       sources: [`history-node-${index}`],
@@ -224,6 +324,7 @@ async function layoutHistoryGraph(items: HistoryGraphItem[]) {
   const layout = await elk.layout(createHistoryGraph(items));
   const itemsByNodeId = new Map(items.map((item, index) => [`history-node-${index}`, item]));
   const sequencesByNodeId = new Map(items.map((_, index) => [`history-node-${index}`, index + 1]));
+  const dimensionsByNodeId = new Map(items.map((item, index) => [`history-node-${index}`, getHistoryGraphItemDimensions(item)]));
 
   const nodes = (layout.children ?? []).map((node, index) => ({
     id: node.id,
@@ -231,8 +332,8 @@ async function layoutHistoryGraph(items: HistoryGraphItem[]) {
     sequence: sequencesByNodeId.get(node.id) ?? index + 1,
     x: node.x ?? 0,
     y: node.y ?? 0,
-    width: node.width ?? GRAPH_NODE_WIDTH,
-    height: node.height ?? GRAPH_NODE_HEIGHT,
+    width: node.width ?? dimensionsByNodeId.get(node.id)?.width ?? GRAPH_NODE_WIDTH,
+    height: node.height ?? dimensionsByNodeId.get(node.id)?.height ?? GRAPH_NODE_HEIGHT,
   }));
 
   const edges = (layout.edges ?? [])
@@ -290,11 +391,15 @@ function getCenterPoint(element: HTMLElement | null) {
 
 function GraphToolbar({
   scale,
+  isFullscreen,
+  onToggleFullscreen,
   onZoomIn,
   onZoomOut,
   onReset,
 }: {
   scale: number;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onReset: () => void;
@@ -305,7 +410,16 @@ function GraphToolbar({
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
-      <Move className="mx-2 h-4 w-4 text-gray-500" aria-hidden="true" />
+      <button
+        type="button"
+        onClick={onToggleFullscreen}
+        title={isFullscreen ? "Exit full screen" : "Enter full screen"}
+        aria-label={isFullscreen ? "Exit full screen" : "Enter full screen"}
+        aria-pressed={isFullscreen}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+      >
+        {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+      </button>
       <button
         type="button"
         onClick={onZoomIn}
@@ -496,29 +610,106 @@ function GraphSvg({ layout }: { layout: HistoryGraphLayout }) {
 }
 
 function HistoryNode({ node }: { node: HistoryGraphNode }) {
-  const changeLines = wrapSvgText(node.item.detailText, 31, 3);
+  if (node.item.kind === "period") return <HistoryPeriodNode node={node} />;
+
+  const item = node.item;
+  const changeLines = wrapSvgText(item.detailText, DETAIL_NODE_DESCRIPTION_LINE_LENGTH);
 
   return (
     <g transform={`translate(${node.x} ${node.y})`}>
       <rect width={node.width} height={node.height} rx="10" fill="#FFFFFF" stroke="#E5E7EB" />
-      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(node.item.action)} />
+      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(item.action)} />
       <text x="16" y="26" fill="#6B7280" fontSize="11" fontWeight="600">
         Step {node.sequence}
       </text>
       <text x="16" y="47" fill="#111827" fontSize="14" fontWeight="700">
-        {truncateText(node.item.title, 24)}
+        {truncateText(item.title, 24)}
       </text>
       <text x="16" y="68" fill="#4B5563" fontSize="12">
-        {truncateText(node.item.user, 30)}
+        {truncateText(item.user, 30)}
       </text>
       <text x="16" y="87" fill="#6B7280" fontSize="11">
-        {truncateText(node.item.timestampLabel, 32)}
+        {truncateText(item.timestampLabel, 32)}
       </text>
       {changeLines.map((line, lineIndex) => (
-        <text key={`${node.id}-line-${lineIndex}`} x="16" y={108 + lineIndex * 14} fill="#374151" fontSize="11">
+        <text
+          key={`${node.id}-line-${lineIndex}`}
+          x="16"
+          y={DETAIL_NODE_DESCRIPTION_START_Y + lineIndex * DETAIL_NODE_DESCRIPTION_LINE_HEIGHT}
+          fill="#374151"
+          fontSize="11"
+        >
           {line}
         </text>
       ))}
+    </g>
+  );
+}
+
+function HistoryPeriodNode({ node }: { node: HistoryGraphNode }) {
+  if (node.item.kind !== "period") return null;
+
+  const item = node.item;
+  const periodLabel = item.periodMode === "week" ? "Week" : "Month";
+  let nextRowY = PERIOD_NODE_HEADER_HEIGHT;
+  const rows = item.entries.map((entry) => {
+    const descriptionLines = wrapSvgText(entry.detailText, PERIOD_ENTRY_DESCRIPTION_LINE_LENGTH);
+    const rowHeight = getPeriodEntryRowHeight(entry);
+    const row = {
+      entry,
+      descriptionLines,
+      rowHeight,
+      rowY: nextRowY,
+      metaY: PERIOD_ENTRY_DESCRIPTION_START_Y
+        + descriptionLines.length * PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT
+        + PERIOD_ENTRY_META_GAP,
+    };
+    nextRowY += rowHeight;
+    return row;
+  });
+
+  return (
+    <g transform={`translate(${node.x} ${node.y})`}>
+      <rect width={node.width} height={node.height} rx="10" fill="#FFFFFF" stroke="#E5E7EB" />
+      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(item.action)} />
+      <text x="16" y="27" fill="#6B7280" fontSize="11" fontWeight="600">
+        {periodLabel} {node.sequence}
+      </text>
+      <text x="16" y="50" fill="#111827" fontSize="14" fontWeight="700">
+        {truncateText(item.title, 31)}
+      </text>
+      <text x="16" y="70" fill="#6B7280" fontSize="11">
+        {truncateText(`${item.timestampLabel} - ${item.detailText}`, 40)}
+      </text>
+      <line x1="16" y1="84" x2={node.width - 16} y2="84" stroke="#E5E7EB" />
+
+      {rows.map(({ entry, descriptionLines, rowHeight, rowY, metaY }, entryIndex) => {
+        return (
+          <g key={entry.id} transform={`translate(16 ${rowY})`}>
+            <circle cx="5" cy="8" r="4" fill={getGraphAccentColor(entry.action)} />
+            <text x="18" y="8" fill="#111827" fontSize="12" fontWeight="700">
+              {truncateText(entry.title, 30)}
+            </text>
+            {descriptionLines.map((line, lineIndex) => (
+              <text
+                key={`${entry.id}-description-${lineIndex}`}
+                x="18"
+                y={PERIOD_ENTRY_DESCRIPTION_START_Y + lineIndex * PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT}
+                fill="#374151"
+                fontSize="11"
+              >
+                {line}
+              </text>
+            ))}
+            <text x="18" y={metaY} fill="#6B7280" fontSize="10">
+              {truncateText(`${entry.timestampLabel} - ${entry.user}`, 45)}
+            </text>
+            {entryIndex < rows.length - 1 && (
+              <line x1="0" y1={rowHeight - 4} x2={node.width - 32} y2={rowHeight - 4} stroke="#F3F4F6" />
+            )}
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -536,19 +727,20 @@ export function RecordHistoryGraphDialog({
   const [graphMode, setGraphMode] = useState<HistoryGraphMode>("detail");
   const [selectedWeekKeys, setSelectedWeekKeys] = useState<string[]>([]);
   const [selectedMonthKeys, setSelectedMonthKeys] = useState<string[]>([]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const weekOptions = useMemo(() => createPeriodOptions(chronologicalHistory, "week"), [chronologicalHistory]);
   const monthOptions = useMemo(() => createPeriodOptions(chronologicalHistory, "month"), [chronologicalHistory]);
   const activePeriodOptions = graphMode === "week" ? weekOptions : graphMode === "month" ? monthOptions : EMPTY_PERIOD_OPTIONS;
   const selectedPeriodKeys = graphMode === "week" ? selectedWeekKeys : graphMode === "month" ? selectedMonthKeys : EMPTY_PERIOD_KEYS;
-  const visibleHistory = useMemo(() => {
-    if (graphMode === "detail") return chronologicalHistory;
-
+  const selectedPeriodOptions = useMemo(() => {
     const selectedKeys = new Set(selectedPeriodKeys);
     return activePeriodOptions
-      .filter((option) => selectedKeys.has(option.key))
-      .flatMap((option) => option.entries);
-  }, [activePeriodOptions, chronologicalHistory, graphMode, selectedPeriodKeys]);
-  const graphItems = useMemo(() => createHistoryGraphItems(visibleHistory), [visibleHistory]);
+      .filter((option) => selectedKeys.has(option.key));
+  }, [activePeriodOptions, selectedPeriodKeys]);
+  const graphItems = useMemo(() => {
+    if (graphMode === "detail") return createHistoryGraphItems(chronologicalHistory);
+    return createHistoryPeriodGraphItems(selectedPeriodOptions, graphMode);
+  }, [chronologicalHistory, graphMode, selectedPeriodOptions]);
   const [layout, setLayout] = useState<HistoryGraphLayout | null>(null);
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [viewportTransform, setViewportTransform] = useState<GraphViewportTransform>(INITIAL_VIEWPORT);
@@ -560,7 +752,7 @@ export function RecordHistoryGraphDialog({
     setSelectedWeekKeys((currentKeys) =>
       currentKeys.some((key) => weekOptions.some((option) => option.key === key))
         ? currentKeys.filter((key) => weekOptions.some((option) => option.key === key))
-        : weekOptions.at(-1)?.key ? [weekOptions.at(-1)!.key] : []
+        : weekOptions.map((option) => option.key)
     );
   }, [weekOptions]);
 
@@ -568,9 +760,13 @@ export function RecordHistoryGraphDialog({
     setSelectedMonthKeys((currentKeys) =>
       currentKeys.some((key) => monthOptions.some((option) => option.key === key))
         ? currentKeys.filter((key) => monthOptions.some((option) => option.key === key))
-        : monthOptions.at(-1)?.key ? [monthOptions.at(-1)!.key] : []
+        : monthOptions.map((option) => option.key)
     );
   }, [monthOptions]);
+
+  useEffect(() => {
+    if (!open) setIsFullscreen(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -643,7 +839,13 @@ export function RecordHistoryGraphDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] max-w-[calc(100vw-2rem)] gap-4 overflow-hidden p-0 sm:max-w-[min(76rem,calc(100vw-2rem))]">
+      <DialogContent
+        className={`grid-rows-[auto,minmax(0,1fr)] gap-4 overflow-hidden p-0 ${
+          isFullscreen
+            ? "h-[calc(100vh-1rem)] max-h-[calc(100vh-1rem)] max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-1rem)]"
+            : "max-h-[88vh] max-w-[calc(100vw-2rem)] sm:max-w-[min(76rem,calc(100vw-2rem))]"
+        }`}
+      >
         <DialogHeader className="border-b border-gray-200 px-6 py-5">
           <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -666,7 +868,7 @@ export function RecordHistoryGraphDialog({
           </div>
         </DialogHeader>
 
-        <div className="px-6 pb-6">
+        <div className="flex min-h-0 px-6 pb-6">
           <div
             ref={graphViewportRef}
             onWheel={handleGraphWheel}
@@ -674,13 +876,17 @@ export function RecordHistoryGraphDialog({
             onPointerMove={handleGraphPointerMove}
             onPointerUp={stopGraphPan}
             onPointerCancel={stopGraphPan}
-            className={`relative h-[min(66vh,42rem)] touch-none select-none overflow-hidden rounded-lg border border-gray-200 bg-gray-50 ${
+            className={`relative w-full touch-none select-none overflow-hidden rounded-lg border border-gray-200 bg-gray-50 ${
+              isFullscreen ? "h-full" : "h-[min(66vh,42rem)]"
+            } ${
               isPanning ? "cursor-grabbing" : "cursor-grab"
             }`}
           >
             {layout && (
               <GraphToolbar
                 scale={viewportTransform.scale}
+                isFullscreen={isFullscreen}
+                onToggleFullscreen={() => setIsFullscreen((current) => !current)}
                 onZoomIn={() => zoomBy(1.18)}
                 onZoomOut={() => zoomBy(0.84)}
                 onReset={() => setViewportTransform(INITIAL_VIEWPORT)}

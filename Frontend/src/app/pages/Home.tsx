@@ -43,6 +43,22 @@ function getMonthLabel(monthKey: string) {
   return new Date(year, month, 1).toLocaleString("en-US", { month: "short" });
 }
 
+function getCaseCreatedTimestamp(caseItem: CaseRecord) {
+  const history = caseItem.history ?? [];
+  const createdEntry = history.find((entry) => entry.action?.trim().toLowerCase() === "created");
+  if (createdEntry?.timestamp) return createdEntry.timestamp;
+
+  const firstDatedEntry = history
+    .filter((entry) => parseHistoryTimestamp(entry.timestamp) > 0)
+    .sort((left, right) => parseHistoryTimestamp(left.timestamp) - parseHistoryTimestamp(right.timestamp))[0];
+
+  return firstDatedEntry?.timestamp ?? null;
+}
+
+function getCaseCreatedDateKey(caseItem: CaseRecord) {
+  return getDateKey(getCaseCreatedTimestamp(caseItem));
+}
+
 function getCasePeople(caseItem: CaseItem) {
   return [
     caseItem.assignedTo?.trim(),
@@ -69,7 +85,7 @@ function buildActivityTrend(cases: CaseRecord[], accounts: AccountRecord[], proj
   const monthMap = new Map<string, { month: string; cases: number; accounts: number; projects: number }>();
 
   for (const caseItem of cases) {
-    const monthKey = getMonthKey(caseItem.closeDate);
+    const monthKey = getMonthKey(getCaseCreatedTimestamp(caseItem));
     if (!monthKey) continue;
 
     const bucket = monthMap.get(monthKey) ?? { month: getMonthLabel(monthKey), cases: 0, accounts: 0, projects: 0 };
@@ -107,7 +123,6 @@ function buildActivityTrend(cases: CaseRecord[], accounts: AccountRecord[], proj
 export type CustomWidgetConfig = {
   id: string;
   title: string;
-  daysToClose?: number | null;
   statusFilter?: string | null;
   priorityFilter?: string | null;
 };
@@ -140,13 +155,10 @@ function priorityWeight(value: string | null | undefined) {
 }
 
 function caseUrgencyScore(caseItem: CaseRecord) {
-  const daysToClose = getDaysUntil(caseItem.closeDate);
-  const deadlinePressure = daysToClose === null ? 0 : daysToClose < 0 ? 5 : daysToClose <= 7 ? 4 : daysToClose <= 14 ? 2 : 0;
   return (
     priorityWeight(caseItem.priority) +
     (caseItem.status === "Escalated" ? 6 : 0) +
-    (caseItem.status === "New" ? 2 : 0) +
-    deadlinePressure
+    (caseItem.status === "New" ? 2 : 0)
   );
 }
 
@@ -329,7 +341,7 @@ function normalizeDateRange(startDate: string, endDate: string) {
 function caseMatchesDateRange(caseItem: CaseRecord, startDate: string | null, endDate: string | null) {
   if (!startDate && !endDate) return true;
 
-  const caseDate = getDateKey(caseItem.closeDate);
+  const caseDate = getCaseCreatedDateKey(caseItem);
   if (!caseDate) return false;
   if (startDate && caseDate < startDate) return false;
   if (endDate && caseDate > endDate) return false;
@@ -904,7 +916,7 @@ function ManagerHome() {
 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <label className="min-w-0 text-xs font-medium text-gray-600">
-                  <span className="mb-1 block">From close date</span>
+                  <span className="mb-1 block">From date created</span>
                   <input
                     type="date"
                     value={productTrendDateStart}
@@ -913,7 +925,7 @@ function ManagerHome() {
                   />
                 </label>
                 <label className="min-w-0 text-xs font-medium text-gray-600">
-                  <span className="mb-1 block">To close date</span>
+                  <span className="mb-1 block">To date created</span>
                   <input
                     type="date"
                     value={productTrendDateEnd}
@@ -976,7 +988,7 @@ function ManagerHome() {
               {productCaseHotspots.length === 0 && (
                 <p className="py-6 text-sm text-gray-500">
                   {hasProductTrendDateRange
-                    ? "No open cases are linked to products in this close date range."
+                    ? "No open cases are linked to products in this date-created range."
                     : "No open cases are linked to products in this view."}
                 </p>
               )}
@@ -1070,11 +1082,6 @@ function SalesEngineerHome() {
     caseItem.status === "Escalated" || caseItem.priority === "High" || caseItem.priority === "Very High"
   );
   const newCases = focusCases.filter((caseItem) => caseItem.status === "New");
-  const overdueCases = focusCases.filter((caseItem) => {
-    const days = getDaysUntil(caseItem.closeDate);
-    return days !== null && days < 0;
-  });
-
   const activeMantis = mantisRecords.filter(isOpenMantis);
   const activeKnocks = knocks.filter(isOpenKnock);
   const soonMantis = activeMantis.filter((record) => {
@@ -1184,7 +1191,7 @@ function SalesEngineerHome() {
     {
       label: "Open Cases",
       value: focusCases.length.toString(),
-      detail: `${newCases.length} new, ${overdueCases.length} overdue`,
+      detail: `${newCases.length} new`,
       icon: Briefcase,
       color: "bg-[#E31937]",
       onClick: () => navigate("/cases"),
@@ -1287,7 +1294,7 @@ function SalesEngineerHome() {
         <div data-guide-id="se-home-attention" className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-200 p-5">
             <h2 className="text-lg font-semibold text-gray-900">Attention Queue</h2>
-            <p className="mt-1 text-sm text-gray-500">Ranked by escalation, priority, and deadline pressure.</p>
+            <p className="mt-1 text-sm text-gray-500">Ranked by escalation, priority, and ownership.</p>
           </div>
           <div className="divide-y divide-gray-100">
             {attentionCases.map((caseItem) => {
@@ -1315,7 +1322,7 @@ function SalesEngineerHome() {
                         {caseItem.priority || "-"}
                       </span>
                       <span className="inline-flex rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
-                        {formatDaysLabel(getDaysUntil(caseItem.closeDate))}
+                        {getCaseCreatedDateKey(caseItem) ? `Created ${getCaseCreatedDateKey(caseItem)}` : "No created date"}
                       </span>
                     </div>
                   </div>
@@ -1505,7 +1512,6 @@ function TeamHome() {
   const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
   const [widgetForm, setWidgetForm] = useState({
     title: "",
-    daysToClose: "",
     statusFilter: "All",
     priorityFilter: "All",
   });
@@ -1517,7 +1523,7 @@ function TeamHome() {
 
   const openNewWidgetModal = () => {
     setEditingWidgetId(null);
-    setWidgetForm({ title: "My Custom Widget", daysToClose: "", statusFilter: "All", priorityFilter: "All" });
+    setWidgetForm({ title: "My Custom Widget", statusFilter: "All", priorityFilter: "All" });
     setIsWidgetModalOpen(true);
   };
 
@@ -1526,7 +1532,6 @@ function TeamHome() {
     setEditingWidgetId(widget.id);
     setWidgetForm({
       title: widget.title,
-      daysToClose: widget.daysToClose?.toString() || "",
       statusFilter: widget.statusFilter || "All",
       priorityFilter: widget.priorityFilter || "All",
     });
@@ -1538,7 +1543,6 @@ function TeamHome() {
     const newWidget: CustomWidgetConfig = {
       id: editingWidgetId || Math.random().toString(36).substring(7),
       title: widgetForm.title.trim(),
-      daysToClose: widgetForm.daysToClose ? parseInt(widgetForm.daysToClose, 10) : null,
       statusFilter: widgetForm.statusFilter !== "All" ? widgetForm.statusFilter : null,
       priorityFilter: widgetForm.priorityFilter !== "All" ? widgetForm.priorityFilter : null,
     };
@@ -1625,25 +1629,15 @@ function TeamHome() {
       let match = true;
       if (widget.statusFilter && c.status !== widget.statusFilter) match = false;
       if (widget.priorityFilter && c.priority !== widget.priorityFilter) match = false;
-      if (widget.daysToClose && widget.daysToClose > 0) {
-          if (!c.closeDate) {
-              match = false;
-          } else {
-              const daysDiff = (new Date(c.closeDate).getTime() - Date.now()) / (1000 * 3600 * 24);
-              if (daysDiff < 0 || daysDiff > widget.daysToClose) match = false;
-          }
-      }
       return match;
     });
 
     let customFilterState: any = {};
     if (widget.statusFilter) customFilterState.statusFilter = widget.statusFilter;
     if (widget.priorityFilter) customFilterState.priorityFilter = widget.priorityFilter;
-    if (widget.daysToClose) customFilterState.daysToCloseFilter = widget.daysToClose;
 
     let subMsg = "Custom filter";
-    if (widget.daysToClose) subMsg = `Next ${widget.daysToClose} days`;
-    else if (widget.priorityFilter) subMsg = `${widget.priorityFilter} Priority`;
+    if (widget.priorityFilter) subMsg = `${widget.priorityFilter} Priority`;
 
     return {
       id: widget.id,
@@ -1886,18 +1880,6 @@ function TeamHome() {
                     <option key={priority} value={priority}>{priority}</option>
                   ))}
                 </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700">Closing Within (Days)</label>
-                <input 
-                  type="number" 
-                  min="0"
-                  value={widgetForm.daysToClose}
-                  onChange={e => setWidgetForm({ ...widgetForm, daysToClose: e.target.value })}
-                  placeholder="e.g. 60"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                />
               </div>
             </div>
             <DialogFooter>

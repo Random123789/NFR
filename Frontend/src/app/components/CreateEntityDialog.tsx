@@ -70,7 +70,6 @@ type FormData = {
     accountIds: string[];
     project: string;
     productIds: string[];
-    closeDate: string;
     escalationType: string;
     escalationNote: string;
     knockIds: string[];
@@ -145,6 +144,7 @@ const entityLabels: Record<CreateEntityType, string> = {
 
 const inputClassName = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31937]";
 const labelClassName = "block text-sm font-medium text-gray-700 mb-1";
+const escalationTypeLabelClassName = "block text-sm font-semibold text-[#B5122B] mb-1";
 
 type SelectOption = {
   value: string;
@@ -185,7 +185,6 @@ function createInitialFormData(userName?: string | null): FormData {
       accountIds: [],
       project: "",
       productIds: [],
-      closeDate: "",
       escalationType: "",
       escalationNote: "",
       knockIds: [],
@@ -1586,7 +1585,6 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           accountIds: formData.case.accountIds,
           project: nullableString(formData.case.project),
           productIds: formData.case.productIds,
-          closeDate: nullableString(formData.case.closeDate),
           escalationType: nullableString(formData.case.escalationType),
           escalationNote: nullableString(formData.case.escalationNote),
           knockRecordIds: selectedKnockIds,
@@ -1746,14 +1744,36 @@ export function CreateEntityDialog<T extends CreateEntityType>({
             onChange={(event) => setFormData({ ...formData, case: { ...formData.case, priority: event.target.value } })}
             className={inputClassName}
           >
-            <option value="">Select priority</option>
-            {sortStrings(casePriorities).map((priority) => (
+            {casePriorities.map((priority) => (
               <option key={priority} value={priority}>
                 {priority}
               </option>
             ))}
           </select>
         </div>
+        <div>
+          <label className={escalationTypeLabelClassName}>Escalation Type</label>
+          <select
+            value={formData.case.escalationType}
+            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, escalationType: event.target.value } })}
+            className={inputClassName}
+          >
+            <option value="">Select escalation type</option>
+            {sortStrings(caseEscalationTypes).map((escalationType) => (
+              <option key={escalationType} value={escalationType}>
+                {escalationType}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {renderAccountSelect({
+          values: formData.case.accountIds,
+          onChange: (accountIds) => setFormData({ ...formData, case: { ...formData.case, accountIds } }),
+          emptyLabel: "Select linked accounts",
+        })}
         <div>
           <label className={labelClassName}>Category</label>
           <select
@@ -1772,49 +1792,6 @@ export function CreateEntityDialog<T extends CreateEntityType>({
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <label className={labelClassName}>SE Owner</label>
-          <SearchableSelect
-            label="SE owner"
-            value={formData.case.seOwner}
-            options={seOwnerSelectOptions}
-            emptyLabel="No SE owner"
-            searchPlaceholder="Search users"
-            onChange={(seOwner) => setFormData({ ...formData, case: { ...formData.case, seOwner } })}
-          />
-        </div>
-        <div>
-          <label className={labelClassName}>Escalation Type</label>
-          <select
-            value={formData.case.escalationType}
-            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, escalationType: event.target.value } })}
-            className={inputClassName}
-          >
-            <option value="">Select escalation type</option>
-            {sortStrings(caseEscalationTypes).map((escalationType) => (
-              <option key={escalationType} value={escalationType}>
-                {escalationType}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <label className={labelClassName}>Close Date</label>
-          <input
-            type="date"
-            value={formData.case.closeDate}
-            onChange={(event) => setFormData({ ...formData, case: { ...formData.case, closeDate: event.target.value } })}
-            className={inputClassName}
-          />
-        </div>
-        {renderAccountSelect({
-          values: formData.case.accountIds,
-          onChange: (accountIds) => setFormData({ ...formData, case: { ...formData.case, accountIds } }),
-          emptyLabel: "Select linked accounts",
-        })}
         <div className={quickProjectOpen ? "sm:col-span-2" : undefined}>
           <label className={labelClassName}>Project</label>
           <div className="flex gap-2">
@@ -1843,41 +1820,16 @@ export function CreateEntityDialog<T extends CreateEntityType>({
           </div>
           {renderQuickProjectFields((project) => setFormData({ ...formData, case: { ...formData.case, project } }))}
         </div>
-        <div className={quickProductOpen ? "sm:col-span-2" : undefined}>
-          <label className={labelClassName}>Linked Products</label>
-          <div className="flex gap-2">
-            <div className="min-w-0 flex-1">
-              <MultiRecordDropdown
-                label="Products"
-                values={formData.case.productIds}
-                options={productSelectOptions}
-                emptyLabel="Select linked products"
-                searchPlaceholder="Search products"
-                onChange={(productIds) => setFormData({ ...formData, case: { ...formData.case, productIds } })}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setQuickProductOpen(true);
-                setQuickProductError("");
-              }}
-              className="inline-flex h-[38px] shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-            >
-              New
-            </button>
-          </div>
-          {renderQuickProductFields((recordId) =>
-            setFormData({
-              ...formData,
-              case: {
-                ...formData.case,
-                productIds: formData.case.productIds.includes(recordId)
-                  ? formData.case.productIds
-                  : [...formData.case.productIds, recordId],
-              },
-            }),
-          )}
+        <div>
+          <label className={labelClassName}>SE Owner</label>
+          <SearchableSelect
+            label="SE owner"
+            value={formData.case.seOwner}
+            options={seOwnerSelectOptions}
+            emptyLabel="No SE owner"
+            searchPlaceholder="Search users"
+            onChange={(seOwner) => setFormData({ ...formData, case: { ...formData.case, seOwner } })}
+          />
         </div>
       </div>
 
@@ -1950,6 +1902,55 @@ export function CreateEntityDialog<T extends CreateEntityType>({
                 knockIds: formData.case.knockIds.includes(recordId)
                   ? formData.case.knockIds
                   : [...formData.case.knockIds, recordId],
+              },
+            }),
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <label className={labelClassName}>Date Created</label>
+          <input
+            type="text"
+            value="Generated when case is created"
+            disabled
+            readOnly
+            className={`${inputClassName} cursor-not-allowed bg-gray-100 text-gray-500`}
+          />
+        </div>
+        <div className={quickProductOpen ? "sm:col-span-2" : undefined}>
+          <label className={labelClassName}>Linked Products</label>
+          <div className="flex gap-2">
+            <div className="min-w-0 flex-1">
+              <MultiRecordDropdown
+                label="Products"
+                values={formData.case.productIds}
+                options={productSelectOptions}
+                emptyLabel="Select linked products"
+                searchPlaceholder="Search products"
+                onChange={(productIds) => setFormData({ ...formData, case: { ...formData.case, productIds } })}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setQuickProductOpen(true);
+                setQuickProductError("");
+              }}
+              className="inline-flex h-[38px] shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              New
+            </button>
+          </div>
+          {renderQuickProductFields((recordId) =>
+            setFormData({
+              ...formData,
+              case: {
+                ...formData.case,
+                productIds: formData.case.productIds.includes(recordId)
+                  ? formData.case.productIds
+                  : [...formData.case.productIds, recordId],
               },
             }),
           )}

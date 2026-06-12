@@ -106,7 +106,7 @@ const PRODUCT_CASE_TABLE_FIELDS = [
   "cases.priority",
   "cases.assignedTo",
   "cases.seOwner",
-  "cases.closeDate",
+  "cases.dateCreated",
   "products.productName",
   "products.productFamily",
   "products.productVersion",
@@ -148,7 +148,7 @@ const SALES_ENGINEER_REPORT_TEMPLATES = [
 ];
 
 const TABLE_FIELD_PRESETS: Record<string, string[]> = {
-  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.assignedTo", "cases.seOwner", "cases.closeDate"],
+  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.assignedTo", "cases.seOwner", "cases.dateCreated"],
   accounts: ["accounts.accountName", "accounts.type", "accounts.vertical", "accounts.website"],
   projects: ["projects.projectName", "projects.accountId", "projects.startDate", "projects.closeDate", "projects.seOwner", "projects.isClosed", "projects.stage", "projects.sfdc", "projects.sfdcValue"],
   products: ["products.recordId", "products.productName", "products.productFamily", "products.productVersion", "products.description", "products.createdAt", "products.updatedAt"],
@@ -162,7 +162,7 @@ const JOIN_FIELD_PRESETS: Record<string, string[]> = {
   products: ["products.productName", "products.productFamily", "products.productVersion", "products.description"],
   mantis: ["mantis.mantisId", "mantis.category", "mantis.mantisStatus", "mantis.mantisTargetDate"],
   knocks: ["knocks.knockId", "knocks.status", "knocks.targetDate"],
-  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.closeDate"],
+  cases: ["cases.recordId", "cases.status", "cases.priority", "cases.dateCreated"],
 };
 
 function createDefaultQuerySpec(base = "cases"): ReportQuerySpec {
@@ -279,7 +279,7 @@ function applyReportPageFilters(spec: ReportQuerySpec, filters: ReportPageFilter
   const dateStart = getDateRangeStart(filters.dateRange);
 
   if (dateStart) {
-    filterRules.push({ field: "cases.closeDate", operator: "gte", value: dateStart });
+    filterRules.push({ field: "cases.dateCreated", operator: "gte", value: dateStart });
   }
 
   if (filters.owner.trim()) {
@@ -345,7 +345,7 @@ function createSalesEngineerReportDraft(templateId: SalesEngineerReportTemplateI
         groupBy: null,
         metric: { type: "count" },
         limit: 100,
-        sortBy: "cases.closeDate",
+        sortBy: "cases.dateCreated",
         sortDirection: "asc",
       },
     };
@@ -403,7 +403,7 @@ function createSalesEngineerReportDraft(templateId: SalesEngineerReportTemplateI
         groupBy: null,
         metric: { type: "count" },
         limit: 100,
-        sortBy: "cases.closeDate",
+        sortBy: "cases.dateCreated",
         sortDirection: "asc",
       },
     };

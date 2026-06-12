@@ -75,7 +75,7 @@ type CaseColumnKey =
   | "escalationType"
   | "escalationNote"
   | "product"
-  | "closeDate"
+  | "dateCreated"
   | "description"
   | "seOwner"
   | "assignedTo"
@@ -102,7 +102,7 @@ const CASE_TABLE_COLUMNS: CaseTableColumn[] = [
   { key: "category", label: "Category", sortKey: "category", searchKey: "category" },
   { key: "escalationType", label: "Escalation Type", sortKey: "escalationType", searchKey: "escalationType" },
   { key: "product", label: "Products", sortKey: "product", searchKey: "product" },
-  { key: "closeDate", label: "Close Date", sortKey: "closeDate", searchKey: "closeDate" },
+  { key: "dateCreated", label: "Date Created", sortKey: "dateCreated", searchKey: "dateCreated" },
   { key: "seOwner", label: "SE Owner", sortKey: "seOwner", searchKey: "seOwner" },
   { key: "assignedTo", label: "Assigned To", sortKey: "assignedTo", searchKey: "assignedTo" },
   { key: "priority", label: "Priority", sortKey: "priority" },
@@ -120,7 +120,7 @@ const DEFAULT_CASE_SEARCH_FILTERS: Record<CaseSearchKey, string> = {
   escalationType: "",
   escalationNote: "",
   product: "",
-  closeDate: "",
+  dateCreated: "",
   description: "",
   seOwner: "",
   assignedTo: "",
@@ -129,7 +129,7 @@ const DEFAULT_CASE_SEARCH_FILTERS: Record<CaseSearchKey, string> = {
   knockId: "",
   mantisId: "",
 };
-const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns.v3";
+const CASE_COLUMN_STORAGE_KEY = "cases.visibleTableColumns.v4";
 const RELATED_CREATE_BUTTON_CLASS = "inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50";
 const CASE_DETAIL_TABS = [
   { key: "details", label: "Details" },
@@ -158,6 +158,28 @@ function AssignedToBadge({ value }: { value: string | null | undefined }) {
 
 function textValue(value: string | null | undefined) {
   return value || "-";
+}
+
+function parseHistoryTimestamp(value: string | null | undefined) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function getCaseCreatedTimestamp(caseItem: CaseRecord) {
+  const history = caseItem.history ?? [];
+  const createdEntry = history.find((entry) => entry.action?.trim().toLowerCase() === "created");
+  if (createdEntry?.timestamp) return createdEntry.timestamp;
+
+  const firstDatedEntry = history
+    .filter((entry) => parseHistoryTimestamp(entry.timestamp) !== null)
+    .sort((left, right) => (parseHistoryTimestamp(left.timestamp) ?? 0) - (parseHistoryTimestamp(right.timestamp) ?? 0))[0];
+
+  return firstDatedEntry?.timestamp ?? "";
+}
+
+function getCaseCreatedDateLabel(caseItem: CaseRecord) {
+  return formatTimestampMinute(getCaseCreatedTimestamp(caseItem));
 }
 
 function emptyLinkDrafts(): LinkDrafts {
@@ -294,7 +316,6 @@ export function Cases() {
   const [caseFilterMatchMode, setCaseFilterMatchMode] = useState<CaseFilterMatchMode>(() => normalizeCaseFilterMatchMode(locationState?.caseFilterMatchMode));
   const [peopleFilters, setPeopleFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.peopleFilters ?? locationState?.ownerFilters));
   const [watcherFilters, setWatcherFilters] = useState<string[]>(() => normalizeFilterValues(locationState?.watcherFilters ?? locationState?.watcherFilter));
-  const [daysToCloseFilter, setDaysToCloseFilter] = useState<number | null>(locationState?.daysToCloseFilter ?? null);
   const [isUpdatingLinks, setIsUpdatingLinks] = useState(false);
   const [visibleCaseColumnKeys, setVisibleCaseColumnKeys] = useStoredColumnKeys<CaseColumnKey>(CASE_COLUMN_STORAGE_KEY, DEFAULT_CASE_COLUMN_KEYS);
   const [caseLinks, setCaseLinks] = useState<CaseLinksResponse | null>(null);
@@ -406,6 +427,13 @@ export function Cases() {
     setEditedKnockIds(linkedKnockIds.length > 0 ? linkedKnockIds : fallbackKnockIds);
   }, [caseLinks, isEditing, selectedCase]);
 
+  useEffect(() => {
+    if (!isEditing || !editedCase) return;
+    if (casePriorities.some((priority) => priority === editedCase.priority)) return;
+
+    setEditedCase({ ...editedCase, priority: "Medium" });
+  }, [editedCase, isEditing, setEditedCase]);
+
   const project = selectedCase ? getProjectById(selectedCase.project) : null;
   const fallbackAccounts = selectedCase ? (selectedCase.accountIds ?? []).map(getAccountById).filter(isPresent) : [];
   const fallbackProducts = selectedCase ? (selectedCase.productIds ?? []).map(getProductById).filter(isPresent) : [];
@@ -465,12 +493,14 @@ export function Cases() {
         return (caseItem.productIds ?? []).map((productId) => getProductById(productId)?.productName || productId).join(", ");
       case "project":
         return getProjectById(caseItem.project)?.projectName || caseItem.project || "";
+      case "dateCreated":
+        return getCaseCreatedDateLabel(caseItem);
       case "knockId":
         return (caseItem.knockRecordIds ?? []).map((recordId) => getKnockById(recordId)?.knockId || recordId).join(", ");
       case "mantisId":
         return (caseItem.mantisRecordIds ?? []).map((recordId) => getMantisById(recordId)?.mantisId || recordId).join(", ");
       default:
-        return caseItem[key] || "";
+        return String(caseItem[key as keyof CaseRecord] ?? "");
     }
   };
 
@@ -501,7 +531,6 @@ export function Cases() {
     productFilters.length > 0 ||
     peopleFilters.length > 0 ||
     watcherFilters.length > 0 ||
-    daysToCloseFilter !== null ||
     Object.values(searchFilters).some((value) => value.trim() !== "");
 
   const handleClearCaseFilters = () => {
@@ -511,7 +540,6 @@ export function Cases() {
     setProductFilters([]);
     setPeopleFilters([]);
     setWatcherFilters([]);
-    setDaysToCloseFilter(null);
     setCaseFilterMatchMode("all");
     setSearchFilters(DEFAULT_CASE_SEARCH_FILTERS);
   };
@@ -554,12 +582,6 @@ export function Cases() {
       if (!caseWatchers.some((watcher) => normalizedWatcherFilters.includes(watcher))) return false;
     }
     
-    if (daysToCloseFilter !== null) {
-      if (!caseItem.closeDate) return false;
-      const daysDiff = (new Date(caseItem.closeDate).getTime() - Date.now()) / (1000 * 3600 * 24);
-      if (daysDiff < 0 || daysDiff > daysToCloseFilter) return false;
-    }
-
     const mantisMatches = (caseItem.mantisRecordIds ?? []).map(getMantisById).filter(isPresent);
     const knockMatches = (caseItem.knockRecordIds ?? []).map(getKnockById).filter(isPresent);
 
@@ -611,7 +633,6 @@ export function Cases() {
         escalationType: editedCase.escalationType,
         escalationNote: editedCase.escalationNote,
         productIds: uniqueNonEmptyValues(editedCase.productIds ?? []),
-        closeDate: editedCase.closeDate,
         description: editedCase.description,
         seOwner: editedCase.seOwner,
         assignedTo: editedCase.assignedTo,
@@ -820,7 +841,13 @@ export function Cases() {
   const renderColumnHeader = (column: CaseTableColumn) => (
     <th key={column.key} className="px-6 py-3 text-left">
       <div className={`flex items-center gap-2 ${column.searchKey ? "mb-2" : ""}`}>
-        <span className="text-xs font-medium uppercase tracking-wider text-gray-600">{column.label}</span>
+        <span
+          className={`text-xs font-medium uppercase tracking-wider ${
+            column.key === "escalationType" ? "text-[#B5122B]" : "text-gray-600"
+          }`}
+        >
+          {column.label}
+        </span>
         <button onClick={() => handleSort(column.sortKey)} className="text-gray-400 hover:text-gray-600">
           {renderSortIcon(column.sortKey)}
         </button>
@@ -868,6 +895,8 @@ export function Cases() {
       case "knockId":
       case "mantisId":
         return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getCaseValue(caseItem, column.key))}</td>;
+      case "escalationType":
+        return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-[#B5122B]">{textValue(caseItem.escalationType)}</td>;
       case "project":
         return <td key={column.key} className="whitespace-nowrap px-6 py-4 text-sm text-gray-700">{textValue(getProjectById(caseItem.project)?.projectName || caseItem.project)}</td>;
       case "assignedTo":
@@ -1154,12 +1183,11 @@ export function Cases() {
                       onChange={(event) => setEditedCase({ ...editedCase, priority: event.target.value })}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
                     >
-                      <option value="">No priority</option>
-                      <option value="Very Low">Very Low</option>
-                      <option value="Low">Low</option>
-                      <option value="Medium">Medium</option>
-                      <option value="High">High</option>
-                      <option value="Very High">Very High</option>
+                      {casePriorities.map((priority) => (
+                        <option key={priority} value={priority}>
+                          {priority}
+                        </option>
+                      ))}
                     </select>
                   ) : (
                     <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${casePriorityColors[selectedCase.priority || ""] ?? "bg-gray-100 text-gray-700"}`}>
@@ -1167,7 +1195,7 @@ export function Cases() {
                     </span>
                   )}
                 </div>
-                <div className="order-4 detail-cell">
+                <div className="order-7 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">SE Owner</label>
                   {isEditing && editedCase ? (
                     <SearchableSelect
@@ -1182,7 +1210,7 @@ export function Cases() {
                     <AssignedToBadge value={selectedCase.seOwner} />
                   )}
                 </div>
-                <div className="order-5 detail-cell">
+                <div className="order-4 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Accounts</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1222,7 +1250,7 @@ export function Cases() {
                     </p>
                   )}
                 </div>
-                <div className="order-6 detail-cell">
+                <div className="order-11 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Products</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1262,7 +1290,7 @@ export function Cases() {
                     </p>
                   )}
                 </div>
-                <div className="order-7 detail-cell">
+                <div className="order-6 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Project</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1296,7 +1324,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(project?.projectName || selectedCase.project)}</p>
                   )}
                 </div>
-                <div className="order-8 detail-cell">
+                <div className="order-9 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Knock IDs</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1329,7 +1357,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(linkedKnocks.map((item) => item.knockId).filter(Boolean).join(", "))}</p>
                   )}
                 </div>
-                <div className="order-9 detail-cell">
+                <div className="order-8 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Mantis IDs</label>
                   {isEditing && editedCase ? (
                     <div className="flex gap-2">
@@ -1362,7 +1390,7 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(linkedMantis.map((item) => item.mantisId).filter(Boolean).join(", "))}</p>
                   )}
                 </div>
-                <div className="order-10 detail-cell">
+                <div className="order-5 detail-cell">
                   <label className="mb-1 block text-sm font-medium text-gray-600">Category</label>
                   {isEditing && editedCase ? (
                     <select
@@ -1381,21 +1409,12 @@ export function Cases() {
                     <p className="text-gray-900">{textValue(selectedCase.category)}</p>
                   )}
                 </div>
-                <div className="order-11 detail-cell">
-                  <label className="mb-1 block text-sm font-medium text-gray-600">Close Date</label>
-                  {isEditing && editedCase ? (
-                    <input
-                      type="date"
-                      value={editedCase.closeDate || ""}
-                      onChange={(event) => setEditedCase({ ...editedCase, closeDate: event.target.value })}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{textValue(selectedCase.closeDate)}</p>
-                  )}
+                <div className="order-10 detail-cell">
+                  <label className="mb-1 block text-sm font-medium text-gray-600">Date Created</label>
+                  <p className="text-gray-900">{textValue(getCaseCreatedDateLabel(selectedCase))}</p>
                 </div>
-                <div className="order-12 detail-cell">
-                  <label className="mb-1 block text-sm font-medium text-gray-600">Escalation Type</label>
+                <div className="order-3 detail-cell">
+                  <label className="mb-1 block text-sm font-semibold text-[#B5122B]">Escalation Type</label>
                   {isEditing && editedCase ? (
                     <select
                       value={editedCase.escalationType || ""}
@@ -1410,7 +1429,7 @@ export function Cases() {
                       ))}
                     </select>
                   ) : (
-                    <p className="text-gray-900">{textValue(selectedCase.escalationType)}</p>
+                    <p className="font-semibold text-[#B5122B]">{textValue(selectedCase.escalationType)}</p>
                   )}
                 </div>
                 <div className="order-[14] detail-cell sm:col-span-2">

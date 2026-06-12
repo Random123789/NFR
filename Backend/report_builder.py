@@ -49,6 +49,14 @@ def _field(source: str, alias: str, name: str, label: str, type_name: str = "tex
     )
 
 
+CASE_CREATED_DATE_EXPRESSION = (
+    "COALESCE("
+    "JSON_UNQUOTE(JSON_EXTRACT(c.history, REPLACE(JSON_UNQUOTE(JSON_SEARCH(c.history, 'one', 'Created', NULL, '$[*].action')), '.action', '.timestamp'))), "
+    "JSON_UNQUOTE(JSON_EXTRACT(c.history, '$[0].timestamp'))"
+    ")"
+)
+
+
 SOURCE_DEFS: Dict[str, ReportSource] = {
     "cases": ReportSource(
         key="cases",
@@ -64,7 +72,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("cases", "c", "category", "Category"),
             _field("cases", "c", "assignedTo", "Assigned To"),
             _field("cases", "c", "seOwner", "SE Owner"),
-            _field("cases", "c", "closeDate", "Case Close Date", "date"),
+            ReportField("cases.dateCreated", "Case Date Created", CASE_CREATED_DATE_EXPRESSION, "cases", "date"),
             _field("cases", "c", "project", "Project ID"),
             _field("cases", "c", "escalationType", "Escalation Type"),
             _field("cases", "c", "escalationNote", "Escalation Note"),
@@ -182,6 +190,7 @@ FIELD_MAP: Dict[str, ReportField] = {
     for source in SOURCE_DEFS.values()
     for field in source.fields
 }
+FIELD_MAP["cases.closeDate"] = FIELD_MAP["cases.dateCreated"]
 
 FILTER_OPERATORS = {
     "eq",
@@ -252,7 +261,7 @@ def build_legacy_query_spec(metric: str, filters: dict) -> dict:
         "product": "products.productName",
         "owner": "cases.assignedTo",
         "category": "cases.category",
-        "monthCreated": "cases.closeDate",
+        "monthCreated": "cases.dateCreated",
     }
     joins = [{"source": "products", "joinType": "left"}] if metric == "product" else []
     field = group_map.get(metric, "cases.status")
