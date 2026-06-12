@@ -49,14 +49,6 @@ def _field(source: str, alias: str, name: str, label: str, type_name: str = "tex
     )
 
 
-CASE_CREATED_DATE_EXPRESSION = (
-    "COALESCE("
-    "JSON_UNQUOTE(JSON_EXTRACT(c.history, REPLACE(JSON_UNQUOTE(JSON_SEARCH(c.history, 'one', 'Created', NULL, '$[*].action')), '.action', '.timestamp'))), "
-    "JSON_UNQUOTE(JSON_EXTRACT(c.history, '$[0].timestamp'))"
-    ")"
-)
-
-
 SOURCE_DEFS: Dict[str, ReportSource] = {
     "cases": ReportSource(
         key="cases",
@@ -72,7 +64,7 @@ SOURCE_DEFS: Dict[str, ReportSource] = {
             _field("cases", "c", "category", "Category"),
             _field("cases", "c", "assignedTo", "Assigned To"),
             _field("cases", "c", "seOwner", "SE Owner"),
-            ReportField("cases.dateCreated", "Case Date Created", CASE_CREATED_DATE_EXPRESSION, "cases", "date"),
+            ReportField("cases.dateCreated", "Case Date Created", "c.createdAt", "cases", "date"),
             _field("cases", "c", "project", "Project ID"),
             _field("cases", "c", "escalationType", "Escalation Type"),
             _field("cases", "c", "escalationNote", "Escalation Note"),

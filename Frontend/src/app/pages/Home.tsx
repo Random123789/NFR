@@ -44,6 +44,8 @@ function getMonthLabel(monthKey: string) {
 }
 
 function getCaseCreatedTimestamp(caseItem: CaseRecord) {
+  if (caseItem.createdAt?.trim()) return caseItem.createdAt;
+
   const history = caseItem.history ?? [];
   const createdEntry = history.find((entry) => entry.action?.trim().toLowerCase() === "created");
   if (createdEntry?.timestamp) return createdEntry.timestamp;
@@ -131,7 +133,7 @@ const CLOSED_CASE_STATUSES = new Set(["Closed-Resolved", "Closed-Dead"]);
 const CLOSED_MANTIS_STATUSES = new Set(["resolved", "completed", "dead", "implemented", "rejected"]);
 const CLOSED_KNOCK_STATUSES = new Set(["completed", "cancelled"]);
 const CRITICAL_CASE_STATUS_FILTERS = ["Escalated"];
-const CRITICAL_CASE_PRIORITY_FILTERS = ["High", "Very High"];
+const CRITICAL_CASE_PRIORITY_FILTERS = ["High"];
 const OPEN_CASE_STATUS_FILTERS = caseStatuses.filter((status) => !CLOSED_CASE_STATUSES.has(status));
 
 function isOpenCase(caseItem: CaseRecord) {

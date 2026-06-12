@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
+from datetime import datetime
 from typing import List, Optional
 import json
 import logging
@@ -18,18 +19,18 @@ _DUPLICATE_NULL_SENTINEL = "__nfr_duplicate_null__"
 
 CASE_FIELDS = [
     "recordId",
+    "createdAt",
     "project",
     "category",
     "escalationType",
     "escalationNote",
-    "closeDate",
     "description",
     "seOwner",
     "assignedTo",
     "priority",
     "status",
 ]
-CASE_DATA_FIELDS = [field for field in CASE_FIELDS if field != "recordId"]
+CASE_DATA_FIELDS = [field for field in CASE_FIELDS if field not in {"recordId", "createdAt"}]
 CASE_SELECT = ", ".join(f"`{field}`" for field in [*CASE_FIELDS, "history"])
 SEARCH_FIELDS = CASE_FIELDS
 CASE_LINK_TARGET_TABLES = {
@@ -44,7 +45,7 @@ CASE_FIELD_LABELS = {
     "category": "Category",
     "escalationType": "Escalation Type",
     "escalationNote": "Escalation Note",
-    "closeDate": "Close Date",
+    "createdAt": "Date Created",
     "description": "Description",
     "seOwner": "SE Owner",
     "assignedTo": "Assigned To",
@@ -189,7 +190,6 @@ def _case_payload(data: CaseCreate) -> dict:
         "category": _blank_to_none(data.category),
         "escalationType": _blank_to_none(data.escalationType),
         "escalationNote": _blank_to_none(data.escalationNote),
-        "closeDate": _blank_to_none(data.closeDate),
         "description": data.description,
         "seOwner": _blank_to_none(data.seOwner),
         "assignedTo": _blank_to_none(data.assignedTo),
@@ -218,6 +218,55 @@ def _history_from_record(record: dict) -> list[dict]:
     normalized = normalize_record(dict(record))
     history = normalized.get("history")
     return list(history) if isinstance(history, list) else []
+
+
+def _normalize_case_created_at(value) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    cleaned = text.replace("T", " ").replace("Z", "")
+    if len(cleaned) == 10:
+        cleaned = f"{cleaned} 00:00"
+    cleaned = cleaned[:16]
+
+    try:
+        datetime.strptime(cleaned, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+
+    return cleaned
+
+
+def _case_created_at_from_history(history) -> Optional[str]:
+    if isinstance(history, str) and history.strip():
+        try:
+            history = json.loads(history)
+        except json.JSONDecodeError:
+            return None
+
+    if not isinstance(history, list):
+        return None
+
+    dated_entries: list[str] = []
+    created_entries: list[str] = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+
+        timestamp = _normalize_case_created_at(entry.get("timestamp"))
+        if not timestamp:
+            continue
+
+        dated_entries.append(timestamp)
+        if str(entry.get("action") or "").strip().lower() == "created":
+            created_entries.append(timestamp)
+
+    if created_entries:
+        return created_entries[0]
+    if dated_entries:
+        return sorted(dated_entries)[0]
+    return None
 
 
 def _canonical_duplicate_value(value) -> str:
@@ -467,9 +516,47 @@ async def _normalize_foreign_key_values() -> None:
     )
 
 
+async def _backfill_case_created_at() -> None:
+    if not await _column_exists("cases", "createdAt"):
+        return
+
+    rows = await execute_query(
+        """
+        SELECT recordId, createdAt, history
+        FROM cases
+        WHERE createdAt IS NULL
+        """
+    )
+    for row in rows:
+        record_id = row.get("recordId")
+        if not record_id:
+            continue
+
+        normalized_row = normalize_record(dict(row))
+        created_at = (
+            _case_created_at_from_history(normalized_row.get("history"))
+            or _normalize_case_created_at(current_timestamp())
+            or current_timestamp()
+        )
+        await execute_mutation(
+            """
+            UPDATE cases
+            SET createdAt = %s
+            WHERE recordId = %s
+              AND createdAt IS NULL
+            """,
+            [created_at, record_id],
+        )
+
+
 async def ensure_case_schema() -> None:
     """Keep the cases table aligned to the minimal case field set."""
 
+    await _add_column_if_missing(
+        "cases",
+        "createdAt",
+        "ALTER TABLE cases ADD COLUMN createdAt DATETIME NULL AFTER recordId",
+    )
     await _add_column_if_missing(
         "cases",
         "assignedTo",
@@ -492,7 +579,6 @@ async def ensure_case_schema() -> None:
         "recordRevision",
         "metaData",
         "ownedBy",
-        "createdAt",
         "createdBy",
         "updatedAt",
         "updatedBy",
@@ -503,11 +589,22 @@ async def ensure_case_schema() -> None:
     ):
         await _drop_column_if_present("cases", column_name)
 
+    await _backfill_case_created_at()
+    try:
+        await execute_mutation("ALTER TABLE cases MODIFY COLUMN createdAt DATETIME NOT NULL")
+    except Exception as exc:
+        logger.warning("Could not require cases.createdAt: %s", exc)
+
+    await execute_mutation("UPDATE cases SET priority = 'Low' WHERE priority = 'Very Low'")
+    await execute_mutation("UPDATE cases SET priority = 'High' WHERE priority = 'Very High'")
+
     await _normalize_foreign_key_values()
 
+    await _add_index_if_missing("cases", "idx_cases_createdAt", "CREATE INDEX idx_cases_createdAt ON cases (createdAt)")
     await _add_index_if_missing("cases", "idx_cases_project", "CREATE INDEX idx_cases_project ON cases (project)")
     await _add_index_if_missing("cases", "idx_cases_seOwner", "CREATE INDEX idx_cases_seOwner ON cases (seOwner)")
     await _add_index_if_missing("cases", "idx_cases_assignedTo", "CREATE INDEX idx_cases_assignedTo ON cases (assignedTo)")
+    await _drop_column_if_present("cases", "closeDate")
     await _drop_index_if_present("mantis", "uniq_mantis_mantisId")
     await _drop_index_if_present("knocks", "uniq_knocks_knockId")
     await _add_index_if_missing("mantis", "idx_mantis_mantisId", "CREATE INDEX idx_mantis_mantisId ON mantis (mantisId)")
@@ -1168,15 +1265,17 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
 
     record_id = await generate_record_id("REC", "cases")
     payload = _case_payload(data)
+    created_at = current_timestamp()
 
     sql = f"""
         INSERT INTO cases (
-            recordId, project, category, escalationType, escalationNote,
-            closeDate, description, seOwner, assignedTo, priority, status, history
+            recordId, createdAt, project, category, escalationType, escalationNote,
+            description, seOwner, assignedTo, priority, status, history
         ) VALUES ({', '.join(['%s'] * (len(CASE_FIELDS) + 1))})
     """
     history = [build_history_entry("Created", "Case created", user=actor["displayName"])]
-    params = [record_id, *[payload[field] for field in CASE_DATA_FIELDS], json.dumps(history)]
+    history[0]["timestamp"] = created_at
+    params = [record_id, created_at, *[payload[field] for field in CASE_DATA_FIELDS], json.dumps(history)]
 
     await execute_mutation(sql, params)
     await _replace_case_links_from_data(record_id, data, actor["displayName"], replace_all=True)

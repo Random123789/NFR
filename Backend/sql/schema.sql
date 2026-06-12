@@ -103,11 +103,11 @@ CREATE INDEX idx_knocks_knockId ON knocks (knockId);
 
 CREATE TABLE IF NOT EXISTS cases (
   recordId VARCHAR(32) PRIMARY KEY,
+  createdAt DATETIME NOT NULL,
   project VARCHAR(32),
   category VARCHAR(120),
   escalationType VARCHAR(120),
   escalationNote TEXT,
-  closeDate VARCHAR(32),
   description TEXT NOT NULL,
   seOwner VARCHAR(120),
   assignedTo VARCHAR(120),
@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS cases (
   history JSON
 );
 
+CREATE INDEX idx_cases_createdAt ON cases (createdAt);
 CREATE INDEX idx_cases_project ON cases (project);
 CREATE INDEX idx_cases_seOwner ON cases (seOwner);
 CREATE INDEX idx_cases_assignedTo ON cases (assignedTo);

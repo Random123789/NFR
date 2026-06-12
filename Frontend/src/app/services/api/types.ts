@@ -176,13 +176,13 @@ export interface KnockRecord extends BaseRecord {
 
 export interface CaseRecord {
   recordId: string;
+  createdAt: string;
   accountIds: string[];
   project: string | null;
   category: CaseCategory | null;
   escalationType: CaseEscalationType | null;
   escalationNote: string | null;
   productIds: string[];
-  closeDate: string | null;
   description: string;
   seOwner: string | null;
   assignedTo: string | null;
@@ -196,7 +196,7 @@ export interface CaseRecord {
 
 export type CaseCategory = 'Pre-Sales' | 'Post-Sales' | 'Bug' | 'NFR' | 'Others';
 export type CaseEscalationType = 'Escalation' | 'Monitoring' | 'Re-Escalation' | 'Drop' | 'Others';
-export type CasePriority = 'Very Low' | 'Low' | 'Medium' | 'High' | 'Very High';
+export type CasePriority = 'Low' | 'Medium' | 'High';
 export type CaseStatus = 'New' | 'Acknowledged' | 'Escalated' | 'Monitoring' | 'Closed-Resolved' | 'Closed-Dead';
 
 export type CaseLinkEntityType = 'account' | 'product' | 'project' | 'mantis' | 'knock';

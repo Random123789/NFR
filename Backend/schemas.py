@@ -95,18 +95,18 @@ class KnockRecord(BaseRecord):
 
 CaseCategory = Literal["Pre-Sales", "Post-Sales", "Bug", "NFR", "Others"]
 CaseEscalationType = Literal["Escalation", "Monitoring", "Re-Escalation", "Drop", "Others"]
-CasePriority = Literal["Very Low", "Low", "Medium", "High", "Very High"]
+CasePriority = Literal["Low", "Medium", "High"]
 CaseStatus = Literal["New", "Acknowledged", "Escalated", "Monitoring", "Closed-Resolved", "Closed-Dead"]
 
 
 class CaseRecord(BaseModel):
     """Case/opportunity entity."""
     recordId: str
+    createdAt: str
     project: Optional[str] = None
     category: Optional[CaseCategory] = None
     escalationType: Optional[CaseEscalationType] = None
     escalationNote: Optional[str] = None
-    closeDate: Optional[str] = None
     description: str
     seOwner: Optional[str] = None
     assignedTo: Optional[str] = None
@@ -259,7 +259,6 @@ class CaseCreate(BaseModel):
     escalationType: Optional[CaseEscalationType] = None
     escalationNote: Optional[str] = None
     productIds: Optional[List[str]] = None
-    closeDate: Optional[str] = None
     description: str
     seOwner: Optional[str] = None
     assignedTo: Optional[str] = None

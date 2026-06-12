@@ -167,6 +167,8 @@ function parseHistoryTimestamp(value: string | null | undefined) {
 }
 
 function getCaseCreatedTimestamp(caseItem: CaseRecord) {
+  if (caseItem.createdAt?.trim()) return caseItem.createdAt;
+
   const history = caseItem.history ?? [];
   const createdEntry = history.find((entry) => entry.action?.trim().toLowerCase() === "created");
   if (createdEntry?.timestamp) return createdEntry.timestamp;
