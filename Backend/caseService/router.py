@@ -1,6 +1,6 @@
 """Cases endpoint router."""
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel
 from datetime import datetime
 from typing import List, Optional
@@ -1286,7 +1286,7 @@ async def create_case(data: CaseCreate, request: Request) -> CaseRecord:
 
 
 @router.put("/{recordId}", response_model=CaseRecord)
-async def update_case(recordId: str, data: CaseCreate, request: Request) -> CaseRecord:
+async def update_case(recordId: str, data: CaseCreate, request: Request, background_tasks: BackgroundTasks) -> CaseRecord:
     """Update a case."""
 
     actor = await require_auth_user(request)
@@ -1321,7 +1321,7 @@ async def update_case(recordId: str, data: CaseCreate, request: Request) -> Case
     result = await get_case_or_404(recordId)
     enriched_result = await enrich_case_record(result)
     if update_entries:
-        await send_case_update_notification(enriched_result, update_entries, actor["displayName"])
+        background_tasks.add_task(send_case_update_notification, enriched_result, update_entries, actor["displayName"])
     return enriched_result
 
 

@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 import json
+import uuid
 from database import deserialize_history
 
 DATETIME_MINUTE_FORMAT = "%Y-%m-%d %H:%M"
@@ -71,6 +72,7 @@ def build_history_entry(
     action: str,
     changes: str,
     user: str = "System",
+    batch_id: Optional[str] = None,
     field: Optional[str] = None,
     previous_value: Any = None,
     new_value: Any = None,
@@ -82,6 +84,9 @@ def build_history_entry(
         "action": action,
         "changes": changes,
     }
+
+    if batch_id is not None:
+        entry["batchId"] = batch_id
 
     if field is not None:
         entry["field"] = field
@@ -119,6 +124,7 @@ def build_update_history_entries(
     labels = field_labels or {}
     ignored = set(ignored_fields or [])
     entries: List[Dict[str, Any]] = []
+    batch_id = f"save-{uuid.uuid4().hex}"
 
     for field, new_value in after.items():
         if field in ignored:
@@ -137,6 +143,7 @@ def build_update_history_entries(
                 action="Updated",
                 changes=f"{label} changed from {previous_text} to {new_text}",
                 user=user,
+                batch_id=batch_id,
                 field=label,
                 previous_value=previous_text,
                 new_value=new_text,

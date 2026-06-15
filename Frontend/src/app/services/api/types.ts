@@ -100,6 +100,7 @@ export interface HistoryEntry {
   user: string;
   action: string;
   changes: string;
+  batchId?: string | null;
   field?: string;
   previousValue?: string | null;
   newValue?: string | null;

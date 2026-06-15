@@ -10,6 +10,7 @@ class HistoryEntry(BaseModel):
     user: str
     action: str
     changes: str
+    batchId: Optional[str] = None
     field: Optional[str] = None
     previousValue: Optional[str] = None
     newValue: Optional[str] = None

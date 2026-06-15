@@ -15,11 +15,20 @@ import {
   type CaseLinkEntityType,
   type CaseLinksResponse,
   type CaseRecord,
+  type HistoryEntry,
 } from "../data/apiClient";
 import { CreateEntityDialog } from "../components/CreateEntityDialog";
 import { DetailTabs } from "../components/DetailTabs";
 import { LinkedEntityList } from "../components/LinkedEntityCard";
 import { RecordHistoryTimeline, formatHistoryEntryText } from "../components/RecordHistoryTimeline";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import { MultiRecordDropdown, SearchableSelect, type SelectOption } from "../components/SearchableSelect";
 import { TypeaheadTextarea } from "../components/TypeaheadInput";
 import { TableFieldSelector } from "../components/TableFieldSelector";
@@ -48,6 +57,7 @@ import {
 } from "../navigation/detailNavigation";
 import { exportRowsToCsv } from "../utils/csvExport";
 import { formatTimestampMinute } from "../utils/dateTime";
+import { formatQuotedReplyChanges } from "../utils/historyEntries";
 import { fieldSuggestions } from "../utils/typeaheadOptions";
 import { getRecordActivityTimestamp } from "../utils/recordActivity";
 import { unreadRowClassName } from "../utils/unreadRows";
@@ -67,6 +77,15 @@ type LinkDrafts = {
 };
 
 type LinkKey = keyof LinkDrafts;
+
+type CaseUpdateCommentField = "status" | "assignedTo";
+
+type PendingUpdateComment = {
+  recordId: string;
+  targetEntry: HistoryEntry;
+  targetLabel: string;
+  isSavingTarget: boolean;
+};
 
 type CaseColumnKey =
   | "account"
@@ -92,6 +111,11 @@ type CaseTableColumn = {
   sortKey: CaseColumnKey;
   searchKey?: CaseSearchKey;
 };
+
+const COMMENT_PROMPT_FIELDS: Array<{ key: CaseUpdateCommentField; label: string }> = [
+  { key: "status", label: "Escalation Status" },
+  { key: "assignedTo", label: "Assigned To" },
+];
 
 type CaseFilterMatchMode = "all" | "any";
 
@@ -158,6 +182,71 @@ function AssignedToBadge({ value }: { value: string | null | undefined }) {
 
 function textValue(value: string | null | undefined) {
   return value || "-";
+}
+
+function normalizeUpdateCommentValue(value: string | null | undefined) {
+  return (value ?? "").trim();
+}
+
+function getChangedUpdateCommentFields(before: CaseRecord | null, after: CaseRecord) {
+  if (!before) return [];
+
+  return COMMENT_PROMPT_FIELDS.filter(({ key }) =>
+    normalizeUpdateCommentValue(before[key]) !== normalizeUpdateCommentValue(after[key])
+  );
+}
+
+function isUpdateCommentFieldEntry(entry: HistoryEntry, fields: Array<{ key: CaseUpdateCommentField; label: string }>) {
+  if ((entry.action ?? "").trim().toLowerCase() !== "updated") return false;
+
+  const normalizedField = (entry.field ?? "").trim().toLowerCase();
+  const normalizedChanges = (entry.changes ?? "").trim().toLowerCase();
+
+  return fields.some(({ key, label }) => {
+    const normalizedLabel = label.toLowerCase();
+    if (normalizedField === normalizedLabel) return true;
+    if (key === "status") return normalizedChanges.includes("escalation status changed");
+    return normalizedChanges.includes("assigned to changed");
+  });
+}
+
+function findUpdateCommentTarget(
+  history: HistoryEntry[],
+  fields: Array<{ key: CaseUpdateCommentField; label: string }>,
+) {
+  return [...history].reverse().find((entry) => isUpdateCommentFieldEntry(entry, fields)) ?? null;
+}
+
+function formatUpdateCommentHistoryValue(value: string | null | undefined) {
+  const text = (value ?? "").trim();
+  return text || "-";
+}
+
+function getPreferredUpdateCommentField(fields: Array<{ key: CaseUpdateCommentField; label: string }>) {
+  return fields.find((field) => field.key === "status") ?? fields[0] ?? null;
+}
+
+function buildOptimisticUpdateCommentTarget(
+  before: CaseRecord,
+  after: CaseRecord,
+  fields: Array<{ key: CaseUpdateCommentField; label: string }>,
+  userName?: string | null,
+): HistoryEntry | null {
+  const field = getPreferredUpdateCommentField(fields);
+  if (!field) return null;
+
+  const previousValue = formatUpdateCommentHistoryValue(before[field.key]);
+  const newValue = formatUpdateCommentHistoryValue(after[field.key]);
+
+  return {
+    timestamp: formatTimestampMinute(Date.now()),
+    user: userName || "Current User",
+    action: "Updated",
+    field: field.label,
+    previousValue,
+    newValue,
+    changes: `${field.label} changed from ${previousValue} to ${newValue}`,
+  };
 }
 
 function parseHistoryTimestamp(value: string | null | undefined) {
@@ -286,6 +375,10 @@ export function Cases() {
     userName: user?.displayName,
     onError: (message) => showToast(message, "error"),
   });
+  const [pendingUpdateComment, setPendingUpdateComment] = useState<PendingUpdateComment | null>(null);
+  const [updateCommentDraft, setUpdateCommentDraft] = useState("");
+  const [isAddingUpdateComment, setIsAddingUpdateComment] = useState(false);
+  const [isSavingCase, setIsSavingCase] = useState(false);
   const selectedCaseActivityAt = getRecordActivityTimestamp(selectedCase);
   const caseDescriptionSuggestions = useMemo(
     () => fieldSuggestions(cases, "description", selectedCase?.recordId),
@@ -622,7 +715,26 @@ export function Cases() {
   };
 
   const handleSave = async () => {
-    if (!editedCase) return;
+    if (!editedCase || isSavingCase) return;
+
+    const caseBeforeSave = selectedCase ?? getCaseById(editedCase.recordId) ?? null;
+    const changedCommentFields = getChangedUpdateCommentFields(caseBeforeSave, editedCase);
+    const optimisticUpdateCommentTarget = caseBeforeSave
+      ? buildOptimisticUpdateCommentTarget(caseBeforeSave, editedCase, changedCommentFields, user?.displayName)
+      : null;
+    const openedOptimisticPrompt = Boolean(optimisticUpdateCommentTarget);
+
+    if (optimisticUpdateCommentTarget) {
+      setPendingUpdateComment({
+        recordId: editedCase.recordId,
+        targetEntry: optimisticUpdateCommentTarget,
+        targetLabel: optimisticUpdateCommentTarget.field || changedCommentFields.map((field) => field.label).join(" / "),
+        isSavingTarget: true,
+      });
+      setUpdateCommentDraft("");
+    }
+
+    setIsSavingCase(true);
 
     try {
       const nextMantisIds = editedMantisIds.filter(Boolean);
@@ -647,12 +759,73 @@ export function Cases() {
       upsertCase(saved);
       applySavedRecord(saved);
 
-      await refreshCaseLinks(saved.recordId);
-      await refreshSelectedCase(saved.recordId);
+      const updateCommentTarget = changedCommentFields.length > 0
+        ? findUpdateCommentTarget(saved.history ?? [], changedCommentFields)
+        : null;
+
+      if (updateCommentTarget) {
+        setPendingUpdateComment((currentPrompt) => {
+          if (!currentPrompt && openedOptimisticPrompt) return null;
+
+          return {
+            recordId: saved.recordId,
+            targetEntry: updateCommentTarget,
+            targetLabel: updateCommentTarget.field || changedCommentFields.map((field) => field.label).join(" / "),
+            isSavingTarget: false,
+          };
+        });
+      } else if (openedOptimisticPrompt) {
+        setPendingUpdateComment(null);
+      }
+
+      void refreshCaseLinks(saved.recordId).catch((error) => {
+        console.error("Failed to refresh case links after save:", error);
+      });
       showToast("Changes saved successfully!", "success");
     } catch (error) {
       console.error("Failed to save case:", error);
+      if (openedOptimisticPrompt) {
+        setPendingUpdateComment(null);
+        setUpdateCommentDraft("");
+      }
       showToast("Failed to save changes. Please try again.", "error");
+    } finally {
+      setIsSavingCase(false);
+    }
+  };
+
+  const closeUpdateCommentPrompt = () => {
+    if (isAddingUpdateComment) return;
+    setPendingUpdateComment(null);
+    setUpdateCommentDraft("");
+  };
+
+  const handleAddUpdateComment = async () => {
+    const comment = updateCommentDraft.trim();
+    if (!pendingUpdateComment || pendingUpdateComment.isSavingTarget || !comment || isAddingUpdateComment) return;
+
+    setIsAddingUpdateComment(true);
+
+    try {
+      const savedRecord = await addCaseHistory(pendingUpdateComment.recordId, {
+        action: "Comment",
+        changes: formatQuotedReplyChanges(pendingUpdateComment.targetEntry, comment),
+        user: user?.displayName || "Current User",
+      });
+
+      upsertCase(savedRecord);
+      setSelectedCase(savedRecord);
+      if (editedCase?.recordId === savedRecord.recordId) {
+        setEditedCase(savedRecord);
+      }
+      setPendingUpdateComment(null);
+      setUpdateCommentDraft("");
+      showToast("Comment added.", "success");
+    } catch (error) {
+      console.error("Failed to add update comment:", error);
+      showToast("Failed to add comment. Please try again.", "error");
+    } finally {
+      setIsAddingUpdateComment(false);
     }
   };
 
@@ -684,6 +857,7 @@ export function Cases() {
     if (editedCase && editedCase.recordId === refreshed.recordId) {
       setEditedCase(refreshed);
     }
+    return refreshed;
   };
 
   const refreshCaseLinks = async (recordId: string) => {
@@ -923,6 +1097,63 @@ export function Cases() {
 
   return (
     <div className="space-y-6">
+      <Dialog
+        open={Boolean(pendingUpdateComment)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) closeUpdateCommentPrompt();
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Add update comment</DialogTitle>
+            <DialogDescription>
+              {pendingUpdateComment?.isSavingTarget
+                ? "Saving the update before this comment can be attached."
+                : `Add optional context for this ${pendingUpdateComment?.targetLabel || "case"} update.`}
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingUpdateComment && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-gray-200 border-l-4 border-l-[#6264A7] bg-gray-50 px-3 py-2">
+                <p className="text-xs font-medium text-gray-500">
+                  Replying to {pendingUpdateComment.targetEntry.user} - {formatTimestampMinute(pendingUpdateComment.targetEntry.timestamp)}
+                </p>
+                <p className="mt-1 line-clamp-3 break-words text-sm text-gray-700 [overflow-wrap:anywhere]">
+                  {formatHistoryEntryText(pendingUpdateComment.targetEntry)}
+                </p>
+              </div>
+              <textarea
+                value={updateCommentDraft}
+                onChange={(event) => setUpdateCommentDraft(event.target.value)}
+                placeholder="Add a comment..."
+                rows={4}
+                className="min-w-0 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+              />
+            </div>
+          )}
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={closeUpdateCommentPrompt}
+              disabled={isAddingUpdateComment}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Skip
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleAddUpdateComment()}
+              disabled={isAddingUpdateComment || pendingUpdateComment?.isSavingTarget || !updateCommentDraft.trim()}
+              className="rounded-lg bg-[#E31937] px-4 py-2 text-white transition-colors hover:bg-[#c41230] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isAddingUpdateComment ? "Adding..." : pendingUpdateComment?.isSavingTarget ? "Saving..." : "Add Comment"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex items-center justify-between">
         <div data-guide-id="cases-intro">
           <h1 className="text-2xl font-bold text-gray-900">Cases</h1>
@@ -1116,10 +1347,11 @@ export function Cases() {
                     </button>
                     <button
                       onClick={handleSave}
-                      className="flex items-center gap-2 rounded-lg bg-[#E31937] px-4 py-2 text-white transition-colors hover:bg-[#c41230]"
+                      disabled={isSavingCase}
+                      className="flex items-center gap-2 rounded-lg bg-[#E31937] px-4 py-2 text-white transition-colors hover:bg-[#c41230] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Save className="h-4 w-4" />
-                      Save
+                      {isSavingCase ? "Saving..." : "Save"}
                     </button>
                   </>
                 )}

@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { formatHistoryEntryText } from "../components/RecordHistoryTimeline";
 import type { HistoryEntry } from "../data/apiClient";
-import { formatTimestampMinute } from "../utils/dateTime";
+import { formatQuotedReplyChanges } from "../utils/historyEntries";
 
 type RecordWithHistory = {
   recordId: string;
@@ -36,16 +35,12 @@ export function useRecordComments<T extends RecordWithHistory>({
     const comment = newComment.trim();
     if (!selectedRecord || !comment || isAddingComment) return;
 
-    const quoteText = selectedQuote
-      ? `[Quoted reply to ${selectedQuote.user} (${formatTimestampMinute(selectedQuote.timestamp)})]\n${formatHistoryEntryText(selectedQuote)}`
-      : null;
-
     setIsAddingComment(true);
 
     try {
       const savedRecord = await addHistory(selectedRecord.recordId, {
         action: "Comment",
-        changes: quoteText ? `${quoteText}\n\n${comment}` : comment,
+        changes: selectedQuote ? formatQuotedReplyChanges(selectedQuote, comment) : comment,
         user: userName || "Current User",
       });
 

@@ -10,6 +10,18 @@ export type ParsedQuotedReply = {
   replyBody: string;
 };
 
+function normalizeReplyMatchText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function buildReplyMatchKey(user: string, timestampLabel: string, body: string) {
+  return [
+    normalizeReplyMatchText(user),
+    normalizeReplyMatchText(timestampLabel),
+    normalizeReplyMatchText(body),
+  ].join("|");
+}
+
 function formatHistoryValue(value?: unknown) {
   if (value === null || value === undefined) return "-";
   if (typeof value === "string") return value.trim() === "" ? "-" : value;
@@ -77,4 +89,23 @@ export function parseQuotedReply(changes?: unknown): ParsedQuotedReply | null {
     quotedBody: rest.slice(0, separatorIndex).trim(),
     replyBody: rest.slice(separatorIndex + 2).trim(),
   };
+}
+
+export function formatQuotedReplyChanges(entry: HistoryEntry, replyBody: string) {
+  return [
+    `[Quoted reply to ${entry.user} (${formatTimestampMinute(entry.timestamp)})]`,
+    formatHistoryEntryText(entry),
+    "",
+    replyBody.trim(),
+  ].join("\n");
+}
+
+export function getHistoryEntryReplyKey(entry: HistoryEntry) {
+  return buildReplyMatchKey(entry.user, formatTimestampMinute(entry.timestamp), formatHistoryEntryText(entry));
+}
+
+export function getQuotedReplyTargetKey(entry: HistoryEntry) {
+  const quotedReply = parseQuotedReply(entry.changes);
+  if (!quotedReply) return null;
+  return buildReplyMatchKey(quotedReply.quotedFrom, quotedReply.quotedAt, quotedReply.quotedBody);
 }

@@ -5,7 +5,9 @@ import { RecordHistoryGraphDialog } from "./RecordHistoryGraphDialog";
 import { formatTimestampMinute } from "../utils/dateTime";
 import {
   formatHistoryEntryText,
+  getHistoryEntryReplyKey,
   getHistoryActionBadgeClass,
+  getQuotedReplyTargetKey,
   parseQuotedReply,
   sortHistoryEntries,
 } from "../utils/historyEntries";
@@ -19,7 +21,117 @@ interface RecordHistoryTimelineProps {
   onQuote?: (entry: HistoryEntry) => void;
 }
 
+type HistoryTimelineItem =
+  | { kind: "entry"; entry: HistoryEntry }
+  | { kind: "group"; id: string; entries: HistoryEntry[] };
+
 const wrappingTextClass = "min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
+
+function isGroupableUpdateEntry(entry: HistoryEntry) {
+  return (
+    entry.action === "Updated" &&
+    !parseQuotedReply(entry.changes) &&
+    Boolean(entry.field && (entry.previousValue !== undefined || entry.newValue !== undefined))
+  );
+}
+
+function getUpdateGroupKey(entry: HistoryEntry) {
+  if (entry.batchId) return `batch:${entry.batchId}`;
+
+  return [
+    formatTimestampMinute(entry.timestamp),
+    entry.user || "Unknown user",
+    entry.action || "Updated",
+  ].join("|");
+}
+
+function groupTimelineEntries(entries: HistoryEntry[]): HistoryTimelineItem[] {
+  const items: HistoryTimelineItem[] = [];
+  let index = 0;
+
+  while (index < entries.length) {
+    const entry = entries[index];
+
+    if (!isGroupableUpdateEntry(entry)) {
+      items.push({ kind: "entry", entry });
+      index += 1;
+      continue;
+    }
+
+    const groupKey = getUpdateGroupKey(entry);
+    const groupEntries: HistoryEntry[] = [];
+
+    while (
+      index < entries.length &&
+      isGroupableUpdateEntry(entries[index]) &&
+      getUpdateGroupKey(entries[index]) === groupKey
+    ) {
+      groupEntries.push(entries[index]);
+      index += 1;
+    }
+
+    if (groupEntries.length === 1) {
+      items.push({ kind: "entry", entry: groupEntries[0] });
+      continue;
+    }
+
+    items.push({
+      kind: "group",
+      id: `${groupKey}|${items.length}`,
+      entries: groupEntries,
+    });
+  }
+
+  return placeQuotedRepliesAfterTargets(items);
+}
+
+function getTimelineItemTargetKeys(item: HistoryTimelineItem) {
+  if (item.kind === "group") return item.entries.map(getHistoryEntryReplyKey);
+  return [getHistoryEntryReplyKey(item.entry)];
+}
+
+function getTimelineItemQuotedTargetKey(item: HistoryTimelineItem) {
+  return item.kind === "entry" ? getQuotedReplyTargetKey(item.entry) : null;
+}
+
+function placeQuotedRepliesAfterTargets(items: HistoryTimelineItem[]) {
+  const repliesByTargetKey = new Map<string, HistoryTimelineItem[]>();
+  const replyItems = new Set<HistoryTimelineItem>();
+
+  for (const item of items) {
+    const targetKey = getTimelineItemQuotedTargetKey(item);
+    if (!targetKey) continue;
+
+    const replies = repliesByTargetKey.get(targetKey) ?? [];
+    replies.push(item);
+    repliesByTargetKey.set(targetKey, replies);
+    replyItems.add(item);
+  }
+
+  const placedReplies = new Set<HistoryTimelineItem>();
+  const orderedItems: HistoryTimelineItem[] = [];
+
+  for (const item of items) {
+    if (replyItems.has(item)) continue;
+
+    orderedItems.push(item);
+
+    for (const targetKey of getTimelineItemTargetKeys(item)) {
+      for (const reply of repliesByTargetKey.get(targetKey) ?? []) {
+        if (placedReplies.has(reply)) continue;
+        orderedItems.push(reply);
+        placedReplies.add(reply);
+      }
+    }
+  }
+
+  for (const item of items) {
+    if (!replyItems.has(item) || placedReplies.has(item)) continue;
+    orderedItems.push(item);
+  }
+
+  return orderedItems;
+}
 
 export function RecordHistoryTimeline({
   history,
@@ -31,13 +143,14 @@ export function RecordHistoryTimeline({
   const [isGraphOpen, setIsGraphOpen] = useState(false);
   const normalizedHistory = Array.isArray(history) ? history : [];
   const sortedHistory = useMemo(() => sortHistoryEntries(normalizedHistory, "desc"), [normalizedHistory]);
+  const timelineItems = useMemo(() => groupTimelineEntries(sortedHistory), [sortedHistory]);
 
-  if (sortedHistory.length === 0) {
+  if (timelineItems.length === 0) {
     return <p className="text-sm text-gray-500 italic">{emptyMessage}</p>;
   }
 
-  const hasMore = sortedHistory.length > initialVisibleCount;
-  const visibleHistory = isExpanded ? sortedHistory : sortedHistory.slice(0, initialVisibleCount);
+  const hasMore = timelineItems.length > initialVisibleCount;
+  const visibleItems = isExpanded ? timelineItems : timelineItems.slice(0, initialVisibleCount);
 
   return (
     <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
@@ -66,13 +179,17 @@ export function RecordHistoryTimeline({
             onClick={() => setIsExpanded((prev) => !prev)}
             className="text-sm font-medium text-[#E31937] hover:underline"
           >
-            {isExpanded ? "Show less" : `Show more (${sortedHistory.length - initialVisibleCount} older)`}
+            {isExpanded ? "Show less" : `Show more (${timelineItems.length - initialVisibleCount} older)`}
           </button>
         </div>
       )}
 
-      {visibleHistory.map((entry, index) => (
-        <HistoryEntryButton key={`${entry.timestamp}-${index}`} entry={entry} onQuote={onQuote} />
+      {visibleItems.map((item, index) => (
+        item.kind === "group" ? (
+          <HistoryEntryGroupButton key={item.id} entries={item.entries} onQuote={onQuote} />
+        ) : (
+          <HistoryEntryButton key={`${item.entry.timestamp}-${index}`} entry={item.entry} onQuote={onQuote} />
+        )
       ))}
     </div>
   );
@@ -103,6 +220,50 @@ function HistoryEntryButton({ entry, onQuote }: { entry: HistoryEntry; onQuote?:
         {quotedReply ? <QuotedReplyContent quotedReply={quotedReply} /> : (
           <div className={`text-sm text-gray-700 ${wrappingTextClass}`}>{formatHistoryEntryText(entry)}</div>
         )}
+      </div>
+    </button>
+  );
+}
+
+function HistoryEntryGroupButton({
+  entries,
+  onQuote,
+}: {
+  entries: HistoryEntry[];
+  onQuote?: (entry: HistoryEntry) => void;
+}) {
+  const firstEntry = entries[0];
+  const changeCountLabel = `${entries.length} changes`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onQuote?.(firstEntry)}
+      className={`w-full max-w-full min-w-0 text-left flex flex-col sm:flex-row gap-3 sm:gap-4 p-4 bg-gray-50 rounded-lg overflow-hidden ${
+        onQuote ? "hover:bg-gray-100 transition-colors" : ""
+      }`}
+    >
+      <div className="w-full flex-shrink-0 sm:w-40">
+        <div className={`text-sm text-gray-500 ${wrappingTextClass}`}>{formatTimestampMinute(firstEntry.timestamp)}</div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <span className={`text-sm font-medium text-gray-900 ${wrappingTextClass}`}>{firstEntry.user}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full ${getHistoryActionBadgeClass(firstEntry.action)}`}>
+            {firstEntry.action}
+          </span>
+          <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700">
+            {changeCountLabel}
+          </span>
+        </div>
+
+        <div className="space-y-3">
+          {entries.map((entry, entryIndex) => (
+            <div key={`${entry.timestamp}-${entry.field}-${entryIndex}`} className={`text-sm leading-5 text-gray-700 ${wrappingTextClass}`}>
+              {formatHistoryEntryText(entry)}
+            </div>
+          ))}
+        </div>
       </div>
     </button>
   );
