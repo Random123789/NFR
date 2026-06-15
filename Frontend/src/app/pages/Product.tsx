@@ -103,7 +103,7 @@ export function Product() {
     entityLabel: "product",
     showToast,
   });
-  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment, handleAddReply } = useRecordComments({
     selectedRecord: selectedProduct,
     setSelectedRecord: setSelectedProduct,
     addHistory: addProductHistory,
@@ -660,7 +660,12 @@ export function Product() {
                     </button>
                   </div>
                 </div>
-                <RecordHistoryTimeline history={selectedProduct.history} onQuote={setSelectedQuote} />
+                <RecordHistoryTimeline
+                  history={selectedProduct.history}
+                  onQuote={setSelectedQuote}
+                  onReply={handleAddReply}
+                  isReplying={isAddingComment}
+                />
               </div>
             </div>
           </div>

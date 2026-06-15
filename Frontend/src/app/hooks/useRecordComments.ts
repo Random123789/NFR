@@ -31,8 +31,7 @@ export function useRecordComments<T extends RecordWithHistory>({
   const [selectedQuote, setSelectedQuote] = useState<HistoryEntry | null>(null);
   const [isAddingComment, setIsAddingComment] = useState(false);
 
-  const handleAddComment = async () => {
-    const comment = newComment.trim();
+  const addComment = async (comment: string, quote: HistoryEntry | null = selectedQuote, shouldThrow = false) => {
     if (!selectedRecord || !comment || isAddingComment) return;
 
     setIsAddingComment(true);
@@ -40,7 +39,7 @@ export function useRecordComments<T extends RecordWithHistory>({
     try {
       const savedRecord = await addHistory(selectedRecord.recordId, {
         action: "Comment",
-        changes: selectedQuote ? formatQuotedReplyChanges(selectedQuote, comment) : comment,
+        changes: quote ? formatQuotedReplyChanges(quote, comment) : comment,
         user: userName || "Current User",
       });
 
@@ -48,12 +47,28 @@ export function useRecordComments<T extends RecordWithHistory>({
       upsertRecord(savedRecord);
       setNewComment("");
       setSelectedQuote(null);
+      return savedRecord;
     } catch (error) {
       console.error("Failed to add comment:", error);
       onError?.("Failed to add comment. Please try again.");
+      if (shouldThrow) throw error;
     } finally {
       setIsAddingComment(false);
     }
+  };
+
+  const handleAddComment = async () => {
+    const comment = newComment.trim();
+    if (!comment) return;
+
+    await addComment(comment);
+  };
+
+  const handleAddReply = async (quote: HistoryEntry, comment: string) => {
+    const trimmedComment = comment.trim();
+    if (!trimmedComment) return;
+
+    await addComment(trimmedComment, quote, true);
   };
 
   return {
@@ -63,5 +78,6 @@ export function useRecordComments<T extends RecordWithHistory>({
     setSelectedQuote,
     isAddingComment,
     handleAddComment,
+    handleAddReply,
   };
 }

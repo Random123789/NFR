@@ -367,7 +367,7 @@ export function Cases() {
     getRecordById: getCaseById,
     resolveRouteRecordId: (routeParam) => resolveDetailRouteRecordId("case", routeParam, cases),
   });
-  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment, handleAddReply } = useRecordComments({
     selectedRecord: selectedCase,
     setSelectedRecord: setSelectedCase,
     addHistory: addCaseHistory,
@@ -2076,7 +2076,12 @@ export function Cases() {
                   </div>
                 </div>
 
-                <RecordHistoryTimeline history={selectedCase.history} onQuote={setSelectedQuote} />
+                <RecordHistoryTimeline
+                  history={selectedCase.history}
+                  onQuote={setSelectedQuote}
+                  onReply={handleAddReply}
+                  isReplying={isAddingComment}
+                />
               </div>
             </div>
           </div>

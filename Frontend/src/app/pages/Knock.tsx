@@ -106,7 +106,7 @@ export function Knock() {
     entityLabel: "knock",
     showToast,
   });
-  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment, handleAddReply } = useRecordComments({
     selectedRecord: selectedKnock,
     setSelectedRecord: setSelectedKnock,
     addHistory: addKnockHistory,
@@ -680,7 +680,12 @@ export function Knock() {
                     </button>
                   </div>
                 </div>
-                <RecordHistoryTimeline history={selectedKnock.history} onQuote={setSelectedQuote} />
+                <RecordHistoryTimeline
+                  history={selectedKnock.history}
+                  onQuote={setSelectedQuote}
+                  onReply={handleAddReply}
+                  isReplying={isAddingComment}
+                />
               </div>
             </div>
           </div>

@@ -5,9 +5,8 @@ import { RecordHistoryGraphDialog } from "./RecordHistoryGraphDialog";
 import { formatTimestampMinute } from "../utils/dateTime";
 import {
   formatHistoryEntryText,
-  getHistoryEntryReplyKey,
+  groupAdjacentHistoryUpdateEntries,
   getHistoryActionBadgeClass,
-  getQuotedReplyTargetKey,
   parseQuotedReply,
   sortHistoryEntries,
 } from "../utils/historyEntries";
@@ -19,6 +18,8 @@ interface RecordHistoryTimelineProps {
   emptyMessage?: string;
   initialVisibleCount?: number;
   onQuote?: (entry: HistoryEntry) => void;
+  onReply?: (entry: HistoryEntry, comment: string) => Promise<void>;
+  isReplying?: boolean;
 }
 
 type HistoryTimelineItem =
@@ -27,110 +28,20 @@ type HistoryTimelineItem =
 
 const wrappingTextClass = "min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
 
-function isGroupableUpdateEntry(entry: HistoryEntry) {
-  return (
-    entry.action === "Updated" &&
-    !parseQuotedReply(entry.changes) &&
-    Boolean(entry.field && (entry.previousValue !== undefined || entry.newValue !== undefined))
-  );
-}
-
-function getUpdateGroupKey(entry: HistoryEntry) {
-  if (entry.batchId) return `batch:${entry.batchId}`;
-
-  return [
-    formatTimestampMinute(entry.timestamp),
-    entry.user || "Unknown user",
-    entry.action || "Updated",
-  ].join("|");
-}
-
 function groupTimelineEntries(entries: HistoryEntry[]): HistoryTimelineItem[] {
-  const items: HistoryTimelineItem[] = [];
-  let index = 0;
+  const items: HistoryTimelineItem[] = groupAdjacentHistoryUpdateEntries(
+    entries.map((entry, index) => ({ entry, index })),
+  ).map((group, groupIndex) => {
+    if (group.entries.length === 1) return { kind: "entry", entry: group.entries[0] };
 
-  while (index < entries.length) {
-    const entry = entries[index];
-
-    if (!isGroupableUpdateEntry(entry)) {
-      items.push({ kind: "entry", entry });
-      index += 1;
-      continue;
-    }
-
-    const groupKey = getUpdateGroupKey(entry);
-    const groupEntries: HistoryEntry[] = [];
-
-    while (
-      index < entries.length &&
-      isGroupableUpdateEntry(entries[index]) &&
-      getUpdateGroupKey(entries[index]) === groupKey
-    ) {
-      groupEntries.push(entries[index]);
-      index += 1;
-    }
-
-    if (groupEntries.length === 1) {
-      items.push({ kind: "entry", entry: groupEntries[0] });
-      continue;
-    }
-
-    items.push({
+    return {
       kind: "group",
-      id: `${groupKey}|${items.length}`,
-      entries: groupEntries,
-    });
-  }
+      id: `${group.key}|${group.indices[0] ?? groupIndex}`,
+      entries: group.entries,
+    };
+  });
 
-  return placeQuotedRepliesAfterTargets(items);
-}
-
-function getTimelineItemTargetKeys(item: HistoryTimelineItem) {
-  if (item.kind === "group") return item.entries.map(getHistoryEntryReplyKey);
-  return [getHistoryEntryReplyKey(item.entry)];
-}
-
-function getTimelineItemQuotedTargetKey(item: HistoryTimelineItem) {
-  return item.kind === "entry" ? getQuotedReplyTargetKey(item.entry) : null;
-}
-
-function placeQuotedRepliesAfterTargets(items: HistoryTimelineItem[]) {
-  const repliesByTargetKey = new Map<string, HistoryTimelineItem[]>();
-  const replyItems = new Set<HistoryTimelineItem>();
-
-  for (const item of items) {
-    const targetKey = getTimelineItemQuotedTargetKey(item);
-    if (!targetKey) continue;
-
-    const replies = repliesByTargetKey.get(targetKey) ?? [];
-    replies.push(item);
-    repliesByTargetKey.set(targetKey, replies);
-    replyItems.add(item);
-  }
-
-  const placedReplies = new Set<HistoryTimelineItem>();
-  const orderedItems: HistoryTimelineItem[] = [];
-
-  for (const item of items) {
-    if (replyItems.has(item)) continue;
-
-    orderedItems.push(item);
-
-    for (const targetKey of getTimelineItemTargetKeys(item)) {
-      for (const reply of repliesByTargetKey.get(targetKey) ?? []) {
-        if (placedReplies.has(reply)) continue;
-        orderedItems.push(reply);
-        placedReplies.add(reply);
-      }
-    }
-  }
-
-  for (const item of items) {
-    if (!replyItems.has(item) || placedReplies.has(item)) continue;
-    orderedItems.push(item);
-  }
-
-  return orderedItems;
+  return items;
 }
 
 export function RecordHistoryTimeline({
@@ -138,6 +49,8 @@ export function RecordHistoryTimeline({
   emptyMessage = "No history available",
   initialVisibleCount = 5,
   onQuote,
+  onReply,
+  isReplying = false,
 }: RecordHistoryTimelineProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
@@ -171,7 +84,13 @@ export function RecordHistoryTimeline({
         </button>
       </div>
 
-      <RecordHistoryGraphDialog history={normalizedHistory} open={isGraphOpen} onOpenChange={setIsGraphOpen} />
+      <RecordHistoryGraphDialog
+        history={normalizedHistory}
+        open={isGraphOpen}
+        onOpenChange={setIsGraphOpen}
+        onReply={onReply}
+        isReplying={isReplying}
+      />
 
       {hasMore && (
         <div className="flex justify-start">

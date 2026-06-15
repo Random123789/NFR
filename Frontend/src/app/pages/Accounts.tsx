@@ -119,7 +119,7 @@ export function Accounts() {
     entityLabel: "account",
     showToast,
   });
-  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment, handleAddReply } = useRecordComments({
     selectedRecord: selectedAccount,
     setSelectedRecord: setSelectedAccount,
     addHistory: addAccountHistory,
@@ -762,7 +762,12 @@ export function Accounts() {
                     </button>
                   </div>
                 </div>
-                <RecordHistoryTimeline history={selectedAccount.history} onQuote={setSelectedQuote} />
+                <RecordHistoryTimeline
+                  history={selectedAccount.history}
+                  onQuote={setSelectedQuote}
+                  onReply={handleAddReply}
+                  isReplying={isAddingComment}
+                />
               </div>
             </div>
           </div>

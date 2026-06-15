@@ -107,7 +107,7 @@ export function Mantis() {
     entityLabel: "Mantis",
     showToast,
   });
-  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment, handleAddReply } = useRecordComments({
     selectedRecord: selectedMantis,
     setSelectedRecord: setSelectedMantis,
     addHistory: addMantisHistory,
@@ -715,7 +715,12 @@ export function Mantis() {
                     </button>
                   </div>
                 </div>
-                <RecordHistoryTimeline history={selectedMantis.history} onQuote={setSelectedQuote} />
+                <RecordHistoryTimeline
+                  history={selectedMantis.history}
+                  onQuote={setSelectedQuote}
+                  onReply={handleAddReply}
+                  isReplying={isAddingComment}
+                />
               </div>
             </div>
           </div>

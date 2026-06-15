@@ -10,6 +10,22 @@ export type ParsedQuotedReply = {
   replyBody: string;
 };
 
+export type IndexedHistoryEntry = {
+  entry: HistoryEntry;
+  index: number;
+};
+
+export type HistoryEntryUpdateGroup = {
+  key: string;
+  entries: HistoryEntry[];
+  indices: number[];
+};
+
+export type QuotedReplyHistoryEntries = {
+  baseEntries: IndexedHistoryEntry[];
+  replyEntriesByTargetKey: Map<string, IndexedHistoryEntry[]>;
+};
+
 function normalizeReplyMatchText(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -108,4 +124,98 @@ export function getQuotedReplyTargetKey(entry: HistoryEntry) {
   const quotedReply = parseQuotedReply(entry.changes);
   if (!quotedReply) return null;
   return buildReplyMatchKey(quotedReply.quotedFrom, quotedReply.quotedAt, quotedReply.quotedBody);
+}
+
+export function isGroupableHistoryUpdateEntry(entry: HistoryEntry) {
+  return (
+    entry.action === "Updated" &&
+    !parseQuotedReply(entry.changes) &&
+    Boolean(entry.field && (entry.previousValue !== undefined || entry.newValue !== undefined))
+  );
+}
+
+export function getHistoryUpdateGroupKey(entry: HistoryEntry) {
+  if (entry.batchId) return `batch:${entry.batchId}`;
+
+  return [
+    formatTimestampMinute(entry.timestamp),
+    entry.user || "Unknown user",
+    entry.action || "Updated",
+  ].join("|");
+}
+
+export function groupAdjacentHistoryUpdateEntries(entries: IndexedHistoryEntry[]): HistoryEntryUpdateGroup[] {
+  const groups: HistoryEntryUpdateGroup[] = [];
+  let index = 0;
+
+  while (index < entries.length) {
+    const current = entries[index];
+
+    if (!isGroupableHistoryUpdateEntry(current.entry)) {
+      groups.push({
+        key: `entry:${current.index}`,
+        entries: [current.entry],
+        indices: [current.index],
+      });
+      index += 1;
+      continue;
+    }
+
+    const groupKey = getHistoryUpdateGroupKey(current.entry);
+    const groupEntries: HistoryEntry[] = [];
+    const groupIndices: number[] = [];
+
+    while (
+      index < entries.length &&
+      isGroupableHistoryUpdateEntry(entries[index].entry) &&
+      getHistoryUpdateGroupKey(entries[index].entry) === groupKey
+    ) {
+      groupEntries.push(entries[index].entry);
+      groupIndices.push(entries[index].index);
+      index += 1;
+    }
+
+    groups.push({
+      key: groupKey,
+      entries: groupEntries,
+      indices: groupIndices,
+    });
+  }
+
+  return groups;
+}
+
+export function splitQuotedReplyHistoryEntries(history: HistoryEntry[]): QuotedReplyHistoryEntries {
+  const parentKeys = new Set(
+    history
+      .filter((entry) => !getQuotedReplyTargetKey(entry))
+      .map(getHistoryEntryReplyKey),
+  );
+  const replyEntriesByTargetKey = new Map<string, IndexedHistoryEntry[]>();
+  const baseEntries: IndexedHistoryEntry[] = [];
+
+  history.forEach((entry, index) => {
+    const targetKey = getQuotedReplyTargetKey(entry);
+
+    if (targetKey && parentKeys.has(targetKey)) {
+      const replies = replyEntriesByTargetKey.get(targetKey) ?? [];
+      replies.push({ entry, index });
+      replyEntriesByTargetKey.set(targetKey, replies);
+      return;
+    }
+
+    baseEntries.push({ entry, index });
+  });
+
+  return {
+    baseEntries,
+    replyEntriesByTargetKey,
+  };
+}
+
+export function getReplyEntriesForHistoryEntries(
+  entries: HistoryEntry[],
+  replyEntriesByTargetKey: Map<string, IndexedHistoryEntry[]>,
+) {
+  return entries.flatMap((entry) => replyEntriesByTargetKey.get(getHistoryEntryReplyKey(entry)) ?? []);
 }

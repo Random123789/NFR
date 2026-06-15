@@ -137,7 +137,7 @@ export function Projects() {
     entityLabel: "project",
     showToast,
   });
-  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment } = useRecordComments({
+  const { newComment, setNewComment, selectedQuote, setSelectedQuote, isAddingComment, handleAddComment, handleAddReply } = useRecordComments({
     selectedRecord: selectedProject,
     setSelectedRecord: setSelectedProject,
     addHistory: addProjectHistory,
@@ -961,7 +961,12 @@ export function Projects() {
                     </button>
                   </div>
                 </div>
-                <RecordHistoryTimeline history={selectedProject.history} onQuote={setSelectedQuote} />
+                <RecordHistoryTimeline
+                  history={selectedProject.history}
+                  onQuote={setSelectedQuote}
+                  onReply={handleAddReply}
+                  isReplying={isAddingComment}
+                />
               </div>
             </div>
           </div>

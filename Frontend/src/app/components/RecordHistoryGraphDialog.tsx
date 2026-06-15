@@ -1,30 +1,36 @@
 import type { HistoryEntry } from "../data/apiClient";
 import type { ELK, ElkNode } from "elkjs/lib/elk.bundled.js";
-import { Loader2, Maximize2, MessageCircle, Minimize2, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { Loader2, Maximize2, MessageCircle, Minimize2, Minus, Plus, RotateCcw, Send, X } from "lucide-react";
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { formatTimestampMinute } from "../utils/dateTime";
 import {
   formatHistoryEntryText,
-  getHistoryEntryReplyKey,
-  getQuotedReplyTargetKey,
+  getReplyEntriesForHistoryEntries,
+  groupAdjacentHistoryUpdateEntries,
   parseQuotedReply,
   sortHistoryEntries,
+  splitQuotedReplyHistoryEntries,
+  type HistoryEntryUpdateGroup,
+  type IndexedHistoryEntry,
 } from "../utils/historyEntries";
 
 type GraphPoint = { x: number; y: number };
 type HistoryGraphMode = "detail" | "week" | "month";
+type GraphReplyHandler = (entry: HistoryEntry, comment: string) => Promise<void>;
 type HistoryPeriodOption = {
   key: string;
   title: string;
-  entries: HistoryEntry[];
+  entries: IndexedHistoryEntry[];
+  updateCount: number;
 };
 
 type HistoryGraphReplyItem = {
@@ -32,7 +38,6 @@ type HistoryGraphReplyItem = {
   user: string;
   timestampLabel: string;
   detailText: string;
-  sourceEntry: HistoryEntry;
 };
 
 type HistoryGraphEntryItem = {
@@ -45,8 +50,7 @@ type HistoryGraphEntryItem = {
   detailTexts: string[];
   action: string | null | undefined;
   field: string | null | undefined;
-  sourceEntry: HistoryEntry;
-  sourceEntries: HistoryEntry[];
+  replyTargetEntry: HistoryEntry;
   replies: HistoryGraphReplyItem[];
 };
 
@@ -55,7 +59,6 @@ type HistoryGraphPeriodItem = {
   id: string;
   title: string;
   periodMode: Exclude<HistoryGraphMode, "detail">;
-  updateCount: number;
   timestampLabel: string;
   detailText: string;
   action: string | null | undefined;
@@ -87,6 +90,23 @@ type HistoryGraphLayout = {
   edges: HistoryGraphEdge[];
 };
 
+type HistoryPeriodEntryRow = {
+  entry: HistoryGraphEntryItem;
+  descriptionLines: string[];
+  rowHeight: number;
+  rowY: number;
+  metaY: number;
+};
+
+type GraphReplyButtonLayout = {
+  id: string;
+  item: HistoryGraphEntryItem;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
 type GraphViewportTransform = {
   x: number;
   y: number;
@@ -100,13 +120,9 @@ type GraphPanStart = GraphViewportTransform & {
 };
 
 type HistoryGraphModel = {
-  baseEntries: Array<{ entry: HistoryEntry; index: number }>;
-  repliesByTargetKey: Map<string, HistoryGraphReplyItem[]>;
-};
-
-type HistoryGraphBaseGroup = {
-  entries: HistoryEntry[];
-  indices: number[];
+  baseEntries: IndexedHistoryEntry[];
+  baseGroups: HistoryEntryUpdateGroup[];
+  replyEntriesByTargetKey: Map<string, IndexedHistoryEntry[]>;
 };
 
 const GRAPH_NODE_WIDTH = 260;
@@ -158,7 +174,7 @@ function getElkInstance() {
   return elkInstancePromise;
 }
 
-function getGraphAccentType(item: HistoryGraphItem | HistoryGraphEntryItem): HistoryGraphAccentType {
+function getGraphAccentType(item: HistoryGraphItem): HistoryGraphAccentType {
   if (item.kind === "period") {
     const entryTypes = item.entries.map(getGraphAccentType);
     if (entryTypes.includes("status")) return "status";
@@ -197,7 +213,7 @@ function getGraphAccentType(item: HistoryGraphItem | HistoryGraphEntryItem): His
   return "update";
 }
 
-function getGraphAccentColor(item: HistoryGraphItem | HistoryGraphEntryItem) {
+function getGraphAccentColor(item: HistoryGraphItem) {
   return GRAPH_ACCENT_COLORS[getGraphAccentType(item)];
 }
 
@@ -278,21 +294,37 @@ function getHistoryBucket(entry: HistoryEntry, mode: Exclude<HistoryGraphMode, "
   };
 }
 
-function createPeriodOptions(history: HistoryEntry[], mode: Exclude<HistoryGraphMode, "detail">) {
+function createPeriodOptions(history: IndexedHistoryEntry[], mode: Exclude<HistoryGraphMode, "detail">) {
   const buckets = new Map<string, HistoryPeriodOption>();
 
-  for (const entry of history) {
-    const bucket = getHistoryBucket(entry, mode);
-    const existingBucket = buckets.get(bucket.key) ?? { key: bucket.key, title: bucket.title, entries: [] };
-    existingBucket.entries.push(entry);
+  for (const indexedEntry of history) {
+    const bucket = getHistoryBucket(indexedEntry.entry, mode);
+    const existingBucket = buckets.get(bucket.key) ?? {
+      key: bucket.key,
+      title: bucket.title,
+      entries: [],
+      updateCount: 0,
+    };
+    existingBucket.entries.push(indexedEntry);
     buckets.set(bucket.key, existingBucket);
   }
 
-  return [...buckets.values()];
+  return [...buckets.values()].map((option) => ({
+    ...option,
+    updateCount: groupAdjacentHistoryUpdateEntries(option.entries).length,
+  }));
 }
 
 function formatUpdateCount(count: number) {
   return `${count} update${count === 1 ? "" : "s"}`;
+}
+
+function formatReplyCount(count: number) {
+  return `${count} ${count === 1 ? "reply" : "replies"}`;
+}
+
+function formatReplyActionLabel(count: number) {
+  return count > 0 ? formatReplyCount(count) : "Reply";
 }
 
 function formatPeriodDateRange(entries: HistoryEntry[]) {
@@ -317,95 +349,25 @@ function createHistoryGraphReplyItem(entry: HistoryEntry, index: number, idPrefi
     user: entry.user || "Unknown user",
     timestampLabel: formatTimestampMinute(entry.timestamp),
     detailText: quotedReply?.replyBody || formatHistoryEntryText(entry),
-    sourceEntry: entry,
   };
 }
 
 function createHistoryGraphModel(history: HistoryEntry[]): HistoryGraphModel {
-  const parentKeys = new Set(
-    history
-      .filter((entry) => !getQuotedReplyTargetKey(entry))
-      .map(getHistoryEntryReplyKey),
-  );
-  const repliesByTargetKey = new Map<string, HistoryGraphReplyItem[]>();
-  const baseEntries: Array<{ entry: HistoryEntry; index: number }> = [];
-
-  history.forEach((entry, index) => {
-    const targetKey = getQuotedReplyTargetKey(entry);
-
-    if (targetKey && parentKeys.has(targetKey)) {
-      const replies = repliesByTargetKey.get(targetKey) ?? [];
-      replies.push(createHistoryGraphReplyItem(entry, index));
-      repliesByTargetKey.set(targetKey, replies);
-      return;
-    }
-
-    baseEntries.push({ entry, index });
-  });
+  const { baseEntries, replyEntriesByTargetKey } = splitQuotedReplyHistoryEntries(history);
 
   return {
     baseEntries,
-    repliesByTargetKey,
+    baseGroups: groupAdjacentHistoryUpdateEntries(baseEntries),
+    replyEntriesByTargetKey,
   };
 }
 
-function isGraphGroupableUpdateEntry(entry: HistoryEntry) {
-  return (
-    entry.action === "Updated" &&
-    !parseQuotedReply(entry.changes) &&
-    Boolean(entry.field && (entry.previousValue !== undefined || entry.newValue !== undefined))
-  );
-}
-
-function getGraphUpdateGroupKey(entry: HistoryEntry) {
-  if (entry.batchId) return `batch:${entry.batchId}`;
-
-  return [
-    formatTimestampMinute(entry.timestamp),
-    entry.user || "Unknown user",
-    entry.action || "Updated",
-  ].join("|");
-}
-
-function groupHistoryGraphBaseEntries(entries: Array<{ entry: HistoryEntry; index: number }>): HistoryGraphBaseGroup[] {
-  const groups: HistoryGraphBaseGroup[] = [];
-  let index = 0;
-
-  while (index < entries.length) {
-    const current = entries[index];
-
-    if (!isGraphGroupableUpdateEntry(current.entry)) {
-      groups.push({ entries: [current.entry], indices: [current.index] });
-      index += 1;
-      continue;
-    }
-
-    const groupKey = getGraphUpdateGroupKey(current.entry);
-    const groupEntries: HistoryEntry[] = [];
-    const groupIndices: number[] = [];
-
-    while (
-      index < entries.length &&
-      isGraphGroupableUpdateEntry(entries[index].entry) &&
-      getGraphUpdateGroupKey(entries[index].entry) === groupKey
-    ) {
-      groupEntries.push(entries[index].entry);
-      groupIndices.push(entries[index].index);
-      index += 1;
-    }
-
-    groups.push({ entries: groupEntries, indices: groupIndices });
-  }
-
-  return groups;
-}
-
-function getRepliesForHistoryEntry(entry: HistoryEntry, repliesByTargetKey: Map<string, HistoryGraphReplyItem[]>) {
-  return repliesByTargetKey.get(getHistoryEntryReplyKey(entry)) ?? [];
-}
-
-function getRepliesForHistoryEntries(entries: HistoryEntry[], repliesByTargetKey: Map<string, HistoryGraphReplyItem[]>) {
-  return entries.flatMap((entry) => getRepliesForHistoryEntry(entry, repliesByTargetKey));
+function createHistoryGraphReplyItems(
+  entries: HistoryEntry[],
+  replyEntriesByTargetKey: Map<string, IndexedHistoryEntry[]>,
+) {
+  return getReplyEntriesForHistoryEntries(entries, replyEntriesByTargetKey)
+    .map(({ entry, index }) => createHistoryGraphReplyItem(entry, index));
 }
 
 function createHistoryGraphEntryItem(
@@ -429,19 +391,18 @@ function createHistoryGraphEntryItem(
     detailTexts,
     action: entry.action,
     field: entries.map((groupEntry) => groupEntry.field).filter(Boolean).join(", ") || entry.field,
-    sourceEntry: entry,
-    sourceEntries: entries,
+    replyTargetEntry: entry,
     replies,
   };
 }
 
 function createHistoryGraphItems(model: HistoryGraphModel): HistoryGraphItem[] {
-  return groupHistoryGraphBaseEntries(model.baseEntries).map((group, groupIndex) =>
+  return model.baseGroups.map((group, groupIndex) =>
     createHistoryGraphEntryItem(
       group.entries,
       group.indices[0] ?? groupIndex,
       "history-item",
-      getRepliesForHistoryEntries(group.entries, model.repliesByTargetKey),
+      createHistoryGraphReplyItems(group.entries, model.replyEntriesByTargetKey),
     )
   );
 }
@@ -449,29 +410,28 @@ function createHistoryGraphItems(model: HistoryGraphModel): HistoryGraphItem[] {
 function createHistoryPeriodGraphItems(
   periods: HistoryPeriodOption[],
   mode: Exclude<HistoryGraphMode, "detail">,
-  repliesByTargetKey: Map<string, HistoryGraphReplyItem[]>,
+  replyEntriesByTargetKey: Map<string, IndexedHistoryEntry[]>,
 ): HistoryGraphItem[] {
   return periods.map((period, periodIndex) => {
-    const groupedEntries = groupHistoryGraphBaseEntries(
-      period.entries.map((entry, entryIndex) => ({ entry, index: entryIndex }))
-    );
+    const groupedEntries = groupAdjacentHistoryUpdateEntries(period.entries);
     const entries = groupedEntries.map((group, groupIndex) =>
       createHistoryGraphEntryItem(
         group.entries,
         group.indices[0] ?? groupIndex,
         `history-period-${periodIndex}-entry`,
-        getRepliesForHistoryEntries(group.entries, repliesByTargetKey),
+        createHistoryGraphReplyItems(group.entries, replyEntriesByTargetKey),
       )
     );
+
+    const periodEntries = period.entries.map(({ entry }) => entry);
 
     return {
       kind: "period",
       id: `history-period-${mode}-${period.key}`,
       title: period.title,
       periodMode: mode,
-      updateCount: entries.length,
       timestampLabel: formatUpdateCount(entries.length),
-      detailText: formatPeriodDateRange(period.entries),
+      detailText: formatPeriodDateRange(periodEntries),
       action: entries.at(-1)?.action,
       entries,
     };
@@ -493,6 +453,27 @@ function getPeriodEntryRowHeight(item: HistoryGraphEntryItem) {
     + PERIOD_ENTRY_META_GAP;
 
   return metaY + PERIOD_ENTRY_META_BOTTOM_PADDING;
+}
+
+function getPeriodEntryRows(entries: HistoryGraphEntryItem[]): HistoryPeriodEntryRow[] {
+  let nextRowY = PERIOD_NODE_HEADER_HEIGHT;
+
+  return entries.map((entry) => {
+    const descriptionLines = getWrappedGraphDetailLines(entry, PERIOD_ENTRY_DESCRIPTION_LINE_LENGTH);
+    const rowHeight = getPeriodEntryRowHeight(entry);
+    const row = {
+      entry,
+      descriptionLines,
+      rowHeight,
+      rowY: nextRowY,
+      metaY: PERIOD_ENTRY_DESCRIPTION_START_Y
+        + descriptionLines.length * PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT
+        + PERIOD_ENTRY_META_GAP,
+    };
+
+    nextRowY += rowHeight;
+    return row;
+  });
 }
 
 function getHistoryGraphItemDimensions(item: HistoryGraphItem) {
@@ -575,6 +556,48 @@ async function layoutHistoryGraph(items: HistoryGraphItem[]) {
   };
 }
 
+function createGraphReplyButtonLayouts(layout: HistoryGraphLayout, canReply: boolean): GraphReplyButtonLayout[] {
+  return layout.nodes.flatMap((node) => {
+    if (node.item.kind === "entry") {
+      if (!canReply && node.item.replies.length === 0) return [];
+
+      return [{
+        id: `${node.id}-replies`,
+        item: node.item,
+        left: GRAPH_PADDING + node.x + node.width - 100,
+        top: GRAPH_PADDING + node.y + 17,
+        width: 84,
+        height: 23,
+      }];
+    }
+
+    return getPeriodEntryRows(node.item.entries)
+      .filter(({ entry }) => canReply || entry.replies.length > 0)
+      .map(({ entry, rowY }) => ({
+        id: `${node.id}-${entry.id}-replies`,
+        item: entry,
+        left: GRAPH_PADDING + node.x + node.width - 100,
+        top: GRAPH_PADDING + node.y + rowY - 4,
+        width: 82,
+        height: 22,
+      }));
+  });
+}
+
+function findGraphEntryItem(items: HistoryGraphItem[], itemId: string): HistoryGraphEntryItem | null {
+  for (const item of items) {
+    if (item.kind === "entry") {
+      if (item.id === itemId) return item;
+      continue;
+    }
+
+    const periodEntry = item.entries.find((entry) => entry.id === itemId);
+    if (periodEntry) return periodEntry;
+  }
+
+  return null;
+}
+
 function pointsToPath(points: GraphPoint[]) {
   const [firstPoint, ...restPoints] = points;
   if (!firstPoint) return "";
@@ -607,6 +630,31 @@ function getCenterPoint(element: HTMLElement | null) {
   };
 }
 
+function GraphToolbarButton({
+  title,
+  onClick,
+  pressed,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  pressed?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      aria-pressed={pressed}
+      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+    >
+      {children}
+    </button>
+  );
+}
+
 function GraphToolbar({
   scale,
   isFullscreen,
@@ -628,43 +676,22 @@ function GraphToolbar({
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
-      <button
-        type="button"
-        onClick={onToggleFullscreen}
+      <GraphToolbarButton
         title={isFullscreen ? "Exit full screen" : "Enter full screen"}
-        aria-label={isFullscreen ? "Exit full screen" : "Enter full screen"}
-        aria-pressed={isFullscreen}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+        onClick={onToggleFullscreen}
+        pressed={isFullscreen}
       >
         {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-      </button>
-      <button
-        type="button"
-        onClick={onZoomIn}
-        title="Zoom in"
-        aria-label="Zoom in"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-      >
+      </GraphToolbarButton>
+      <GraphToolbarButton title="Zoom in" onClick={onZoomIn}>
         <Plus className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        onClick={onZoomOut}
-        title="Zoom out"
-        aria-label="Zoom out"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-      >
+      </GraphToolbarButton>
+      <GraphToolbarButton title="Zoom out" onClick={onZoomOut}>
         <Minus className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        onClick={onReset}
-        title="Reset view"
-        aria-label="Reset view"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-      >
+      </GraphToolbarButton>
+      <GraphToolbarButton title="Reset view" onClick={onReset}>
         <RotateCcw className="h-4 w-4" />
-      </button>
+      </GraphToolbarButton>
       <span className="min-w-12 px-2 text-center text-xs font-medium text-gray-500">
         {Math.round(scale * 100)}%
       </span>
@@ -753,7 +780,7 @@ function PeriodSelect({
         className="flex h-9 w-full min-w-56 items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-2 text-left text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
       >
         <span className="truncate">{label}</span>
-        <span className="text-xs text-gray-500">{selectedOptions.reduce((sum, option) => sum + option.entries.length, 0)}</span>
+        <span className="text-xs text-gray-500">{selectedOptions.reduce((sum, option) => sum + option.updateCount, 0)}</span>
       </button>
 
       {isOpen && (
@@ -795,7 +822,7 @@ function PeriodSelect({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-gray-900">{option.title}</span>
                     <span className="mt-0.5 block text-xs text-gray-500">
-                      {option.entries.length} update{option.entries.length === 1 ? "" : "s"}
+                      {formatUpdateCount(option.updateCount)}
                     </span>
                   </span>
                 </button>
@@ -811,9 +838,11 @@ function PeriodSelect({
 function GraphSvg({
   layout,
   onShowReplies,
+  canReply,
 }: {
   layout: HistoryGraphLayout;
   onShowReplies: (item: HistoryGraphEntryItem) => void;
+  canReply: boolean;
 }) {
   return (
     <svg
@@ -842,7 +871,7 @@ function GraphSvg({
         ))}
 
         {layout.nodes.map((node) => (
-          <HistoryNode key={node.id} node={node} onShowReplies={onShowReplies} />
+          <HistoryNode key={node.id} node={node} onShowReplies={onShowReplies} canReply={canReply} />
         ))}
       </g>
     </svg>
@@ -852,48 +881,20 @@ function GraphSvg({
 function GraphReplyButtons({
   layout,
   onShowReplies,
+  canReply,
 }: {
   layout: HistoryGraphLayout;
   onShowReplies: (item: HistoryGraphEntryItem) => void;
+  canReply: boolean;
 }) {
-  const buttons = layout.nodes.flatMap((node) => {
-    if (node.item.kind === "entry") {
-      if (node.item.replies.length === 0) return [];
-
-      return [{
-        id: `${node.id}-replies`,
-        item: node.item,
-        left: GRAPH_PADDING + node.x + node.width - 100,
-        top: GRAPH_PADDING + node.y + 17,
-        width: 84,
-        height: 23,
-      }];
-    }
-
-    let nextRowY = PERIOD_NODE_HEADER_HEIGHT;
-    return node.item.entries.flatMap((entry) => {
-      const rowY = nextRowY;
-      nextRowY += getPeriodEntryRowHeight(entry);
-
-      if (entry.replies.length === 0) return [];
-
-      return [{
-        id: `${node.id}-${entry.id}-replies`,
-        item: entry,
-        left: GRAPH_PADDING + node.x + node.width - 100,
-        top: GRAPH_PADDING + node.y + rowY - 4,
-        width: 82,
-        height: 22,
-      }];
-    });
-  });
+  const buttons = createGraphReplyButtonLayouts(layout, canReply);
 
   if (buttons.length === 0) return null;
 
   return (
     <div className="pointer-events-none absolute inset-0">
       {buttons.map((button) => {
-        const replyLabel = `${button.item.replies.length} ${button.item.replies.length === 1 ? "reply" : "replies"}`;
+        const replyLabel = formatReplyActionLabel(button.item.replies.length);
 
         return (
           <button
@@ -925,37 +926,40 @@ function GraphReplyButtons({
 function HistoryNode({
   node,
   onShowReplies,
+  canReply,
 }: {
   node: HistoryGraphNode;
   onShowReplies: (item: HistoryGraphEntryItem) => void;
+  canReply: boolean;
 }) {
-  if (node.item.kind === "period") return <HistoryPeriodNode node={node} onShowReplies={onShowReplies} />;
+  if (node.item.kind === "period") {
+    return <HistoryPeriodNode node={node} onShowReplies={onShowReplies} canReply={canReply} />;
+  }
 
   const item = node.item;
   const changeLines = getWrappedGraphDetailLines(item, DETAIL_NODE_DESCRIPTION_LINE_LENGTH);
-  const hasReplies = item.replies.length > 0;
-  const replyLabel = `${item.replies.length} ${item.replies.length === 1 ? "reply" : "replies"}`;
+  const showReplyAction = canReply || item.replies.length > 0;
 
   return (
     <g
       transform={`translate(${node.x} ${node.y})`}
-      onClick={hasReplies ? (event) => {
+      onClick={showReplyAction ? (event) => {
         event.stopPropagation();
         onShowReplies(item);
       } : undefined}
-      className={hasReplies ? "cursor-pointer" : undefined}
+      className={showReplyAction ? "cursor-pointer" : undefined}
     >
-      {hasReplies && <title>Show replies</title>}
+      {showReplyAction && <title>{item.replies.length > 0 ? "Show replies" : "Reply"}</title>}
       <rect width={node.width} height={node.height} rx="10" fill="#FFFFFF" stroke="#E5E7EB" />
       <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(item)} />
       <text x="16" y="26" fill="#6B7280" fontSize="11" fontWeight="600">
         Step {node.sequence}
       </text>
-      {hasReplies && (
+      {showReplyAction && (
         <g transform={`translate(${node.width - 100} 17)`}>
           <rect width="84" height="23" rx="11.5" fill="#F3F4F6" stroke="#D1D5DB" />
           <text x="42" y="15" textAnchor="middle" fill="#374151" fontSize="10" fontWeight="700">
-            {replyLabel}
+            {formatReplyActionLabel(item.replies.length)}
           </text>
         </g>
       )}
@@ -986,30 +990,17 @@ function HistoryNode({
 function HistoryPeriodNode({
   node,
   onShowReplies,
+  canReply,
 }: {
   node: HistoryGraphNode;
   onShowReplies: (item: HistoryGraphEntryItem) => void;
+  canReply: boolean;
 }) {
   if (node.item.kind !== "period") return null;
 
   const item = node.item;
   const periodLabel = item.periodMode === "week" ? "Week" : "Month";
-  let nextRowY = PERIOD_NODE_HEADER_HEIGHT;
-  const rows = item.entries.map((entry) => {
-    const descriptionLines = getWrappedGraphDetailLines(entry, PERIOD_ENTRY_DESCRIPTION_LINE_LENGTH);
-    const rowHeight = getPeriodEntryRowHeight(entry);
-    const row = {
-      entry,
-      descriptionLines,
-      rowHeight,
-      rowY: nextRowY,
-      metaY: PERIOD_ENTRY_DESCRIPTION_START_Y
-        + descriptionLines.length * PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT
-        + PERIOD_ENTRY_META_GAP,
-    };
-    nextRowY += rowHeight;
-    return row;
-  });
+  const rows = getPeriodEntryRows(item.entries);
 
   return (
     <g transform={`translate(${node.x} ${node.y})`}>
@@ -1027,29 +1018,28 @@ function HistoryPeriodNode({
       <line x1="16" y1="84" x2={node.width - 16} y2="84" stroke="#E5E7EB" />
 
       {rows.map(({ entry, descriptionLines, rowHeight, rowY, metaY }, entryIndex) => {
-        const hasReplies = entry.replies.length > 0;
-        const replyLabel = `${entry.replies.length} ${entry.replies.length === 1 ? "reply" : "replies"}`;
+        const showReplyAction = canReply || entry.replies.length > 0;
 
         return (
           <g
             key={entry.id}
             transform={`translate(16 ${rowY})`}
-            onClick={hasReplies ? (event) => {
+            onClick={showReplyAction ? (event) => {
               event.stopPropagation();
               onShowReplies(entry);
             } : undefined}
-            className={hasReplies ? "cursor-pointer" : undefined}
+            className={showReplyAction ? "cursor-pointer" : undefined}
           >
-            {hasReplies && <title>Show replies</title>}
+            {showReplyAction && <title>{entry.replies.length > 0 ? "Show replies" : "Reply"}</title>}
             <circle cx="5" cy="8" r="4" fill={getGraphAccentColor(entry)} />
             <text x="18" y="8" fill="#111827" fontSize="12" fontWeight="700">
-              {truncateText(entry.title, hasReplies ? 21 : 30)}
+              {truncateText(entry.title, showReplyAction ? 21 : 30)}
             </text>
-            {hasReplies && (
+            {showReplyAction && (
               <g transform={`translate(${node.width - 116} -4)`}>
                 <rect width="82" height="22" rx="11" fill="#F3F4F6" stroke="#D1D5DB" />
                 <text x="41" y="14.5" textAnchor="middle" fill="#374151" fontSize="9.5" fontWeight="700">
-                  {replyLabel}
+                  {formatReplyActionLabel(entry.replies.length)}
                 </text>
               </g>
             )}
@@ -1080,10 +1070,32 @@ function HistoryPeriodNode({
 function GraphRepliesPanel({
   item,
   onClose,
+  onReply,
+  isReplying,
 }: {
   item: HistoryGraphEntryItem;
   onClose: () => void;
+  onReply?: GraphReplyHandler;
+  isReplying: boolean;
 }) {
+  const [replyDraft, setReplyDraft] = useState("");
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const trimmedReplyDraft = replyDraft.trim();
+  const canSubmitReply = Boolean(onReply && trimmedReplyDraft && !isReplying);
+
+  const handleSubmitReply = async () => {
+    if (!onReply || !trimmedReplyDraft || isReplying) return;
+
+    setReplyError(null);
+
+    try {
+      await onReply(item.replyTargetEntry, trimmedReplyDraft);
+      setReplyDraft("");
+    } catch {
+      setReplyError("Could not add reply. Please try again.");
+    }
+  };
+
   return (
     <div
       className="absolute bottom-3 right-3 top-3 z-20 flex w-[min(22rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
@@ -1116,18 +1128,50 @@ function GraphRepliesPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-2">
-        {item.replies.map((reply) => (
-          <div key={reply.id} className="border-b border-gray-100 py-3 last:border-b-0">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
-              <span className="font-semibold text-gray-700">{reply.user}</span>
-              <span>{reply.timestampLabel}</span>
+        {item.replies.length > 0 ? (
+          item.replies.map((reply) => (
+            <div key={reply.id} className="border-b border-gray-100 py-3 last:border-b-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+                <span className="font-semibold text-gray-700">{reply.user}</span>
+                <span>{reply.timestampLabel}</span>
+              </div>
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-800 [overflow-wrap:anywhere]">
+                {reply.detailText}
+              </p>
             </div>
-            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-800 [overflow-wrap:anywhere]">
-              {reply.detailText}
-            </p>
-          </div>
-        ))}
+          ))
+        ) : (
+          <p className="py-4 text-sm text-gray-500">No replies yet.</p>
+        )}
       </div>
+
+      {onReply && (
+        <div className="border-t border-gray-200 p-3">
+          <textarea
+            value={replyDraft}
+            onChange={(event) => {
+              setReplyDraft(event.target.value);
+              if (replyError) setReplyError(null);
+            }}
+            placeholder="Write a reply..."
+            rows={3}
+            className="min-h-[84px] w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-[#E31937] focus:ring-2 focus:ring-[#E31937]/20"
+            disabled={isReplying}
+          />
+          {replyError && <p className="mt-2 text-xs text-red-600">{replyError}</p>}
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => void handleSubmitReply()}
+              disabled={!canSubmitReply}
+              className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-[#E31937] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#c91530] focus:outline-none focus:ring-2 focus:ring-[#E31937] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isReplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {isReplying ? "Saving" : "Reply"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1136,14 +1180,18 @@ export function RecordHistoryGraphDialog({
   history,
   open,
   onOpenChange,
+  onReply,
+  isReplying = false,
 }: {
   history: HistoryEntry[];
   open: boolean;
   onOpenChange: (nextOpen: boolean) => void;
+  onReply?: GraphReplyHandler;
+  isReplying?: boolean;
 }) {
   const chronologicalHistory = useMemo(() => sortHistoryEntries(history, "asc"), [history]);
   const graphModel = useMemo(() => createHistoryGraphModel(chronologicalHistory), [chronologicalHistory]);
-  const graphBaseHistory = useMemo(() => graphModel.baseEntries.map(({ entry }) => entry), [graphModel]);
+  const graphBaseHistory = graphModel.baseEntries;
   const [graphMode, setGraphMode] = useState<HistoryGraphMode>("detail");
   const [selectedWeekKeys, setSelectedWeekKeys] = useState<string[]>([]);
   const [selectedMonthKeys, setSelectedMonthKeys] = useState<string[]>([]);
@@ -1160,7 +1208,7 @@ export function RecordHistoryGraphDialog({
   }, [activePeriodOptions, selectedPeriodKeys]);
   const graphItems = useMemo(() => {
     if (graphMode === "detail") return createHistoryGraphItems(graphModel);
-    return createHistoryPeriodGraphItems(selectedPeriodOptions, graphMode, graphModel.repliesByTargetKey);
+    return createHistoryPeriodGraphItems(selectedPeriodOptions, graphMode, graphModel.replyEntriesByTargetKey);
   }, [graphMode, graphModel, selectedPeriodOptions]);
   const [layout, setLayout] = useState<HistoryGraphLayout | null>(null);
   const [layoutError, setLayoutError] = useState<string | null>(null);
@@ -1190,7 +1238,9 @@ export function RecordHistoryGraphDialog({
   }, [open]);
 
   useEffect(() => {
-    setReplyPanelItem(null);
+    setReplyPanelItem((currentItem) => (
+      currentItem ? findGraphEntryItem(graphItems, currentItem.id) : null
+    ));
   }, [graphItems]);
 
   useEffect(() => {
@@ -1342,13 +1392,18 @@ export function RecordHistoryGraphDialog({
                   transformOrigin: "0 0",
                 }}
               >
-                <GraphSvg layout={layout} onShowReplies={setReplyPanelItem} />
-                <GraphReplyButtons layout={layout} onShowReplies={setReplyPanelItem} />
+                <GraphSvg layout={layout} onShowReplies={setReplyPanelItem} canReply={Boolean(onReply)} />
+                <GraphReplyButtons layout={layout} onShowReplies={setReplyPanelItem} canReply={Boolean(onReply)} />
               </div>
             )}
 
             {replyPanelItem && (
-              <GraphRepliesPanel item={replyPanelItem} onClose={() => setReplyPanelItem(null)} />
+              <GraphRepliesPanel
+                item={replyPanelItem}
+                onClose={() => setReplyPanelItem(null)}
+                onReply={onReply}
+                isReplying={isReplying}
+              />
             )}
           </div>
         </div>
