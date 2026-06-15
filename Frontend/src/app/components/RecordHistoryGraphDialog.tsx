@@ -29,6 +29,7 @@ type HistoryGraphEntryItem = {
   timestampLabel: string;
   detailText: string;
   action: string | null | undefined;
+  field: string | null | undefined;
 };
 
 type HistoryGraphPeriodItem = {
@@ -44,6 +45,7 @@ type HistoryGraphPeriodItem = {
 };
 
 type HistoryGraphItem = HistoryGraphEntryItem | HistoryGraphPeriodItem;
+type HistoryGraphAccentType = "created" | "comment" | "status" | "assigned" | "update";
 
 type HistoryGraphNode = {
   id: string;
@@ -101,6 +103,20 @@ const GRAPH_MODES: Array<{ value: HistoryGraphMode; label: string }> = [
   { value: "week", label: "Week" },
   { value: "month", label: "Month" },
 ];
+const GRAPH_ACCENT_COLORS: Record<HistoryGraphAccentType, string> = {
+  created: "#E31937",
+  comment: "#16A34A",
+  status: "#F59E0B",
+  assigned: "#7C3AED",
+  update: "#2563EB",
+};
+const GRAPH_LEGEND_ITEMS: Array<{ label: string; type: HistoryGraphAccentType }> = [
+  { label: "Created", type: "created" },
+  { label: "Comment", type: "comment" },
+  { label: "Escalation Status", type: "status" },
+  { label: "Assigned To", type: "assigned" },
+  { label: "Other Update", type: "update" },
+];
 const EMPTY_PERIOD_OPTIONS: HistoryPeriodOption[] = [];
 const EMPTY_PERIOD_KEYS: string[] = [];
 
@@ -114,10 +130,47 @@ function getElkInstance() {
   return elkInstancePromise;
 }
 
-function getGraphAccentColor(action: string | null | undefined) {
-  if (action === "Created") return "#E31937";
-  if (action === "Comment") return "#16A34A";
-  return "#2563EB";
+function getGraphAccentType(item: HistoryGraphItem | HistoryGraphEntryItem): HistoryGraphAccentType {
+  if (item.kind === "period") {
+    const entryTypes = item.entries.map(getGraphAccentType);
+    if (entryTypes.includes("status")) return "status";
+    if (entryTypes.includes("assigned")) return "assigned";
+    if (entryTypes.includes("created")) return "created";
+    if (entryTypes.includes("comment")) return "comment";
+    return "update";
+  }
+
+  const normalizedAction = (item.action ?? "").trim().toLowerCase();
+  const normalizedField = (item.field ?? "").trim().toLowerCase();
+  const normalizedDetail = item.detailText.trim().toLowerCase();
+  const isUpdateLike = normalizedAction === "updated" || Boolean(normalizedField);
+
+  if (
+    isUpdateLike &&
+    (normalizedField === "status" ||
+      normalizedField === "escalation status" ||
+      normalizedDetail.includes("status changed") ||
+      normalizedDetail.includes("escalation status changed"))
+  ) {
+    return "status";
+  }
+
+  if (
+    isUpdateLike &&
+    (normalizedField === "assigned to" ||
+      normalizedField === "assignedto" ||
+      normalizedDetail.includes("assigned to changed"))
+  ) {
+    return "assigned";
+  }
+
+  if (normalizedAction === "created") return "created";
+  if (normalizedAction === "comment") return "comment";
+  return "update";
+}
+
+function getGraphAccentColor(item: HistoryGraphItem | HistoryGraphEntryItem) {
+  return GRAPH_ACCENT_COLORS[getGraphAccentType(item)];
 }
 
 function truncateText(value: string, maxLength: number) {
@@ -230,6 +283,7 @@ function createHistoryGraphEntryItem(entry: HistoryEntry, index: number, idPrefi
     timestampLabel: formatTimestampMinute(entry.timestamp),
     detailText: formatHistoryEntryText(entry),
     action: entry.action,
+    field: entry.field,
   };
 }
 
@@ -482,6 +536,22 @@ function GraphModeToggle({
   );
 }
 
+function GraphLegend() {
+  return (
+    <div className="flex max-w-full flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
+      {GRAPH_LEGEND_ITEMS.map((item) => (
+        <span key={item.type} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span
+            className="h-2.5 w-2.5 rounded-full"
+            style={{ backgroundColor: GRAPH_ACCENT_COLORS[item.type] }}
+          />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function PeriodSelect({
   mode,
   options,
@@ -618,7 +688,7 @@ function HistoryNode({ node }: { node: HistoryGraphNode }) {
   return (
     <g transform={`translate(${node.x} ${node.y})`}>
       <rect width={node.width} height={node.height} rx="10" fill="#FFFFFF" stroke="#E5E7EB" />
-      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(item.action)} />
+      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(item)} />
       <text x="16" y="26" fill="#6B7280" fontSize="11" fontWeight="600">
         Step {node.sequence}
       </text>
@@ -671,7 +741,7 @@ function HistoryPeriodNode({ node }: { node: HistoryGraphNode }) {
   return (
     <g transform={`translate(${node.x} ${node.y})`}>
       <rect width={node.width} height={node.height} rx="10" fill="#FFFFFF" stroke="#E5E7EB" />
-      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(item.action)} />
+      <rect width={node.width} height="6" rx="3" fill={getGraphAccentColor(item)} />
       <text x="16" y="27" fill="#6B7280" fontSize="11" fontWeight="600">
         {periodLabel} {node.sequence}
       </text>
@@ -686,7 +756,7 @@ function HistoryPeriodNode({ node }: { node: HistoryGraphNode }) {
       {rows.map(({ entry, descriptionLines, rowHeight, rowY, metaY }, entryIndex) => {
         return (
           <g key={entry.id} transform={`translate(16 ${rowY})`}>
-            <circle cx="5" cy="8" r="4" fill={getGraphAccentColor(entry.action)} />
+            <circle cx="5" cy="8" r="4" fill={getGraphAccentColor(entry)} />
             <text x="18" y="8" fill="#111827" fontSize="12" fontWeight="700">
               {truncateText(entry.title, 30)}
             </text>
@@ -840,9 +910,9 @@ export function RecordHistoryGraphDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className={`grid-rows-[auto,minmax(0,1fr)] gap-4 overflow-hidden p-0 ${
+        className={`grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 ${
           isFullscreen
-            ? "h-[calc(100vh-1rem)] max-h-[calc(100vh-1rem)] max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-1rem)]"
+            ? "h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-1rem)]"
             : "max-h-[88vh] max-w-[calc(100vw-2rem)] sm:max-w-[min(76rem,calc(100vw-2rem))]"
         }`}
       >
@@ -856,6 +926,7 @@ export function RecordHistoryGraphDialog({
             </div>
             <div className="flex flex-col gap-2 sm:items-end">
               <GraphModeToggle mode={graphMode} onModeChange={setGraphMode} />
+              <GraphLegend />
               {graphMode !== "detail" && activePeriodOptions.length > 0 && (
                 <PeriodSelect
                   mode={graphMode}
@@ -868,7 +939,7 @@ export function RecordHistoryGraphDialog({
           </div>
         </DialogHeader>
 
-        <div className="flex min-h-0 px-6 pb-6">
+        <div className="flex min-h-0 overflow-hidden px-6 pb-6 pt-4">
           <div
             ref={graphViewportRef}
             onWheel={handleGraphWheel}
@@ -876,8 +947,8 @@ export function RecordHistoryGraphDialog({
             onPointerMove={handleGraphPointerMove}
             onPointerUp={stopGraphPan}
             onPointerCancel={stopGraphPan}
-            className={`relative w-full touch-none select-none overflow-hidden rounded-lg border border-gray-200 bg-gray-50 ${
-              isFullscreen ? "h-full" : "h-[min(66vh,42rem)]"
+            className={`relative min-h-0 w-full touch-none select-none overflow-hidden rounded-lg border border-gray-200 bg-gray-50 ${
+              isFullscreen ? "h-full flex-1" : "h-[min(66vh,42rem)]"
             } ${
               isPanning ? "cursor-grabbing" : "cursor-grab"
             }`}

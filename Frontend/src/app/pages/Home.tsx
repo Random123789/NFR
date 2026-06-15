@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, Eye, FolderKanban, PackageSearch, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
+import { AlertCircle, Briefcase, Building2, CalendarClock, ChevronDown, Clock3, DollarSign, Edit2, Eye, FolderKanban, Plus, Settings2, Target, Trash2, TrendingUp } from "lucide-react";
 import { useRecords } from "../context/RecordsContext";
 import { useAuth } from "../context/AuthContext";
 import { casePriorityColors, caseStatusColors, knockStatusColors, mantisStatusColors, projectStageColors } from "../data/recordStyles";
@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popove
 import { Checkbox } from "../components/ui/checkbox";
 import { PageGuide } from "../components/PageGuide";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
+import { MultiRecordDropdown } from "../components/SearchableSelect";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -140,6 +141,11 @@ function isOpenCase(caseItem: CaseRecord) {
   return !CLOSED_CASE_STATUSES.has(caseItem.status ?? "");
 }
 
+function caseMatchesProductHotspotStatus(caseItem: CaseRecord, filter: ProductHotspotStatusFilter) {
+  if (filter === "both") return true;
+  return filter === "open" ? isOpenCase(caseItem) : !isOpenCase(caseItem);
+}
+
 function isOpenMantis(record: MantisRecord) {
   return !CLOSED_MANTIS_STATUSES.has((record.mantisStatus ?? "").trim().toLowerCase());
 }
@@ -188,6 +194,8 @@ function getDaysUntil(dateString: string | null | undefined) {
 
 type StatusAgingBucketId = "3m" | "6m" | "9m" | "12m";
 type StatusAgingSort = "oldest" | "newest";
+type ProductHotspotStatusFilter = "open" | "closed" | "both";
+type ProductHotspotRankMode = "top" | "bottom";
 
 type StatusAgingCase = CaseRecord & {
   agingBucket: StatusAgingBucketId;
@@ -204,6 +212,17 @@ const STATUS_AGING_BUCKETS: Array<{ id: StatusAgingBucketId; label: string; deta
   { id: "9m", label: "9 months", detail: "270-364 days", minDays: 270, maxDays: 365 },
   { id: "12m", label: ">12 months", detail: "365+ days", minDays: 365 },
 ];
+const PRODUCT_HOTSPOT_STATUS_OPTIONS: Array<{ value: ProductHotspotStatusFilter; label: string }> = [
+  { value: "open", label: "Open" },
+  { value: "closed", label: "Closed" },
+  { value: "both", label: "Both" },
+];
+const PRODUCT_HOTSPOT_RANK_OPTIONS: Array<{ value: ProductHotspotRankMode; label: string }> = [
+  { value: "top", label: "Top" },
+  { value: "bottom", label: "Bottom" },
+];
+const PRODUCT_HOTSPOT_MIN_LIMIT = 1;
+const PRODUCT_HOTSPOT_MAX_LIMIT = 20;
 
 function parseHistoryTimestamp(value: string | null | undefined) {
   const text = (value ?? "").trim().replace("T", " ");
@@ -382,12 +401,23 @@ function ManagerHome() {
   const [statusAgingSort, setStatusAgingSort] = useState<StatusAgingSort>("oldest");
   const [productTrendDateStart, setProductTrendDateStart] = useState("");
   const [productTrendDateEnd, setProductTrendDateEnd] = useState("");
+  const [productHotspotStatusFilter, setProductHotspotStatusFilter] = useState<ProductHotspotStatusFilter>("open");
+  const [productHotspotRankMode, setProductHotspotRankMode] = useState<ProductHotspotRankMode>("top");
+  const [productHotspotLimit, setProductHotspotLimit] = useState(8);
+  const [selectedProductHotspotIds, setSelectedProductHotspotIds] = useState<string[]>([]);
 
   const hasVerticalFilter = selectedVerticals.length > 0;
   const selectedVerticalSet = new Set<AccountVertical>(selectedVerticals);
   const accountsById = new Map(accounts.map((account) => [account.recordId, account]));
   const projectsById = new Map(projects.map((project) => [project.recordId, project]));
   const productsById = new Map(products.map((product) => [product.recordId, product]));
+  const selectedProductHotspotIdSet = new Set(selectedProductHotspotIds);
+  const hasProductHotspotProductFilter = selectedProductHotspotIds.length > 0;
+  const productHotspotProductOptions = products.map((product) => ({
+    value: product.recordId,
+    label: product.productName,
+    description: getProductSubtitle(product),
+  }));
   const verticalFilterLabel = selectedVerticals.length === 0
     ? "All verticals"
     : selectedVerticals.length === 1
@@ -432,12 +462,18 @@ function ManagerHome() {
   const openProjects = filteredProjects.filter((project) => !project.isClosed);
   const productTrendDateRange = normalizeDateRange(productTrendDateStart, productTrendDateEnd);
   const hasProductTrendDateRange = Boolean(productTrendDateRange.startDate || productTrendDateRange.endDate);
-  const productTrendCases = openCases.filter((caseItem) =>
+  const hasProductHotspotFilters = hasProductTrendDateRange || hasProductHotspotProductFilter;
+  const productTrendDateCases = filteredCases.filter((caseItem) =>
     caseMatchesDateRange(caseItem, productTrendDateRange.startDate, productTrendDateRange.endDate)
   );
-  const productTrendTotalCases = filteredCases.filter((caseItem) =>
-    caseMatchesDateRange(caseItem, productTrendDateRange.startDate, productTrendDateRange.endDate)
+  const productTrendCases = productTrendDateCases.filter((caseItem) =>
+    caseMatchesProductHotspotStatus(caseItem, productHotspotStatusFilter)
   );
+  const productHotspotStatusLabel =
+    PRODUCT_HOTSPOT_STATUS_OPTIONS.find((option) => option.value === productHotspotStatusFilter)?.label ?? "Open";
+  const productHotspotTooltipLabel = productHotspotStatusFilter === "both" ? "Total cases" : `${productHotspotStatusLabel} cases`;
+  const productHotspotEmptyStatusLabel =
+    productHotspotStatusFilter === "both" ? "open or closed" : productHotspotStatusLabel.toLowerCase();
   const managerDisplayName = (user?.displayName ?? "").trim();
   const managerKey = managerDisplayName.toLowerCase();
   const managerAssignedCases = managerKey
@@ -481,19 +517,27 @@ function ManagerHome() {
     return acc;
   }, {})).sort((left, right) => (right.escalated * 3 + right.veryHigh * 2 + right.total) - (left.escalated * 3 + left.veryHigh * 2 + left.total));
 
-  const productCaseTotals = productTrendTotalCases.reduce<Record<string, number>>((acc, caseItem) => {
+  const productCaseTotals = productTrendDateCases.reduce<Record<string, number>>((acc, caseItem) => {
     for (const productId of uniqueNonEmptyValues(caseItem.productIds ?? [])) {
+      if (hasProductHotspotProductFilter && !selectedProductHotspotIdSet.has(productId)) continue;
       acc[productId] = (acc[productId] ?? 0) + 1;
     }
     return acc;
   }, {});
 
-  const productCaseHotspots = Object.values(productTrendCases.reduce<Record<string, {
+  const normalizedProductHotspotLimit = Math.min(
+    PRODUCT_HOTSPOT_MAX_LIMIT,
+    Math.max(PRODUCT_HOTSPOT_MIN_LIMIT, productHotspotLimit || PRODUCT_HOTSPOT_MIN_LIMIT),
+  );
+
+  const allProductCaseHotspots = Object.values(productTrendCases.reduce<Record<string, {
     id: string;
     productId: string;
     productName: string;
     productDetail: string;
+    selectedCases: number;
     openCases: number;
+    closedCases: number;
     totalCases: number;
     escalated: number;
     veryHigh: number;
@@ -501,13 +545,17 @@ function ManagerHome() {
     owners: Set<string>;
   }>>((acc, caseItem) => {
     for (const productId of uniqueNonEmptyValues(caseItem.productIds ?? [])) {
+      if (hasProductHotspotProductFilter && !selectedProductHotspotIdSet.has(productId)) continue;
+
       const product = productsById.get(productId);
       acc[productId] = acc[productId] ?? {
         id: `product-${productId}`,
         productId,
         productName: getProductTitle(product, productId),
         productDetail: getProductSubtitle(product),
+        selectedCases: 0,
         openCases: 0,
+        closedCases: 0,
         totalCases: productCaseTotals[productId] ?? 0,
         escalated: 0,
         veryHigh: 0,
@@ -515,7 +563,12 @@ function ManagerHome() {
         owners: new Set<string>(),
       };
 
-      acc[productId].openCases += 1;
+      acc[productId].selectedCases += 1;
+      if (isOpenCase(caseItem)) {
+        acc[productId].openCases += 1;
+      } else {
+        acc[productId].closedCases += 1;
+      }
       if (caseItem.status === "Escalated") acc[productId].escalated += 1;
       if (caseItem.priority === "Very High") acc[productId].veryHigh += 1;
       if (caseItem.priority === "High" || caseItem.priority === "Very High") acc[productId].highPriority += 1;
@@ -527,15 +580,18 @@ function ManagerHome() {
   }, {}))
     .map(({ owners, ...product }) => ({ ...product, ownerCount: owners.size }))
     .sort((left, right) =>
-      right.openCases - left.openCases ||
+      right.selectedCases - left.selectedCases ||
       right.escalated - left.escalated ||
       right.veryHigh - left.veryHigh ||
       right.highPriority - left.highPriority ||
       right.totalCases - left.totalCases ||
       left.productName.localeCompare(right.productName)
-    )
-    .slice(0, 5);
-  const maxProductOpenCases = Math.max(1, ...productCaseHotspots.map((product) => product.openCases));
+    );
+  const productCaseHotspots = (
+    productHotspotRankMode === "top"
+      ? allProductCaseHotspots
+      : [...allProductCaseHotspots].reverse()
+  ).slice(0, normalizedProductHotspotLimit);
 
   const topFocusProjects = [...openProjects]
     .map((project) => {
@@ -858,6 +914,163 @@ function ManagerHome() {
         </div>
       </div>
 
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Product Case Hotspots</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Products with the most linked case activity by created date and status.
+            </p>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end lg:justify-end">
+            <div className="min-w-60 text-xs font-medium text-gray-600">
+              <span className="mb-1 block">Products</span>
+              <MultiRecordDropdown
+                label="products"
+                values={selectedProductHotspotIds}
+                options={productHotspotProductOptions}
+                emptyLabel="All products"
+                searchPlaceholder="Search products"
+                onChange={setSelectedProductHotspotIds}
+              />
+            </div>
+
+            <div className="text-xs font-medium text-gray-600">
+              <span className="mb-1 block">Status</span>
+              <div className="inline-flex h-9 rounded-lg border border-gray-200 bg-gray-50 p-1">
+                {PRODUCT_HOTSPOT_STATUS_OPTIONS.map((option) => {
+                  const isActive = option.value === productHotspotStatusFilter;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setProductHotspotStatusFilter(option.value)}
+                      className={`rounded-md px-3 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#E31937] ${
+                        isActive ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:bg-white/70"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="text-xs font-medium text-gray-600">
+              <span className="mb-1 block">Show</span>
+              <div className="inline-flex h-9 rounded-lg border border-gray-200 bg-gray-50 p-1">
+                {PRODUCT_HOTSPOT_RANK_OPTIONS.map((option) => {
+                  const isActive = option.value === productHotspotRankMode;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setProductHotspotRankMode(option.value)}
+                      className={`rounded-md px-3 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#E31937] ${
+                        isActive ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:bg-white/70"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <label className="w-24 text-xs font-medium text-gray-600">
+              <span className="mb-1 block">Count</span>
+              <input
+                type="number"
+                min={PRODUCT_HOTSPOT_MIN_LIMIT}
+                max={PRODUCT_HOTSPOT_MAX_LIMIT}
+                value={productHotspotLimit}
+                onChange={(event) => {
+                  const nextValue = Number(event.target.value);
+                  setProductHotspotLimit(
+                    Number.isFinite(nextValue)
+                      ? Math.min(PRODUCT_HOTSPOT_MAX_LIMIT, Math.max(PRODUCT_HOTSPOT_MIN_LIMIT, nextValue))
+                      : PRODUCT_HOTSPOT_MIN_LIMIT,
+                  );
+                }}
+                className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+              />
+            </label>
+
+            <label className="min-w-0 text-xs font-medium text-gray-600">
+              <span className="mb-1 block">From date created</span>
+              <input
+                type="date"
+                value={productTrendDateStart}
+                onChange={(event) => setProductTrendDateStart(event.target.value)}
+                className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+              />
+            </label>
+            <label className="min-w-0 text-xs font-medium text-gray-600">
+              <span className="mb-1 block">To date created</span>
+              <input
+                type="date"
+                value={productTrendDateEnd}
+                onChange={(event) => setProductTrendDateEnd(event.target.value)}
+                className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setProductTrendDateStart("");
+                setProductTrendDateEnd("");
+                setSelectedProductHotspotIds([]);
+              }}
+              disabled={!hasProductHotspotFilters}
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Clear filters
+            </button>
+          </div>
+        </div>
+
+        {productCaseHotspots.length > 0 ? (
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={productCaseHotspots}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <XAxis dataKey="productName" stroke="#6B7280" interval={0} angle={-12} textAnchor="end" height={80} />
+              <YAxis stroke="#6B7280" allowDecimals={false} />
+              <Tooltip
+                formatter={(value, name) => {
+                  const label = name === "openCases"
+                    ? "Open cases"
+                    : name === "closedCases"
+                      ? "Closed cases"
+                      : productHotspotTooltipLabel;
+                  return [Number(value), label];
+                }}
+                labelFormatter={(label) => String(label)}
+              />
+              {productHotspotStatusFilter === "both" ? (
+                <>
+                  <Legend />
+                  <Bar dataKey="openCases" name="Open" stackId="cases" fill="#16A34A" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="closedCases" name="Closed" stackId="cases" fill="#E31937" radius={[6, 6, 0, 0]} />
+                </>
+              ) : (
+                <Bar
+                  dataKey={productHotspotStatusFilter === "open" ? "openCases" : "closedCases"}
+                  name={productHotspotStatusLabel}
+                  fill={productHotspotStatusFilter === "open" ? "#16A34A" : "#E31937"}
+                  radius={[6, 6, 0, 0]}
+                />
+              )}
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <p className="py-12 text-center text-sm text-gray-500">
+            {hasProductTrendDateRange
+              ? `No ${productHotspotEmptyStatusLabel} cases are linked to products in this date-created range.`
+              : `No ${productHotspotEmptyStatusLabel} cases are linked to products in this view.`}
+          </p>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
         <div data-guide-id="manager-home-focus" className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-200 p-5">
@@ -906,97 +1119,6 @@ function ManagerHome() {
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Product Case Hotspots</h2>
-                  <p className="mt-1 text-sm text-gray-500">Products with the most open linked case activity.</p>
-                </div>
-                <PackageSearch className="h-5 w-5 text-gray-400" />
-              </div>
-
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                <label className="min-w-0 text-xs font-medium text-gray-600">
-                  <span className="mb-1 block">From date created</span>
-                  <input
-                    type="date"
-                    value={productTrendDateStart}
-                    onChange={(event) => setProductTrendDateStart(event.target.value)}
-                    className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                  />
-                </label>
-                <label className="min-w-0 text-xs font-medium text-gray-600">
-                  <span className="mb-1 block">To date created</span>
-                  <input
-                    type="date"
-                    value={productTrendDateEnd}
-                    onChange={(event) => setProductTrendDateEnd(event.target.value)}
-                    className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProductTrendDateStart("");
-                    setProductTrendDateEnd("");
-                  }}
-                  disabled={!hasProductTrendDateRange}
-                  className="mt-5 inline-flex h-9 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-auto"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {productCaseHotspots.map((product) => (
-                <button
-                  key={product.id}
-                  type="button"
-                  onClick={() =>
-                    navigate("/cases", {
-                      state: withManagerVerticalFilters({
-                        statusFilters: OPEN_CASE_STATUS_FILTERS,
-                        productFilters: [product.productId],
-                      }),
-                    })
-                  }
-                  className="block w-full rounded-lg border border-gray-100 p-3 text-left transition-colors hover:border-red-100 hover:bg-red-50/40 focus:outline-none focus:ring-2 focus:ring-[#E31937]"
-                >
-                  <div className="mb-2 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-gray-900">{product.productName}</p>
-                      <p className="mt-0.5 truncate text-xs text-gray-500">{product.productDetail}</p>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-lg font-semibold leading-none text-gray-900">{product.openCases}</p>
-                      <p className="mt-0.5 text-xs text-gray-500">open</p>
-                    </div>
-                  </div>
-
-                  <div className="h-2 rounded-full bg-gray-100">
-                    <div
-                      className="h-2 rounded-full bg-[#E31937]"
-                      style={{ width: `${Math.max(8, (product.openCases / maxProductOpenCases) * 100)}%` }}
-                    />
-                  </div>
-
-                  <p className="mt-2 text-xs text-gray-500">
-                    {product.escalated} escalated, {product.highPriority} high priority, {product.totalCases} total linked
-                  </p>
-                </button>
-              ))}
-              {productCaseHotspots.length === 0 && (
-                <p className="py-6 text-sm text-gray-500">
-                  {hasProductTrendDateRange
-                    ? "No open cases are linked to products in this date-created range."
-                    : "No open cases are linked to products in this view."}
-                </p>
-              )}
-            </div>
-          </div>
-
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900">Team Load</h2>
             <p className="mt-1 text-sm text-gray-500">Open case pressure by SE owner.</p>
