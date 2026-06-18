@@ -69,7 +69,7 @@ export function RecordHistoryTimeline({
     <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         {onQuote ? (
-          <p className="text-xs text-gray-500">Click a history item to quote it in your comment.</p>
+          <p className="text-xs text-gray-500">Click a history item to reply it instead of commenting.</p>
         ) : (
           <span />
         )}

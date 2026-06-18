@@ -134,11 +134,14 @@ const DETAIL_NODE_DESCRIPTION_LINE_LENGTH = 31;
 const DETAIL_NODE_DESCRIPTION_START_Y = 108;
 const DETAIL_NODE_DESCRIPTION_LINE_HEIGHT = 14;
 const PERIOD_ENTRY_DESCRIPTION_LINE_LENGTH = 39;
-const PERIOD_ENTRY_DESCRIPTION_START_Y = 27;
-const PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT = 13;
-const PERIOD_ENTRY_META_GAP = 5;
-const PERIOD_ENTRY_META_BOTTOM_PADDING = 14;
+const PERIOD_ENTRY_LIST_TOP_GAP = 8;
+const PERIOD_ENTRY_DESCRIPTION_START_Y = 31;
+const PERIOD_ENTRY_DESCRIPTION_LINE_HEIGHT = 14;
+const PERIOD_ENTRY_META_GAP = 8;
+const PERIOD_ENTRY_META_BOTTOM_PADDING = 24;
 const GRAPH_PADDING = 28;
+const GRAPH_INITIAL_LEFT_INSET = 32;
+const GRAPH_INITIAL_VERTICAL_INSET = 32;
 const MIN_GRAPH_SCALE = 0.35;
 const MAX_GRAPH_SCALE = 2.5;
 const INITIAL_VIEWPORT: GraphViewportTransform = { x: 0, y: 0, scale: 1 };
@@ -456,7 +459,7 @@ function getPeriodEntryRowHeight(item: HistoryGraphEntryItem) {
 }
 
 function getPeriodEntryRows(entries: HistoryGraphEntryItem[]): HistoryPeriodEntryRow[] {
-  let nextRowY = PERIOD_NODE_HEADER_HEIGHT;
+  let nextRowY = PERIOD_NODE_HEADER_HEIGHT + PERIOD_ENTRY_LIST_TOP_GAP;
 
   return entries.map((entry) => {
     const descriptionLines = getWrappedGraphDetailLines(entry, PERIOD_ENTRY_DESCRIPTION_LINE_LENGTH);
@@ -627,6 +630,41 @@ function getCenterPoint(element: HTMLElement | null) {
   return {
     x: rect.width / 2,
     y: rect.height / 2,
+  };
+}
+
+function getFirstGraphColumnBounds(layout: HistoryGraphLayout) {
+  if (layout.nodes.length === 0) return null;
+
+  const firstColumnX = Math.min(...layout.nodes.map((node) => node.x));
+  const firstColumnNodes = layout.nodes.filter((node) => Math.abs(node.x - firstColumnX) < 1);
+  const top = Math.min(...firstColumnNodes.map((node) => node.y));
+  const bottom = Math.max(...firstColumnNodes.map((node) => node.y + node.height));
+  const right = Math.max(...firstColumnNodes.map((node) => node.x + node.width));
+
+  return {
+    x: firstColumnX,
+    y: top,
+    width: right - firstColumnX,
+    height: bottom - top,
+  };
+}
+
+function createInitialGraphViewport(layout: HistoryGraphLayout, viewportElement: HTMLElement | null): GraphViewportTransform {
+  const firstColumn = getFirstGraphColumnBounds(layout);
+  if (!firstColumn || !viewportElement) return INITIAL_VIEWPORT;
+
+  const viewportRect = viewportElement.getBoundingClientRect();
+  const firstColumnTop = GRAPH_PADDING + firstColumn.y;
+  const firstColumnCenterY = firstColumnTop + firstColumn.height / 2;
+  const availableHeight = Math.max(0, viewportRect.height - GRAPH_INITIAL_VERTICAL_INSET * 2);
+
+  return {
+    scale: 1,
+    x: GRAPH_INITIAL_LEFT_INSET - (GRAPH_PADDING + firstColumn.x),
+    y: firstColumn.height > availableHeight
+      ? GRAPH_INITIAL_VERTICAL_INSET - firstColumnTop
+      : viewportRect.height / 2 - firstColumnCenterY,
   };
 }
 
@@ -1058,7 +1096,7 @@ function HistoryPeriodNode({
               {truncateText(`${entry.timestampLabel} - ${entry.user}`, 45)}
             </text>
             {entryIndex < rows.length - 1 && (
-              <line x1="0" y1={rowHeight - 4} x2={node.width - 32} y2={rowHeight - 4} stroke="#F3F4F6" />
+              <line x1="0" y1={rowHeight - 10} x2={node.width - 32} y2={rowHeight - 10} stroke="#E5E7EB" />
             )}
           </g>
         );
@@ -1216,6 +1254,7 @@ export function RecordHistoryGraphDialog({
   const [isPanning, setIsPanning] = useState(false);
   const graphViewportRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<GraphPanStart | null>(null);
+  const shouldPreserveViewportOnNextLayoutRef = useRef(false);
 
   useEffect(() => {
     setSelectedWeekKeys((currentKeys) =>
@@ -1247,16 +1286,25 @@ export function RecordHistoryGraphDialog({
     if (!open) return;
 
     let isCancelled = false;
-    setLayout(null);
+    const shouldPreserveViewport = shouldPreserveViewportOnNextLayoutRef.current;
+    if (!shouldPreserveViewport) setLayout(null);
     setLayoutError(null);
-    setViewportTransform(INITIAL_VIEWPORT);
+    if (!shouldPreserveViewport) setViewportTransform(INITIAL_VIEWPORT);
 
     void layoutHistoryGraph(graphItems)
       .then((nextLayout) => {
-        if (!isCancelled) setLayout(nextLayout);
+        if (!isCancelled) {
+          setLayout(nextLayout);
+          if (shouldPreserveViewport) {
+            shouldPreserveViewportOnNextLayoutRef.current = false;
+          } else {
+            setViewportTransform(createInitialGraphViewport(nextLayout, graphViewportRef.current));
+          }
+        }
       })
       .catch((error) => {
         console.error("Failed to build history graph:", error);
+        shouldPreserveViewportOnNextLayoutRef.current = false;
         if (!isCancelled) setLayoutError("Unable to build the graph for this history.");
       });
 
@@ -1312,6 +1360,18 @@ export function RecordHistoryGraphDialog({
     setIsPanning(false);
   };
 
+  const handleGraphReply: GraphReplyHandler | undefined = onReply
+    ? async (entry, comment) => {
+        shouldPreserveViewportOnNextLayoutRef.current = true;
+        try {
+          await onReply(entry, comment);
+        } catch (error) {
+          shouldPreserveViewportOnNextLayoutRef.current = false;
+          throw error;
+        }
+      }
+    : undefined;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -1365,7 +1425,7 @@ export function RecordHistoryGraphDialog({
                 onToggleFullscreen={() => setIsFullscreen((current) => !current)}
                 onZoomIn={() => zoomBy(1.18)}
                 onZoomOut={() => zoomBy(0.84)}
-                onReset={() => setViewportTransform(INITIAL_VIEWPORT)}
+                onReset={() => setViewportTransform(layout ? createInitialGraphViewport(layout, graphViewportRef.current) : INITIAL_VIEWPORT)}
               />
             )}
 
@@ -1392,8 +1452,8 @@ export function RecordHistoryGraphDialog({
                   transformOrigin: "0 0",
                 }}
               >
-                <GraphSvg layout={layout} onShowReplies={setReplyPanelItem} canReply={Boolean(onReply)} />
-                <GraphReplyButtons layout={layout} onShowReplies={setReplyPanelItem} canReply={Boolean(onReply)} />
+                <GraphSvg layout={layout} onShowReplies={setReplyPanelItem} canReply={Boolean(handleGraphReply)} />
+                <GraphReplyButtons layout={layout} onShowReplies={setReplyPanelItem} canReply={Boolean(handleGraphReply)} />
               </div>
             )}
 
@@ -1401,7 +1461,7 @@ export function RecordHistoryGraphDialog({
               <GraphRepliesPanel
                 item={replyPanelItem}
                 onClose={() => setReplyPanelItem(null)}
-                onReply={onReply}
+                onReply={handleGraphReply}
                 isReplying={isReplying}
               />
             )}
