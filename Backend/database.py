@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 try:
     db_pool = pooling.MySQLConnectionPool(
         pool_name="crm_pool",
-        pool_size=5,
+        pool_size=settings.db_pool_size,
         pool_reset_session=True,
         host=settings.db_host,
         port=settings.db_port,
@@ -25,7 +25,7 @@ try:
         raise_on_warnings=False,
         autocommit=True,
     )
-    logger.info("Database connection pool created successfully")
+    logger.info("Database connection pool created successfully with size %s", settings.db_pool_size)
 except Exception as e:
     logger.exception("Failed to create database connection pool")
     db_pool = None

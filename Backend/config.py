@@ -26,6 +26,7 @@ class Settings:
     db_user: str = os.getenv("DB_USER", "root")
     db_password: str = os.getenv("DB_PASSWORD", "")
     db_name: str = os.getenv("DB_NAME", "crm")
+    db_pool_size: int = int(os.getenv("DB_POOL_SIZE", "20"))
 
     port: int = int(os.getenv("PORT", "4000"))
     host: str = os.getenv("HOST", "0.0.0.0")

@@ -99,6 +99,7 @@ DB_PORT=3306
 DB_USER=crm_uat_user
 DB_PASSWORD=crm_uat_password
 DB_NAME=crm_uat
+DB_POOL_SIZE=20
 
 HOST=127.0.0.1
 PORT=4001
