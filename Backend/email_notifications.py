@@ -182,6 +182,8 @@ def _build_password_reset_message(user: Mapping[str, Any], reset_token: str, exp
                 "",
                 reset_url,
                 "",
+                "PLEASE CHANGE STARTING PORTION TO http://192.168.88.72/login",
+                "",
                 "If you did not request this, you can ignore this email.",
             ]
         )
