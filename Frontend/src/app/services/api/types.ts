@@ -15,6 +15,10 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
+export interface PasswordResetResponse {
+  success: boolean;
+}
+
 export interface UpdateProfileRequest {
   displayName?: string;
   email?: string;

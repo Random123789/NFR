@@ -197,6 +197,19 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  userId INT NOT NULL,
+  tokenHash VARCHAR(128) NOT NULL UNIQUE,
+  expiresAt DATETIME NOT NULL,
+  usedAt DATETIME NULL,
+  createdAt DATETIME NOT NULL,
+  requestedIp VARCHAR(64) NULL,
+  INDEX idx_password_reset_tokens_userId (userId),
+  INDEX idx_password_reset_tokens_expiresAt (expiresAt),
+  FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS user_bookmarks (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   userId INT NOT NULL,

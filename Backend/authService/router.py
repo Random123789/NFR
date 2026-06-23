@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -14,10 +15,12 @@ from pydantic import BaseModel
 
 from config import settings
 from database import execute_mutation, execute_query
+from email_notifications import is_smtp_configured, send_password_reset_email
 from schemas import AccountVertical
 from utils import current_timestamp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 DEFAULT_USER_EMAIL = "admin@local"
 LEGACY_DEFAULT_USER_EMAIL = "admin@mantis.local"
@@ -25,6 +28,7 @@ DEFAULT_USER_PASSWORD = "Admin123!"
 DEFAULT_USER_NAME = "Admin User"
 DEFAULT_USER_ROLE = "admin"
 TOKEN_TTL_DAYS = 7
+PASSWORD_RESET_TTL_MINUTES = 60
 ACCOUNT_VERTICALS = ("Channel", "Commercial", "Enterprise", "Government", "FSI", "Telco")
 
 
@@ -59,6 +63,19 @@ class UpdateMeRequest(BaseModel):
     email: Optional[str] = None
     currentPassword: Optional[str] = None
     newPassword: Optional[str] = None
+
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str
+    password: str
+
+
+class PasswordResetResponse(BaseModel):
+    success: bool
 
 
 class CreateUserRequest(BaseModel):
@@ -190,6 +207,22 @@ async def ensure_auth_tables() -> None:
           createdAt DATETIME NOT NULL,
           INDEX idx_user_sessions_userId (userId),
           INDEX idx_user_sessions_expiresAt (expiresAt),
+          FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    await execute_mutation(
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          userId INT NOT NULL,
+          tokenHash VARCHAR(128) NOT NULL UNIQUE,
+          expiresAt DATETIME NOT NULL,
+          usedAt DATETIME NULL,
+          createdAt DATETIME NOT NULL,
+          requestedIp VARCHAR(64) NULL,
+          INDEX idx_password_reset_tokens_userId (userId),
+          INDEX idx_password_reset_tokens_expiresAt (expiresAt),
           FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
         )
         """
@@ -336,6 +369,23 @@ async def ensure_default_user() -> None:
     )
 
 
+async def _record_audit_log(
+    user_id: Optional[int],
+    user_email: str,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    details: dict,
+) -> None:
+    await execute_mutation(
+        """
+        INSERT INTO audit_logs (userId, userEmail, action, entityType, entityId, details, createdAt)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        [user_id, user_email, action, entity_type, entity_id, json.dumps(details), _now()],
+    )
+
+
 def _get_token_from_request(request: Request) -> Optional[str]:
     header = request.headers.get("authorization")
     if not header or not header.startswith("Bearer "):
@@ -387,6 +437,129 @@ async def require_manager_or_admin_user(request: Request) -> dict:
     if user.get("role") not in {"admin", "manager"}:
         raise HTTPException(status_code=403, detail="Manager access required")
     return user
+
+
+@router.post("/password-reset/request", response_model=PasswordResetResponse)
+async def request_password_reset(request: Request, data: PasswordResetRequest) -> PasswordResetResponse:
+    """Create a short-lived password reset token and email it to the account address."""
+
+    if not is_smtp_configured():
+        raise HTTPException(status_code=503, detail="Password reset email is not configured. Contact an administrator.")
+
+    email = data.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    user = await execute_query(
+        """
+        SELECT id, email, displayName
+        FROM users
+        WHERE LOWER(email) = %s
+          AND isActive = 1
+        LIMIT 1
+        """,
+        [email],
+        fetch_one=True,
+    )
+
+    # Do not reveal whether the email belongs to an active account.
+    if not user:
+        return PasswordResetResponse(success=True)
+
+    reset_token = secrets.token_urlsafe(32)
+    now = _now()
+    expires_at = current_timestamp(datetime.now() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES))
+    requested_ip = request.client.host if request.client else None
+
+    await execute_mutation(
+        """
+        UPDATE password_reset_tokens
+        SET usedAt = %s
+        WHERE userId = %s
+          AND usedAt IS NULL
+        """,
+        [now, user["id"]],
+    )
+    await execute_mutation(
+        """
+        INSERT INTO password_reset_tokens (userId, tokenHash, expiresAt, createdAt, requestedIp)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        [user["id"], _hash_token(reset_token), expires_at, now, requested_ip],
+    )
+
+    try:
+        await send_password_reset_email(user, reset_token, PASSWORD_RESET_TTL_MINUTES)
+    except Exception as exc:
+        logger.exception("Password reset email failed for user %s", user["id"])
+        raise HTTPException(status_code=503, detail="Could not send password reset email. Contact an administrator.") from exc
+
+    await _record_audit_log(
+        user["id"],
+        user["email"],
+        "REQUEST_PASSWORD_RESET",
+        "users",
+        str(user["id"]),
+        {"requestedIp": requested_ip},
+    )
+
+    return PasswordResetResponse(success=True)
+
+
+@router.post("/password-reset/confirm", response_model=PasswordResetResponse)
+async def confirm_password_reset(data: PasswordResetConfirmRequest) -> PasswordResetResponse:
+    """Consume a reset token and set a new password."""
+
+    token = data.token.strip()
+    password = data.password.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Reset token is required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    row = await execute_query(
+        """
+        SELECT prt.id, prt.userId, u.email
+        FROM password_reset_tokens prt
+        INNER JOIN users u ON u.id = prt.userId
+        WHERE prt.tokenHash = %s
+          AND prt.usedAt IS NULL
+          AND prt.expiresAt > NOW()
+          AND u.isActive = 1
+        LIMIT 1
+        """,
+        [_hash_token(token)],
+        fetch_one=True,
+    )
+
+    if not row:
+        raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
+
+    now = _now()
+    await execute_mutation(
+        """
+        UPDATE users
+        SET passwordHash = %s,
+            updatedAt = %s
+        WHERE id = %s
+        """,
+        [_hash_password(password), now, row["userId"]],
+    )
+    await execute_mutation(
+        "UPDATE password_reset_tokens SET usedAt = %s WHERE id = %s",
+        [now, row["id"]],
+    )
+    await execute_mutation("DELETE FROM user_sessions WHERE userId = %s", [row["userId"]])
+    await _record_audit_log(
+        row["userId"],
+        row["email"],
+        "CONFIRM_PASSWORD_RESET",
+        "users",
+        str(row["userId"]),
+        {"sessionsRevoked": True},
+    )
+
+    return PasswordResetResponse(success=True)
 
 
 @router.post("/login", response_model=LoginResponse)

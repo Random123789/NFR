@@ -5,6 +5,7 @@ import type {
   AuthUser,
   CreateUserRequest,
   ManagedUser,
+  PasswordResetResponse,
   UpdateManagedUserRequest,
   UpdateManagedUserPasswordRequest,
   UpdateManagedUserRoleRequest,
@@ -15,6 +16,20 @@ export async function login(identifier: string, password: string) {
   return fetchJson<AuthResponse>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email: identifier, password }),
+  });
+}
+
+export async function requestPasswordReset(email: string) {
+  return fetchJson<PasswordResetResponse>('/auth/password-reset/request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword(token: string, password: string) {
+  return fetchJson<PasswordResetResponse>('/auth/password-reset/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
   });
 }
 

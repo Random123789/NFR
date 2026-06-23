@@ -8,6 +8,7 @@ from email.utils import formataddr
 import logging
 import smtplib
 from typing import Any, Mapping, Sequence
+from urllib.parse import quote
 
 from config import settings
 from database import execute_query
@@ -49,6 +50,10 @@ def _smtp_configured() -> bool:
             settings.smtp_from_email,
         ]
     )
+
+
+def is_smtp_configured() -> bool:
+    return _smtp_configured()
 
 
 async def _fetch_case_recipients(case_record: Mapping[str, Any]) -> list[str]:
@@ -155,6 +160,35 @@ def _build_case_update_message(
     return message
 
 
+def _password_reset_url(token: str) -> str:
+    return f"{settings.app_base_url}/login?resetToken={quote(token, safe='')}"
+
+
+def _build_password_reset_message(user: Mapping[str, Any], reset_token: str, expires_minutes: int) -> EmailMessage:
+    display_name = _clean_text(user.get("displayName")) or "there"
+    reset_url = _password_reset_url(reset_token)
+
+    message = EmailMessage()
+    message["Subject"] = "[CRM] Reset your password"
+    message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from_email))
+    message["To"] = _clean_text(user.get("email"))
+    message.set_content(
+        "\n".join(
+            [
+                f"Hi {display_name},",
+                "",
+                "We received a request to reset your CRM password.",
+                f"This link expires in {expires_minutes} minutes:",
+                "",
+                reset_url,
+                "",
+                "If you did not request this, you can ignore this email.",
+            ]
+        )
+    )
+    return message
+
+
 def _send_message(message: EmailMessage) -> None:
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as smtp:
         if settings.smtp_use_starttls:
@@ -191,3 +225,23 @@ async def send_case_update_notification(
         )
     except Exception:
         logger.exception("Failed to send case update email for %s.", case_record.get("recordId"))
+
+
+async def send_password_reset_email(user: Mapping[str, Any], reset_token: str, expires_minutes: int) -> None:
+    """Send a password reset link to the user's account email."""
+
+    if not _smtp_configured():
+        raise RuntimeError("SMTP is not configured")
+
+    email = _normalize_email(user.get("email"))
+    if not email:
+        raise RuntimeError("User email is missing")
+
+    message = _build_password_reset_message(user, reset_token, expires_minutes)
+
+    try:
+        await asyncio.to_thread(_send_message, message)
+        logger.info("Sent password reset email for user %s to %s", user.get("id"), email)
+    except Exception:
+        logger.exception("Failed to send password reset email for user %s.", user.get("id"))
+        raise
