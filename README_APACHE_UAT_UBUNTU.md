@@ -250,6 +250,7 @@ sudo certbot --apache -d uat.crm.example.com
 Backend changes:
 
 ```bash
+cd ~/Documents/NFR
 sudo rsync -a --delete \
   --exclude '.git' \
   --exclude '.venv' \
@@ -277,3 +278,25 @@ sudo chown -R www-data:www-data /var/www/crm-uat
 ## UAT Summary
 
 UAT should be a full parallel deployment. Share the source code if you want, but keep the Apache vhost, backend process, backend port, build output, and database separate from production.
+
+
+```bash
+cd ~/Documents/NFR
+sudo rsync -a --delete \
+  --exclude '.git' \
+  --exclude '.venv' \
+  --exclude 'Backend/.env' \
+  --exclude 'Backend/.venv' \
+  --exclude 'Frontend/node_modules' \
+  --exclude 'Frontend/dist' \
+  ./ /opt/crm-uat/
+sudo chown -R root:www-data /opt/crm-uat
+sudo chmod -R g+rX /opt/crm-uat
+sudo chmod 640 /opt/crm-uat/Backend/.env
+sudo systemctl restart crm-backend-uat
+cd /opt/crm-uat/Frontend
+sudo npm ci
+sudo env VITE_API_URL=/api npm run build
+sudo rsync -a --delete dist/ /var/www/crm-uat/
+sudo chown -R www-data:www-data /var/www/crm-uat
+```

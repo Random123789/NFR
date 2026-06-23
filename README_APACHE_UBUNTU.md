@@ -256,6 +256,7 @@ sudo certbot --apache -d crm.example.com
 Backend changes:
 
 ```bash
+cd ~/Documents/NFR
 sudo rsync -a --delete \
   --exclude '.git' \
   --exclude '.venv' \
@@ -283,3 +284,25 @@ sudo chown -R www-data:www-data /var/www/crm
 ## Production Summary
 
 Production should have its own Apache vhost, backend service, backend port, and database. You can reuse the same source code, but do not share the same runtime directories, `.env`, or database with UAT.
+
+
+```bash
+cd ~/Documents/NFR
+sudo rsync -a --delete \
+  --exclude '.git' \
+  --exclude '.venv' \
+  --exclude 'Backend/.env' \
+  --exclude 'Backend/.venv' \
+  --exclude 'Frontend/node_modules' \
+  --exclude 'Frontend/dist' \
+  ./ /opt/crm/
+sudo chown -R root:www-data /opt/crm
+sudo chmod -R g+rX /opt/crm
+sudo chmod 640 /opt/crm/Backend/.env
+sudo systemctl restart crm-backend
+cd /opt/crm/Frontend
+sudo npm ci
+sudo env VITE_API_URL=/api npm run build
+sudo rsync -a --delete dist/ /var/www/crm/
+sudo chown -R www-data:www-data /var/www/crm
+```
