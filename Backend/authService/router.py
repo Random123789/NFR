@@ -369,6 +369,28 @@ async def ensure_default_user() -> None:
     )
 
 
+async def cleanup_expired_auth_tokens() -> dict[str, int]:
+    """Remove expired session tokens and expired/used password reset tokens."""
+
+    deleted_sessions = await execute_mutation("DELETE FROM user_sessions WHERE expiresAt <= NOW()")
+    deleted_reset_tokens = await execute_mutation(
+        """
+        DELETE FROM password_reset_tokens
+        WHERE expiresAt <= NOW()
+           OR usedAt IS NOT NULL
+        """
+    )
+    logger.info(
+        "Auth token cleanup removed %s expired sessions and %s reset tokens",
+        deleted_sessions,
+        deleted_reset_tokens,
+    )
+    return {
+        "expiredSessions": deleted_sessions,
+        "resetTokens": deleted_reset_tokens,
+    }
+
+
 async def _record_audit_log(
     user_id: Optional[int],
     user_email: str,

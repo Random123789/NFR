@@ -546,6 +546,7 @@ Authenticated app loads
 | Password storage | Passwords are hashed with PBKDF2-HMAC-SHA512 and a per-password salt. |
 | Session tokens | Login returns a random token; only a SHA-256 token hash is stored in MySQL. |
 | Token TTL | Sessions expire after 7 days. |
+| Token cleanup | Backend startup creates a background task that removes expired sessions plus expired/used password reset tokens immediately and then every 7 days while the backend is running. |
 | Password reset tokens | Reset requests store only a SHA-256 token hash, expire after 60 minutes, are single-use, and revoke existing sessions after reset. |
 | Frontend token storage | The bearer token is stored in `localStorage`. |
 | Protected frontend routes | All app pages except `/login` are wrapped in `ProtectedRoute`. |
@@ -579,6 +580,8 @@ The backend runs service startup hooks from `startup_services()` in `Backend/ser
 | `recordReadService` | `ensure_record_read_tables` | Ensures per-user read-state tables exist. |
 
 `knockService` currently has no startup hook.
+
+After startup hooks complete, `Backend/main.py` schedules `scheduled_auth_token_cleanup()`. It runs `cleanup_expired_auth_tokens()` once immediately and then weekly to keep `user_sessions` and `password_reset_tokens` from accumulating stale rows.
 
 ## 12. Local Development
 

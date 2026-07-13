@@ -10,6 +10,8 @@ The app has three connected parts:
 
 For the fuller architecture guide, API catalog, data model, and extension notes, see [SYSTEM_DOCUMENTATION.md](SYSTEM_DOCUMENTATION.md).
 
+For a more explain-it-to-someone walkthrough of frontend functions, backend routes, and database links, see [FUNCTION_FLOW_GUIDE.md](FUNCTION_FLOW_GUIDE.md).
+
 ## Runtime Shape
 
 ```text

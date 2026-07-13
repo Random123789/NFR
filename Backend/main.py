@@ -1,11 +1,14 @@
 """FastAPI main application."""
 
+import asyncio
 import os
+from contextlib import suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
+from authService import cleanup_expired_auth_tokens
 from config import settings
 from database import ping_database
 from service_registry import SERVICES, register_services, startup_services
@@ -13,6 +16,7 @@ from service_registry import SERVICES, register_services, startup_services
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+AUTH_CLEANUP_INTERVAL_SECONDS = 7 * 24 * 60 * 60
 
 # Create FastAPI app
 app = FastAPI(
@@ -35,9 +39,30 @@ app.add_middleware(
 register_services(app)
 
 
+async def scheduled_auth_token_cleanup() -> None:
+    """Clean expired auth tokens on startup and weekly while the app runs."""
+
+    while True:
+        try:
+            await cleanup_expired_auth_tokens()
+        except Exception:
+            logger.exception("Scheduled auth token cleanup failed")
+        await asyncio.sleep(AUTH_CLEANUP_INTERVAL_SECONDS)
+
+
 @app.on_event("startup")
 async def startup_bootstrap():
     await startup_services()
+    app.state.auth_cleanup_task = asyncio.create_task(scheduled_auth_token_cleanup())
+
+
+@app.on_event("shutdown")
+async def shutdown_background_tasks():
+    auth_cleanup_task = getattr(app.state, "auth_cleanup_task", None)
+    if auth_cleanup_task:
+        auth_cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await auth_cleanup_task
 
 
 @app.get("/health")
