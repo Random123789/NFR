@@ -8,9 +8,12 @@ The app has three connected parts:
 - **Backend** (`Backend/`): Python + FastAPI API gateway with domain routers.
 - **Database**: MySQL schema and seed scripts in `Backend/sql/`.
 
-For the fuller architecture guide, API catalog, data model, and extension notes, see [SYSTEM_DOCUMENTATION.md](SYSTEM_DOCUMENTATION.md).
+## Documentation
 
-For a more explain-it-to-someone walkthrough of frontend functions, backend routes, and database links, see [FUNCTION_FLOW_GUIDE.md](FUNCTION_FLOW_GUIDE.md).
+- [Beginner guide](BEGINNER_GUIDE_FOR_NEWCOMERS.md) ([Word copy](BEGINNER_GUIDE_FOR_NEWCOMERS.docx)): Plain-English orientation and worked change examples.
+- [System documentation](SYSTEM_DOCUMENTATION.md): Architecture, API catalog, data model, implementation flows, security, and extension notes.
+- [Production Apache deployment](README_APACHE_UBUNTU.md): Production deployment on Ubuntu.
+- [UAT Apache deployment](README_APACHE_UAT_UBUNTU.md): Isolated UAT deployment on Ubuntu.
 
 ## Runtime Shape
 
@@ -39,7 +42,7 @@ Frontend routes are defined in `Frontend/src/app/routes.tsx`.
 - `/accounts`, `/projects`, `/mantis`, `/knock`, `/product`: entity list/detail workflows.
 - `/reports`: visual custom report builder and saved reports.
 - `/bookmarked`: saved bookmarks.
-- `/backlog`: unread/recent activity style backlog.
+- `/backlog`: personal follow-up list built from records the current user has touched, with newer activity highlighted.
 - `/feedback`: app feedback submission/review workflow.
 - `/profile`: profile, password, and admin user management.
 
@@ -76,7 +79,7 @@ Backend configuration is read from `Backend/.env` by `Backend/config.py`.
 | `PORT` | `4000` | FastAPI bind port. |
 | `CORS_ORIGIN` | `http://localhost:5173` | Primary allowed frontend origin. |
 | `ENVIRONMENT` | `development` | Enables local Vite CORS regex in development. |
-| `APP_BASE_URL` | `CORS_ORIGIN` or `http://localhost:5173` | Base URL used in case update emails. |
+| `APP_BASE_URL` | `CORS_ORIGIN` or `http://localhost:5173` | Frontend base URL used in case-update and password-reset links. |
 
 Optional email settings are also in `Backend/config.py`: `EMAIL_NOTIFICATIONS_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`, `SMTP_USE_STARTTLS`, and `SMTP_TIMEOUT_SECONDS`. These settings are used for case update emails and password reset emails.
 

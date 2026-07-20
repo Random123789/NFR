@@ -6,6 +6,8 @@ The Mantis application is a web-based CRM and case-management system for trackin
 
 It is organized as a React frontend, a FastAPI backend, and a MySQL database. The backend acts as a local API gateway that mounts domain routers under a shared `/api` prefix.
 
+Audit note: this document was cross-checked against the frontend, backend, SQL schema, and deployment assets on 20 July 2026.
+
 ```text
 Browser
   -> React + Vite frontend
@@ -33,7 +35,7 @@ Browser
 | `Backend/*Service/router.py` | Backend service modules for each domain. |
 | `Backend/entity_crud.py` | Shared CRUD implementation for standard record-backed services. |
 | `Backend/report_builder.py` | Safe SQL compiler for visual custom reports. |
-| `Backend/email_notifications.py` | Optional SMTP case-update email delivery. |
+| `Backend/email_notifications.py` | Optional SMTP case-update and password-reset email delivery. |
 | `Backend/sql/schema.sql` | MySQL schema definition. |
 | `Backend/sql/seed.sql` | Initial seed data. |
 | `deploy/apache/crm.conf` | Apache virtual host that serves the frontend and proxies backend routes. |
@@ -74,7 +76,7 @@ The backend is a FastAPI app in `Backend/main.py`.
 | `utils.py` | Shared timestamp, record normalization, and history-entry helpers. |
 | `entity_crud.py` | Reusable list/detail/create/update/delete/history behavior for standard entities. |
 | `report_builder.py` | Validates report-builder specs and compiles them into whitelisted SQL. |
-| `email_notifications.py` | Sends optional case update emails to owners/watchers when SMTP is configured. |
+| `email_notifications.py` | Sends optional case-update and password-reset emails when SMTP is configured. |
 
 ### Database
 
@@ -94,7 +96,7 @@ Backend configuration is read from `Backend/.env` by `Backend/config.py`.
 | `PORT` | `4000` | Backend bind port. |
 | `CORS_ORIGIN` | `http://localhost:5173` | Primary allowed frontend origin. |
 | `ENVIRONMENT` | `development` | Enables local Vite CORS regex in development. |
-| `APP_BASE_URL` | `CORS_ORIGIN` or `http://localhost:5173` | Base URL used in case update emails. |
+| `APP_BASE_URL` | `CORS_ORIGIN` or `http://localhost:5173` | Frontend base URL used in case-update and password-reset links. |
 | `EMAIL_NOTIFICATIONS_ENABLED` | `false` | Enables SMTP case update and password reset emails when all SMTP values are configured. |
 | `SMTP_HOST` | `smtp.gmail.com` | SMTP server. |
 | `SMTP_PORT` | `587` | SMTP port. |
@@ -104,6 +106,8 @@ Backend configuration is read from `Backend/.env` by `Backend/config.py`.
 | `SMTP_FROM_NAME` | `NFR CRM` | Sender display name. |
 | `SMTP_USE_STARTTLS` | `true` | Whether to start TLS. |
 | `SMTP_TIMEOUT_SECONDS` | `10` | SMTP timeout. |
+
+`CORS_ORIGIN` is combined with explicit localhost and `127.0.0.1` origins on ports `5173` and `5174`. When `ENVIRONMENT=development`, a regular expression additionally allows any localhost or `127.0.0.1` port. The regular expression is disabled outside development.
 
 ## 4. Application Entry Points
 
@@ -144,7 +148,7 @@ All service APIs are mounted under:
 | Route | Page | Purpose |
 | --- | --- | --- |
 | `/login` | `Login` | Authenticates a user and stores the bearer token. |
-| `/` | `Home` | Shows dashboards, case metrics, recent cases, product/account signals, and role-specific views. |
+| `/` | `Home` | Shows dashboards, case metrics, recent cases, and product/account signals. The `manager` role gets `ManagerHome`; `user` and `admin` currently get `SalesEngineerHome`. |
 | `/cases`, `/cases/:recordSlug` | `Cases` | Lists, filters, edits, bookmarks, comments on, watches, and links cases. |
 | `/accounts`, `/accounts/:recordSlug` | `Accounts` | Manages account records and related projects/cases. |
 | `/projects`, `/projects/:recordSlug` | `Projects` | Manages project records and links them to accounts/cases. |
@@ -153,7 +157,7 @@ All service APIs are mounted under:
 | `/product`, `/product/:recordSlug` | `Product` | Manages product records and linked cases. |
 | `/reports` | `Reports` | Builds, previews, saves, reorders, resizes, runs, and deletes custom reports. |
 | `/bookmarked` | `Bookmarked` | Shows user-saved bookmarks grouped by entity type. |
-| `/backlog` | `Backlog` | Shows activity and read-state driven work items. |
+| `/backlog` | `Backlog` | Builds a personal follow-up list from records the current user has acted on and highlights later activity by other users. Acknowledge/delete state is stored in browser `localStorage`. |
 | `/feedback` | `AppFeedback` | Lets users submit app feedback and lets admins review open feedback. |
 | `/profile` | `Profile` | Updates profile/password, deletes own account, and exposes admin user management. |
 
@@ -280,7 +284,7 @@ Account visibility is also role-aware:
 | `GET` | `/api/reports/custom/{reportId}/run` | Runs a saved custom report. |
 | `DELETE` | `/api/reports/custom/{reportId}` | Deletes a saved custom report. |
 
-The visual report builder accepts a safe `ReportQuerySpec` rather than raw SQL. The backend compiles the spec using a whitelist of sources, joins, fields, operators, limits, and sort options.
+The visual report builder accepts a safe `ReportQuerySpec` rather than raw SQL. The backend compiles the spec using a whitelist of sources, joins, fields, operators, limits, and sort options. For non-manager/non-admin users, report queries involving cases currently allow matching `assignedTo`, matching `seOwner`, or a linked account in the user's vertical. Unlike the main case list, report execution does not currently include watcher-only access. Direct account reports are limited to the user's vertical.
 
 ### Bookmarks
 
@@ -300,7 +304,7 @@ case, project, account, mantis, knock, product
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `GET` | `/api/notifications/recent?hours=24` | Returns recent visible activity notifications from the selected time window. `hours` is clamped to 1 through 168. |
+| `GET` | `/api/notifications/recent?hours=24` | Returns recent visible activity notifications from the selected time window. `hours` must be between 1 and 168. |
 | `POST` | `/api/notifications/dismiss` | Dismisses one notification for the current user. |
 | `POST` | `/api/notifications/clear-all` | Clears all current notifications for the current user. |
 
@@ -344,7 +348,7 @@ Most non-case domain tables share these common fields:
 | --- | --- |
 | `recordId` | Human-readable primary key such as `ACC-001`, `PRD-001`, or `MANTIS-001`. |
 | `moduleId` | Module identifier such as `MOD-ACCOUNT`. |
-| `recordRevision` | Record revision string, currently `1.0`. |
+| `recordRevision` | Record revision string. Shared CRUD creates new records with `1.0`; older or seeded records may contain another revision value. |
 | `metaData` | Optional free-form metadata. |
 | `ownedBy` | Owner display name. |
 | `createdAt`, `createdBy` | Creation audit metadata. |
@@ -368,6 +372,8 @@ Cases intentionally use a smaller record shape and do not inherit `BaseRecord`.
 | `case_watcher_opt_outs` | Watcher self-removal/opt-out state. |
 
 ### User and Application State Tables
+
+Most tables are present in `Backend/sql/schema.sql`. `custom_reports` is currently created and upgraded by the `reportsService` startup hook instead of the initial schema file.
 
 | Table | Purpose |
 | --- | --- |
@@ -474,6 +480,17 @@ User opens a record page
   -> detail view can edit, bookmark, comment, and navigate linked entities
 ```
 
+Shared frontend state keeps the record pages consistent:
+
+| Frontend function or hook | Responsibility |
+| --- | --- |
+| `RecordsProvider()` | Loads accounts, products, projects, Mantis records, knocks, and visible cases after login. |
+| `refreshRecords()` | Fetches the main record types in parallel. |
+| `upsertByRecordId()` / `removeByRecordId()` | Keeps the in-memory record arrays synchronized after create, update, or delete operations. |
+| `useRoutedEntityDetail()` | Synchronizes list/detail state with route parameters, edit mode, active tab, and back navigation. |
+| `useLinkedCases()` | Loads available and existing case links and exposes link/unlink actions. |
+| `useRecordComments()` | Submits comments and replies through the correct history API and updates local record state. |
+
 ### Record Create or Update
 
 ```text
@@ -486,6 +503,30 @@ Frontend submits typed payload
   -> backend returns normalized JSON
   -> frontend upserts/removes local record arrays and selected detail state
 ```
+
+### Database and Shared CRUD Internals
+
+Standard record routers do not access MySQL directly. They use the shared CRUD and database layers:
+
+```text
+Account/Product/Project/Mantis/Knock router
+  -> EntityCrudConfig selects the approved table and fields
+  -> create_entity(), update_entity(), delete_entity(), or another shared CRUD function
+  -> execute_query() or execute_mutation()
+  -> pooled MySQL connection
+```
+
+| Function | Responsibility |
+| --- | --- |
+| `get_connection()` | Gets a connection from the MySQL pool. |
+| `execute_query()` | Runs a read in a worker thread and normalizes stored history JSON. |
+| `execute_mutation()` | Runs a parameterized write, commits on success, and rolls back on failure. |
+| `generate_record_id()` | Generates the next prefixed application ID for a record table. |
+| `EntityCrudConfig` | Declares the table, ID prefix, approved data/search/nullable fields, labels, and duplicate rules for a standard entity. |
+| `create_entity()` | Checks duplicates, generates an ID, writes the record, and adds creation history. |
+| `update_entity()` | Compares old and new values, checks constraints, writes changed fields, and appends field-level history. |
+| `delete_entity()` | Verifies the record and removes it after the service router has handled dependent links. |
+| `add_entity_history()` | Appends a manual comment/history entry and returns the updated record. |
 
 ### Case Linking
 
@@ -508,6 +549,32 @@ Case is created or updated
   -> if a case update changes tracked fields and SMTP is configured, a background email task notifies case owners/watchers
 ```
 
+### Case Persistence Internals
+
+Cases use custom persistence because they combine direct fields, many-to-many links, watchers, visibility, and email:
+
+```text
+createCase(data)
+  -> POST /api/cases
+  -> create_case()
+  -> generate_record_id("REC", "cases")
+  -> INSERT into cases
+  -> replace account/product/Mantis/Knock rows in case_entity_links
+  -> add owner and assignee watchers
+  -> enrich and return the saved case
+
+updateCase(recordId, data)
+  -> PUT /api/cases/{recordId}
+  -> update_case()
+  -> authenticate and verify case visibility
+  -> compare fields and append history
+  -> update cases, provided links, and watchers
+  -> queue send_case_update_notification() when applicable
+  -> enrich and return the saved case
+```
+
+`enrich_case_record()` and `enrich_case_records()` add link ID arrays and watcher names to raw case rows before the frontend receives them. `ensure_case_link_tables()` maintains the case schema and link/watch tables, backfills legacy links, and cleans invalid relationship rows during startup.
+
 ### Custom Report Builder
 
 ```text
@@ -519,6 +586,21 @@ Reports page loads schema
   -> GET /api/reports/custom/{id}/run renders saved report
 ```
 
+The backend never accepts raw SQL from the frontend. `execute_report_query()` validates the base source and selected fields, resolves required joins, compiles filters into parameterized SQL, applies case/account visibility, clamps the result limit, and then calls `execute_query()`. The main compiler helpers are `_get_source()`, `_get_field()`, `_requested_joins()`, `_build_join_sql()`, `_build_filter_sql()`, `_apply_case_visibility()`, and `_apply_account_visibility()`.
+
+### Bookmarks
+
+```text
+User changes a bookmark
+  -> BookmarksProvider updates browser state optimistically
+  -> addUserBookmark() or removeUserBookmark()
+  -> POST /api/bookmarks or DELETE /api/bookmarks/{type}/{id}
+  -> backend scopes the operation to the authenticated user
+  -> user_bookmarks is inserted, updated, or deleted
+```
+
+`BookmarksProvider()` loads bookmarks after login and exposes `addBookmark()`, `removeBookmark()`, and `isBookmarked()`. `ensure_bookmark_tables()` creates dependencies and migrates legacy `nfr` bookmark types to `mantis`.
+
 ### Notifications
 
 ```text
@@ -529,6 +611,8 @@ MainLayout polls every 60 seconds
   -> user can dismiss one or clear all
 ```
 
+Notifications are generated from recently updated visible domain records rather than stored as full notification rows. `get_recent_notifications()` queries recent cases, projects, accounts, products, Mantis records, and knocks; applies role/link visibility; removes IDs found in `user_notification_dismissals`; respects the user's timestamp in `user_notification_state`; sorts the result; and returns at most 20 items. `dismiss_notification()` stores one hidden event ID, while `clear_all_notifications()` advances the user's clear-all timestamp.
+
 ### Read State
 
 ```text
@@ -538,6 +622,52 @@ Authenticated app loads
   -> user views a record
   -> POST /api/record-reads/mark-read stores lastSeenAt for that entity
 ```
+
+`RecordReadProvider()` exposes `refreshRecordReadState()`, `isRecordUnread()`, and `markRecordRead()`. The frontend compares each record's latest activity timestamp with the user's baseline or per-record `lastSeenAt`. The backend `get_record_read_state()` creates the baseline when needed, and `mark_record_read()` upserts the read timestamp in `user_record_reads`.
+
+### Backlog
+
+Backlog is separate from the backend record-read service:
+
+```text
+Backlog collects each loaded record's history
+  -> keeps records containing an action by the current user's display name or email
+  -> compares the user's latest action with later actions by other people
+  -> highlights records with newer activity
+  -> stores Acknowledge and Delete choices in browser localStorage
+```
+
+Because acknowledgement and deletion are browser-local, those Backlog choices do not automatically follow the user to another browser or device.
+
+### App Feedback
+
+```text
+User submits feedback
+  -> submitAppFeedback() sends multipart form data
+  -> POST /api/app-feedback
+  -> create_app_feedback() validates category, text, image count, and image sizes
+  -> app_feedback and optional app_feedback_images rows are written
+
+Admin reviews feedback
+  -> GET /api/app-feedback lists open items
+  -> GET /api/app-feedback/images/{id} loads an attached image
+  -> PUT /api/app-feedback/{id}/done marks the item complete
+```
+
+Submission is available to authenticated users. Listing, image access, and completion are admin-only. `ensure_app_feedback_tables()` creates and upgrades both feedback tables during startup.
+
+### Email Delivery
+
+SMTP is shared by case-update and password-reset flows:
+
+```text
+Case update or password-reset request
+  -> verify _smtp_configured()
+  -> resolve recipients and build the appropriate message
+  -> _send_message() sends through the configured SMTP server
+```
+
+`send_case_update_notification()` resolves email addresses for the case owner, assignee, and watchers, builds a case link from `APP_BASE_URL`, formats changed fields, and sends in a background task. `send_password_reset_email()` builds the one-time reset URL and reports delivery failure to the password-reset route. Both flows require `EMAIL_NOTIFICATIONS_ENABLED=true` and complete SMTP configuration.
 
 ## 10. Security and Access Control
 
@@ -554,7 +684,7 @@ Authenticated app loads
 | Manager role | Managers share broad account/case visibility and can delete standard records/cases. |
 | Account visibility | Non-admin/non-manager users only see accounts in their assigned vertical. |
 | Case visibility | Non-admin/non-manager users see cases associated with their display name, watched cases, or cases linked to accounts in their assigned vertical. |
-| Report visibility | Saved reports are scoped to the current user. Report execution applies case/account visibility when those sources are active. |
+| Report visibility | Saved reports are scoped to the current user. Case reports restrict non-manager/non-admin users by owner, assignee, or linked-account vertical, but currently omit watcher-only access. Direct account reports are restricted by vertical. |
 | Notifications | Notifications are scoped by user visibility, dismissal state, and clear-all state. |
 | Bookmarks and read state | Scoped to the current user. |
 | App feedback | Submission requires any authenticated user. Listing, image access, and mark-done require admin. |
@@ -587,12 +717,24 @@ After startup hooks complete, `Backend/main.py` schedules `scheduled_auth_token_
 
 ### Backend
 
-```bash
+Windows PowerShell:
+
+```powershell
 cd Backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python main.py
+```
+
+Linux or macOS shell:
+
+```bash
+cd Backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 main.py
 ```
 
 Expected backend URL:
@@ -641,6 +783,8 @@ The repository includes deployment examples:
 | --- | --- |
 | `deploy/apache/crm.conf` | Apache virtual host for `crm.local`, static frontend serving, SPA fallback, asset caching, and backend proxying. |
 | `deploy/systemd/crm-backend.service` | systemd service running `python main.py` from `/opt/crm/Backend` as `www-data`. |
+
+See [README_APACHE_UBUNTU.md](README_APACHE_UBUNTU.md) for production and [README_APACHE_UAT_UBUNTU.md](README_APACHE_UAT_UBUNTU.md) for an isolated UAT environment.
 
 Apache proxies these backend paths to `127.0.0.1:4000`:
 

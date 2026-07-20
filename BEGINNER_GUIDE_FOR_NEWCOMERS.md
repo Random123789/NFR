@@ -4,7 +4,9 @@ This is the plain-English guide for newcomers. It explains what the application 
 
 This file does not replace any README. The existing README files remain the setup and deployment references. Use this guide when you need to understand the app before editing it.
 
-Audit note: the descriptions and examples below were checked against the current frontend, backend, database schema, and deployment files on 13 July 2026. If the code changes later, treat the code as the final source of truth and update this guide with it.
+Maintenance note: edit this Markdown file as the source of truth. After editing, regenerate `BEGINNER_GUIDE_FOR_NEWCOMERS.docx` from the repository root with `python tools/build_docx_from_markdown.py BEGINNER_GUIDE_FOR_NEWCOMERS.md BEGINNER_GUIDE_FOR_NEWCOMERS.docx`.
+
+Audit note: the descriptions and examples below were checked against the current frontend, backend, database schema, and deployment files on 20 July 2026. If the code changes later, treat the code as the final source of truth and update this guide with it.
 
 ## Who this guide is for
 
@@ -65,7 +67,7 @@ After login, the browser route decides which page to show. These are the main ar
 
 | Screen | What it is for |
 | --- | --- |
-| Home | A role-aware summary of active work. Managers receive a manager-focused dashboard; other users receive an SE-focused dashboard. |
+| Home | A role-aware summary of active work. The `manager` role receives a manager-focused dashboard; `user` and `admin` currently receive the SE-focused dashboard. |
 | Cases | Tracks a piece of customer work or an escalation and links it to related records. |
 | Accounts | Stores customer, distributor, and reseller organizations. |
 | Projects | Stores customer projects, dates, ownership, stage, and SFDC details. |
@@ -74,7 +76,7 @@ After login, the browser route decides which page to show. These are the main ar
 | Knock | Tracks Knock feature requests. The URL is generated in the frontend from the Knock ID. |
 | Reports | Builds and saves reports from approved data sources and fields. |
 | Bookmarked | Shows records saved by the current user. |
-| Backlog | Shows unread or recently changed records for the current user. |
+| Backlog | Shows records the current user has acted on and highlights later activity by other users. Acknowledge/delete choices are stored in that browser. |
 | Feedback | Lets any logged-in user submit app feedback; administrators can review open items and mark them done. |
 | Profile | Lets a user update their profile or password. Administrators also manage other user accounts here. |
 
@@ -88,9 +90,9 @@ The code recognizes three roles. A role controls permissions; it is not just a l
 | Manager (`manager`) | Can see all accounts and cases and can delete normal business records. |
 | Administrator (`admin`) | Has manager-level record access and can also create/update users, reset other users' passwords, and review app feedback. |
 
-Project, product, Mantis, and Knock list endpoints currently return all matching records to any logged-in user. Reports enforce case and account visibility when those sources are used. Notification results also apply role-aware visibility rules.
+Project, product, Mantis, and Knock list endpoints currently return all matching records to any logged-in user. Reports restrict case data by owner, assignee, or linked-account vertical and restrict direct account data by vertical, but report execution does not currently include watcher-only case access. Notification results apply the fuller role-aware visibility rules, including watchers.
 
-If two people see different accounts, cases, reports, or notifications, check their role, display name, vertical, case ownership, assignment, and watcher status before assuming data is missing.
+If two people see different accounts, cases, or notifications, check their role, display name, vertical, case ownership, assignment, and watcher status before assuming data is missing. For reports, watcher-only access is not currently included.
 
 ## Folder map
 
@@ -184,7 +186,7 @@ Reports do not accept raw SQL from the browser. The frontend sends a structured 
 
 This is why adding a report field usually means editing `SOURCE_DEFS` in `Backend/report_builder.py`, not writing custom SQL in the frontend.
 
-Saved reports belong to the user who created them. When a report includes cases or accounts, the backend also applies the current user's visibility rules.
+Saved reports belong to the user who created them. For an SE user, case reports include cases where they are the owner or assignee or where a linked account shares their vertical; watcher-only case access is not currently included. Direct account reports are limited to the user's vertical.
 
 ### Bookmarks, unread rows, and notifications
 
@@ -195,6 +197,8 @@ These are user-specific features.
 | Bookmarks | Stores records a user saved. |
 | Read state | Stores what a user has already seen. |
 | Notifications | Builds a list from recent record activity, then hides dismissed or cleared items per user. Notification items themselves are not stored as a permanent master list. |
+
+Backlog is separate from read state. It examines record history for actions by the current user, flags later actions by other people, and stores its Acknowledge/Delete choices in browser `localStorage` rather than MySQL.
 
 ### App feedback
 
@@ -346,6 +350,14 @@ Restart the backend so the changed Python model is loaded. Then open the app, cr
 
 Common mistake: only editing the frontend dropdown. If the backend type is not updated, the browser may show the new option but the API can reject the save.
 
+### AI prompt (alternative to the manual steps)
+
+Copy and paste this prompt into an AI coding assistant that has access to this repository:
+
+```text
+Add a new Case priority named "Critical" throughout this application. Inspect the current code before editing, then update the Case priority dropdown options, the frontend TypeScript CasePriority type, the backend Pydantic CasePriority validation, and the priority badge colors. Add an appropriate red badge style for Critical and preserve every existing priority and behavior. Run the backend compile check and the frontend build when finished. Then summarize the files changed and tell me how to confirm that Critical appears, saves, and remains after a page reload.
+```
+
 ## Example 2: Edit the page help guide text
 
 Goal: Change the guided tips shown on a page.
@@ -385,6 +397,14 @@ npm run build
 
 Then open the page and launch the guide.
 
+### AI prompt (alternative to the manual steps)
+
+Replace the bracketed details, then copy and paste this prompt into an AI coding assistant that has access to this repository:
+
+```text
+Update the in-app page guide for [PAGE NAME]. Change the guide step titled "[CURRENT TITLE]" so its title is "[NEW TITLE]" and its description is "[NEW DESCRIPTION]". Inspect Frontend/src/app/data/pageGuides.ts and the matching page component before editing. Keep the existing targetId unless it is incorrect; verify that it exactly matches a data-guide-id on the intended screen element. Do not change guide text for other pages. Run the frontend build when finished, summarize the change, and tell me how to check the updated guide in the browser.
+```
+
 ## Example 3: Add a field to the report builder
 
 Goal: Let Reports use the Knock URL field.
@@ -411,6 +431,14 @@ Test it:
 - Choose Knocks as a source.
 - Confirm `Knock URL` appears as a field.
 - Run a detail report containing `Knock URL` and confirm the returned values are correct.
+
+### AI prompt (alternative to the manual steps)
+
+Copy and paste this prompt into an AI coding assistant that has access to this repository:
+
+```text
+Expose the existing knocks.knockUrl column in the report builder as "Knock URL". Inspect Backend/report_builder.py and add the field to the existing knocks source definition immediately after knockId. Preserve all existing knock fields, date fields, status fields, and join definitions; do not replace or shorten the source block. Run the backend compile check when finished, summarize the exact change, and tell me how to verify the field in a detail report after restarting the backend.
+```
 
 ## Example 4: Add a new field to an existing record type
 
@@ -556,6 +584,14 @@ Common mistakes:
 - Updating `schema.sql` only. Existing databases do not rerun the initial `CREATE TABLE` definition, so they still need the startup migration.
 - Updating `ProductRecord` only. The backend still rejects or drops the field unless `ProductCreate` and `PRODUCT_CONFIG.data_fields` also include it.
 
+### AI prompt (alternative to the manual steps)
+
+Copy and paste this prompt into an AI coding assistant that has access to this repository:
+
+```text
+Add an optional text field named supportTier, displayed as "Support Tier", to products across the entire application. Inspect the current implementation and follow an existing optional product field through every layer. Update the fresh-install database schema, the idempotent startup migration for existing databases, backend ProductRecord and ProductCreate models, PRODUCT_CONFIG data fields/labels/search/null handling, the frontend ProductRecord type, the Product list/detail/edit/save UI, normal product creation, and quick product creation inside case creation. Also expose Support Tier in the product report fields. Preserve all existing configuration entries and behavior rather than replacing whole collections or blocks. Run the backend compile check and frontend build. Then summarize every changed file and provide a browser test checklist covering create, quick create, edit, reload persistence, database migration, search, and reports.
+```
+
 ## Example 5: Understand a create/edit save flow
 
 When you create or edit a product, no single file does everything. Each layer has one job:
@@ -603,6 +639,14 @@ Cases page or CreateEntityDialog
 ```
 
 The project relationship is the exception: it is stored directly in `cases.project`, not as a project row in `case_entity_links`.
+
+### AI prompt (alternative to tracing the flow manually)
+
+Copy and paste this prompt into an AI coding assistant that has access to this repository:
+
+```text
+Trace the current create and edit save flow for products in this repository without changing any files. Start at the Product page and CreateEntityDialog, then follow the API service, fetchJson, backend route and Pydantic validation, shared CRUD helper, MySQL operation, returned ProductRecord, and RecordsContext update. Cite the exact files and function names you find, explain what each layer is responsible for in beginner-friendly language, and point out where a value could be lost if it appears in the form but disappears after a page reload. Briefly compare this flow with cases, including linked entities, watchers, and the special handling of the project relationship.
+```
 
 ## Deployment explained simply
 

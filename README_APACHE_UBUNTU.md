@@ -25,6 +25,8 @@ Recommended production values:
 - Database: `crm`
 - Database user: `crm_user`
 
+The host names and passwords below are examples. Replace them before using this guide on a real server.
+
 ## 1. Install Packages
 
 ```bash
@@ -55,7 +57,7 @@ GRANT ALL PRIVILEGES ON crm.* TO 'crm_user'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 
-# schema.sql currently contains "CREATE DATABASE crm" and "USE crm", so this
+# schema.sql currently contains "CREATE DATABASE IF NOT EXISTS crm" and "USE crm", so this
 # initializes the production database named crm.
 sudo mysql < Backend/sql/schema.sql
 
@@ -110,6 +112,7 @@ HOST=127.0.0.1
 PORT=4000
 ENVIRONMENT=production
 CORS_ORIGIN=http://crm.example.com
+APP_BASE_URL=http://crm.example.com
 EOF
 ```
 
@@ -123,34 +126,10 @@ sudo chmod 640 /opt/crm/Backend/.env
 
 ## 4. Install the Backend Service
 
-Create a dedicated systemd service such as `/etc/systemd/system/crm-backend.service`:
-
-```ini
-[Unit]
-Description=CRM FastAPI backend
-After=network-online.target mysql.service
-Wants=network-online.target mysql.service
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/crm/Backend
-EnvironmentFile=/opt/crm/Backend/.env
-Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/crm/Backend/.venv/bin/python main.py
-Restart=on-failure
-RestartSec=5
-User=www-data
-Group=www-data
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then enable it:
+Install the checked-in production service definition, then enable it:
 
 ```bash
+sudo cp /opt/crm/deploy/systemd/crm-backend.service /etc/systemd/system/crm-backend.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now crm-backend
 curl http://127.0.0.1:4000/health
@@ -171,59 +150,18 @@ sudo chown -R www-data:www-data /var/www/crm
 
 ## 6. Configure Apache
 
-Create `/etc/apache2/sites-available/crm.conf` from `deploy/apache/crm.conf` and change the placeholders:
+Copy the checked-in Apache configuration and edit its example host name:
+
+```bash
+sudo cp /opt/crm/deploy/apache/crm.conf /etc/apache2/sites-available/crm.conf
+sudo nano /etc/apache2/sites-available/crm.conf
+```
+
+At minimum, replace `ServerName crm.local` with `ServerName crm.example.com`. Change the document root and proxy port too if you are not using the recommended production layout:
 
 - `ServerName crm.example.com`
 - `DocumentRoot /var/www/crm`
 - `ProxyPass` targets to `http://127.0.0.1:4000`
-
-Example vhost:
-
-```apache
-<VirtualHost *:80>
-    ServerName crm.example.com
-
-    DocumentRoot /var/www/crm
-
-    ProxyPreserveHost On
-    ProxyRequests Off
-
-    ProxyPass /api/ http://127.0.0.1:4000/api/
-    ProxyPassReverse /api/ http://127.0.0.1:4000/api/
-    ProxyPass /api http://127.0.0.1:4000/api
-    ProxyPassReverse /api http://127.0.0.1:4000/api
-
-    ProxyPass /health http://127.0.0.1:4000/health
-    ProxyPassReverse /health http://127.0.0.1:4000/health
-    ProxyPass /docs http://127.0.0.1:4000/docs
-    ProxyPassReverse /docs http://127.0.0.1:4000/docs
-    ProxyPass /openapi.json http://127.0.0.1:4000/openapi.json
-    ProxyPassReverse /openapi.json http://127.0.0.1:4000/openapi.json
-
-    <Directory /var/www/crm>
-        Options -Indexes +FollowSymLinks
-        AllowOverride None
-        Require all granted
-
-        RewriteEngine On
-        RewriteRule ^index\.html$ - [L]
-        RewriteCond %{REQUEST_FILENAME} !-f
-        RewriteCond %{REQUEST_FILENAME} !-d
-        RewriteRule . /index.html [L]
-    </Directory>
-
-    <FilesMatch "\.(?:js|mjs|css|png|jpg|jpeg|gif|svg|webp|ico|woff2?)$">
-        Header set Cache-Control "public, max-age=31536000, immutable"
-    </FilesMatch>
-
-    <FilesMatch "\.html$">
-        Header set Cache-Control "no-cache"
-    </FilesMatch>
-
-    ErrorLog ${APACHE_LOG_DIR}/crm-error.log
-    CustomLog ${APACHE_LOG_DIR}/crm-access.log combined
-</VirtualHost>
-```
 
 Enable the site:
 
@@ -244,7 +182,7 @@ curl -H 'Host: crm.example.com' http://127.0.0.1/api/cases
 
 If the `/api/cases` command returns an auth error, that is still fine for a connectivity check.
 
-For a real production deployment, put the site behind HTTPS and update `CORS_ORIGIN` to the HTTPS origin:
+For a real production deployment, put the site behind HTTPS and update both `CORS_ORIGIN` and `APP_BASE_URL` to the HTTPS origin:
 
 ```bash
 sudo apt install -y certbot python3-certbot-apache
@@ -256,7 +194,7 @@ sudo certbot --apache -d crm.example.com
 Backend changes:
 
 ```bash
-cd ~/Documents/NFR
+cd /path/to/NFR
 sudo rsync -a --delete \
   --exclude '.git' \
   --exclude '.venv' \
@@ -268,6 +206,7 @@ sudo rsync -a --delete \
 sudo chown -R root:www-data /opt/crm
 sudo chmod -R g+rX /opt/crm
 sudo chmod 640 /opt/crm/Backend/.env
+sudo /opt/crm/Backend/.venv/bin/pip install -r /opt/crm/Backend/requirements.txt
 sudo systemctl restart crm-backend
 ```
 
@@ -284,25 +223,3 @@ sudo chown -R www-data:www-data /var/www/crm
 ## Production Summary
 
 Production should have its own Apache vhost, backend service, backend port, and database. You can reuse the same source code, but do not share the same runtime directories, `.env`, or database with UAT.
-
-
-```bash
-cd ~/Documents/NFR
-sudo rsync -a --delete \
-  --exclude '.git' \
-  --exclude '.venv' \
-  --exclude 'Backend/.env' \
-  --exclude 'Backend/.venv' \
-  --exclude 'Frontend/node_modules' \
-  --exclude 'Frontend/dist' \
-  ./ /opt/crm/
-sudo chown -R root:www-data /opt/crm
-sudo chmod -R g+rX /opt/crm
-sudo chmod 640 /opt/crm/Backend/.env
-sudo systemctl restart crm-backend
-cd /opt/crm/Frontend
-sudo npm ci
-sudo env VITE_API_URL=/api npm run build
-sudo rsync -a --delete dist/ /var/www/crm/
-sudo chown -R www-data:www-data /var/www/crm
-```
