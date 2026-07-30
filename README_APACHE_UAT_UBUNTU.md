@@ -49,7 +49,7 @@ npm --version
 
 ## 2. Create the UAT Database
 
-Use a separate schema from production so test data and test changes stay isolated:
+Run the commands in this section from the repository root. Use a separate schema from production so test data and test changes stay isolated:
 
 ```bash
 sudo mysql <<'SQL'
@@ -66,6 +66,8 @@ tail -n +3 Backend/sql/schema.sql | sudo mysql crm_uat
 # Optional: load demo data into the fresh UAT database.
 sudo mysql crm_uat < Backend/sql/seed.sql
 ```
+
+Use `schema.sql` to bootstrap a fresh UAT database. It contains standalone index and foreign-key statements and is not intended to be repeatedly imported over an initialized deployment.
 
 ## 3. Deploy the UAT Application
 

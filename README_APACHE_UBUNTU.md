@@ -47,7 +47,7 @@ npm --version
 
 ## 2. Create the Database
 
-Use a dedicated production database and user:
+Run the commands in this section from the repository root. Use a dedicated production database and user:
 
 ```bash
 sudo mysql <<'SQL'
@@ -71,6 +71,8 @@ If you choose a database name other than `crm`, load the schema without the firs
 tail -n +3 Backend/sql/schema.sql | sudo mysql your_database_name
 sudo mysql your_database_name < Backend/sql/seed.sql
 ```
+
+Use `schema.sql` to bootstrap a fresh database. It contains standalone index and foreign-key statements and is not intended to be repeatedly imported over an initialized deployment.
 
 ## 3. Deploy the Application
 

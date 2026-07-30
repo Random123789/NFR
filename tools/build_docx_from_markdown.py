@@ -150,6 +150,11 @@ def markdown_to_body(markdown: str) -> str:
             index += 1
             continue
 
+        if re.match(r"^[A-Z][A-Z0-9_]*=.*$", stripped):
+            parts.append(code_paragraph(stripped))
+            index += 1
+            continue
+
         paragraph_lines = [stripped]
         index += 1
         while index < len(lines):
@@ -159,6 +164,8 @@ def markdown_to_body(markdown: str) -> str:
             if next_stripped.startswith(("```", "|", "#", "- ")):
                 break
             if re.match(r"^\d+\.\s+", next_stripped):
+                break
+            if re.match(r"^[A-Z][A-Z0-9_]*=.*$", next_stripped):
                 break
             paragraph_lines.append(next_stripped)
             index += 1
@@ -259,7 +266,7 @@ def document_rels_xml() -> str:
 </Relationships>'''
 
 
-def core_xml() -> str:
+def core_xml(title: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
@@ -267,7 +274,7 @@ def core_xml() -> str:
   xmlns:dcterms="http://purl.org/dc/terms/"
   xmlns:dcmitype="http://purl.org/dc/dcmitype/"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <dc:title>NFR / Mantis CRM Beginner Guide</dc:title>
+  <dc:title>{xml_escape(title)}</dc:title>
   <dc:creator>Codex</dc:creator>
   <cp:lastModifiedBy>Codex</cp:lastModifiedBy>
   <dcterms:created xsi:type="dcterms:W3CDTF">{timestamp}</dcterms:created>
@@ -285,6 +292,8 @@ def app_xml() -> str:
 
 def build_docx(markdown_path: Path, output_path: Path) -> None:
     markdown = markdown_path.read_text(encoding="utf-8")
+    title_match = re.search(r"(?m)^#\s+(.+?)\s*$", markdown)
+    document_title = title_match.group(1) if title_match else markdown_path.stem
     body = markdown_to_body(markdown)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -294,7 +303,7 @@ def build_docx(markdown_path: Path, output_path: Path) -> None:
         docx.writestr("word/document.xml", document_xml(body))
         docx.writestr("word/_rels/document.xml.rels", document_rels_xml())
         docx.writestr("word/styles.xml", styles_xml())
-        docx.writestr("docProps/core.xml", core_xml())
+        docx.writestr("docProps/core.xml", core_xml(document_title))
         docx.writestr("docProps/app.xml", app_xml())
 
 

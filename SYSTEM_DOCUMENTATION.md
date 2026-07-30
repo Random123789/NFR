@@ -6,7 +6,7 @@ The Mantis application is a web-based CRM and case-management system for trackin
 
 It is organized as a React frontend, a FastAPI backend, and a MySQL database. The backend acts as a local API gateway that mounts domain routers under a shared `/api` prefix.
 
-Audit note: this document was cross-checked against the frontend, backend, SQL schema, and deployment assets on 20 July 2026.
+Audit note: this document was cross-checked against the frontend, backend, SQL schema, and deployment assets on 30 July 2026.
 
 ```text
 Browser
@@ -277,7 +277,7 @@ Account visibility is also role-aware:
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `GET` | `/api/reports/custom` | Lists current user's saved reports. |
-| `GET` | `/api/reports/builder/schema` | Returns whitelisted report sources, joins, fields, and operators. |
+| `GET` | `/api/reports/builder/schema` | Returns whitelisted report sources, joins, fields, and operators. This route is currently public; the other report routes require authentication. |
 | `POST` | `/api/reports/preview` | Runs an unsaved report query spec. |
 | `POST` | `/api/reports/custom` | Saves a custom report. |
 | `PUT` | `/api/reports/custom/{reportId}` | Updates a custom report. |
@@ -680,6 +680,7 @@ Case update or password-reset request
 | Password reset tokens | Reset requests store only a SHA-256 token hash, expire after 60 minutes, are single-use, and revoke existing sessions after reset. |
 | Frontend token storage | The bearer token is stored in `localStorage`. |
 | Protected frontend routes | All app pages except `/login` are wrapped in `ProtectedRoute`. |
+| Public backend routes | `/`, `/health`, `/docs`, `/openapi.json`, login, password-reset request/confirmation, and `/api/reports/builder/schema` do not require a bearer token. Logout also returns success without a valid token and removes the session when a valid token is supplied. |
 | Admin role | Admins can list users, create users, update users, reset passwords, and review app feedback. |
 | Manager role | Managers share broad account/case visibility and can delete standard records/cases. |
 | Account visibility | Non-admin/non-manager users only see accounts in their assigned vertical. |
@@ -717,6 +718,8 @@ After startup hooks complete, `Backend/main.py` schedules `scheduled_auth_token_
 
 ### Backend
 
+Use Python 3.10 or newer.
+
 Windows PowerShell:
 
 ```powershell
@@ -744,6 +747,8 @@ http://localhost:4000
 ```
 
 ### Frontend
+
+The Ubuntu deployment guides use Node.js 20 or newer.
 
 ```bash
 cd Frontend
@@ -774,6 +779,8 @@ cd Backend
 Get-Content .\sql\schema.sql | mysql -u root -p
 Get-Content .\sql\seed.sql | mysql -u root -p crm
 ```
+
+`schema.sql` is intended for a fresh installation. Its standalone index and foreign-key statements are not fully idempotent, so existing installations should use the service startup migrations or a targeted migration instead of repeatedly importing the whole file.
 
 ## 13. Deployment Notes
 

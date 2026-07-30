@@ -1,4 +1,4 @@
-# NFR / Mantis CRM Beginner Guide
+# CRM Beginner Guide
 
 This is the plain-English guide for newcomers. It explains what the application does, how information moves through it, and where a developer would make common changes.
 
@@ -6,7 +6,7 @@ This file does not replace any README. The existing README files remain the setu
 
 Maintenance note: edit this Markdown file as the source of truth. After editing, regenerate `BEGINNER_GUIDE_FOR_NEWCOMERS.docx` from the repository root with `python tools/build_docx_from_markdown.py BEGINNER_GUIDE_FOR_NEWCOMERS.md BEGINNER_GUIDE_FOR_NEWCOMERS.docx`.
 
-Audit note: the descriptions and examples below were checked against the current frontend, backend, database schema, and deployment files on 20 July 2026. If the code changes later, treat the code as the final source of truth and update this guide with it.
+Audit note: the descriptions and examples below were checked against the current frontend, backend, database schema, and deployment files on 30 July 2026. If the code changes later, treat the code as the final source of truth and update this guide with it.
 
 ## Who this guide is for
 
@@ -208,7 +208,7 @@ Uploaded feedback images are stored in MySQL. The backend currently accepts up t
 
 ## Running the app locally
 
-You can skip this section if you only want to understand the application. To run it, you need MySQL, Python, and Node.js/npm installed. The formal setup instructions and platform-specific deployment details remain in the README files.
+You can skip this section if you only want to understand the application. To run it, you need MySQL, Python 3.10 or newer, and Node.js/npm installed. The Ubuntu deployment guides use Node.js 20 or newer. The formal setup instructions and platform-specific deployment details remain in the README files.
 
 The backend reads its settings from `Backend/.env`. Important defaults are MySQL on `localhost:3306`, database `crm`, backend port `4000`, and frontend origin `http://localhost:5173`. If your MySQL username or password is different, update `Backend/.env` before starting the backend. Do not commit real passwords.
 
@@ -231,6 +231,8 @@ mysql -u root -p crm < Backend/sql/seed.sql
 ```
 
 The `-p` flag asks MySQL for the password interactively; the password is not the letter `p`.
+
+Treat `schema.sql` as the fresh-install bootstrap. It contains standalone index and foreign-key creation statements, so repeatedly importing it into an already initialized database can fail on objects that already exist. For an existing installation, use the service startup migrations or a targeted migration for the change being deployed.
 
 ### 2. Start the backend
 
@@ -283,6 +285,23 @@ http://localhost:5173
 ```
 
 During local development, Vite proxies `/api` to the backend on port `4000`.
+
+## Email Notification Settings
+
+Cmd into the backend directory, then nano the .env file
+In a new section below CORS_ORIGIN, write the following and fill in the blanks:
+APP_BASE_URL=
+EMAIL_NOTIFICATIONS_ENABLED=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USE_STARTTLS=true
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=
+SMTP_FROM_NAME=NFR CRM
+
+
+`SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM_EMAIL` must all be filled for email delivery to be considered configured. `APP_BASE_URL` should be the frontend address that recipients can open. Case-update emails are skipped when SMTP is incomplete; the forgot-password request returns a configuration error instead of creating a usable reset flow.
 
 ## Before you edit
 

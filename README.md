@@ -87,6 +87,8 @@ The SQL schema creates and uses database **`crm`**. The feature named Mantis sti
 
 ## Quick Start
 
+Use Python 3.10 or newer. The Ubuntu deployment guides use Node.js 20 or newer for frontend builds.
+
 ### 1. Prepare MySQL
 
 From `Backend/`, import schema and seed data.
@@ -108,6 +110,8 @@ mysql -u root -p crm < sql/seed.sql
 ```
 
 Make sure `DB_NAME` points to the same database.
+
+`schema.sql` is the fresh-install bootstrap. Because it contains standalone index and foreign-key creation statements, do not repeatedly import it into an initialized database; use the service startup migrations or a targeted migration for an existing installation.
 
 ### 2. Start Backend
 
